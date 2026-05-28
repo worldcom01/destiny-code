@@ -52,6 +52,26 @@ const SIJU_LIST = [
   { value: '해시', label: '해시 (亥時)  21:31 ~ 23:30' },
 ];
 
+const MBTI_CODE_LABELS: Record<string, string> = {
+  INTJ: 'ARCHITECT',    INTP: 'ANALYST',      ENTJ: 'COMMANDER',    ENTP: 'DEBATER',
+  INFJ: 'ADVOCATE',     INFP: 'MEDIATOR',     ENFJ: 'PROTAGONIST',  ENFP: 'CAMPAIGNER',
+  ISTJ: 'LOGISTICIAN',  ISFJ: 'DEFENDER',     ESTJ: 'EXECUTIVE',    ESFJ: 'CONSUL',
+  ISTP: 'VIRTUOSO',     ISFP: 'ADVENTURER',   ESTP: 'ENTREPRENEUR', ESFP: 'ENTERTAINER',
+};
+
+const DAY_STEM_LABELS: Record<string, string> = {
+  '甲': 'PIONEER', '乙': 'ADAPTOR',  '丙': 'RADIANCE', '丁': 'ESSENCE',
+  '戊': 'ANCHOR',  '己': 'NURTURER', '庚': 'STEEL',     '辛': 'CRYSTAL',
+  '壬': 'TORRENT', '癸': 'WISDOM',
+};
+
+const ZODIAC_CODE_LABELS: Record<string, string> = {
+  'Aries':       'SPARK',      'Taurus':      'STONE',       'Gemini':      'MIRROR',
+  'Cancer':      'TIDE',       'Leo':         'FLAME',       'Virgo':       'PURE MIND',
+  'Libra':       'SCALE',      'Scorpio':     'DEEP WATER',  'Sagittarius': 'ARROW',
+  'Capricorn':   'SUMMIT',     'Aquarius':    'SIGNAL',      'Pisces':      'DREAM DRIFT',
+};
+
 const SIJU_TIME_MAP: Record<string, string> = {
   자시: '00:30', 축시: '02:30', 인시: '04:30', 묘시: '06:30',
   진시: '08:30', 사시: '10:30', 오시: '12:30', 미시: '14:30',
@@ -1061,8 +1081,13 @@ export default function Home() {
                 </div>
 
                 {/* identity sentence */}
-                <p className="text-white text-lg font-semibold leading-relaxed mb-8 px-2">
-                  {result.identityStatement}
+                <p className="text-white text-xl md:text-2xl font-semibold leading-relaxed mb-8 px-2">
+                  {result.identityStatement.split('—').map((part, i) => (
+                    <span key={i}>
+                      {i > 0 && <><br /><span className="text-violet-400/60">—</span></>}
+                      {part}
+                    </span>
+                  ))}
                 </p>
 
                 {/* divider */}
@@ -1119,33 +1144,48 @@ export default function Home() {
 
             {/* ── DESTINY CODE 카드 ─────────────────────────────────────────── */}
             <div
-              className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 rounded-xl px-5 py-4
+              className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 rounded-xl px-5 py-5
                 opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
               style={{ animationDelay: '880ms' }}
             >
-              <p className="text-[9px] text-slate-600 tracking-[0.55em] uppercase text-center mb-3.5">
+              <p className="text-[9px] text-slate-600 tracking-[0.55em] uppercase text-center mb-5">
                 DESTINY CODE
               </p>
-              <div className="flex items-center justify-center gap-2.5 flex-wrap">
+              <div className={`grid gap-4 ${result.mbtiTraits.type ? 'grid-cols-4' : 'grid-cols-3'}`}>
                 {result.mbtiTraits.type && (
-                  <>
-                    <span className="text-emerald-300/80 font-mono font-bold text-sm tracking-wider">
+                  <div className="flex flex-col items-center gap-1.5">
+                    <span className="text-emerald-300/90 font-mono font-bold text-base tracking-wider">
                       {result.mbtiTraits.type}
                     </span>
-                    <span className="text-slate-700 text-xs">·</span>
-                  </>
+                    <span className="text-slate-600 text-[8px] tracking-[0.25em] uppercase leading-none">
+                      {MBTI_CODE_LABELS[result.mbtiTraits.type] ?? ''}
+                    </span>
+                  </div>
                 )}
-                <span className="text-amber-300/80 font-mono font-bold text-sm tracking-wider">
-                  {result.saju.dayStem}
-                </span>
-                <span className="text-slate-700 text-xs">·</span>
-                <span className="text-violet-300/80 font-mono font-bold text-sm tracking-wider">
-                  {result.tarot.nameEn}
-                </span>
-                <span className="text-slate-700 text-xs">·</span>
-                <span className="text-blue-300/80 font-mono font-bold text-sm tracking-wider">
-                  {result.zodiac.signEn}
-                </span>
+                <div className="flex flex-col items-center gap-1.5">
+                  <span className="text-amber-300/90 font-mono font-bold text-base">
+                    {result.saju.dayStem}
+                  </span>
+                  <span className="text-slate-600 text-[8px] tracking-[0.25em] uppercase leading-none">
+                    {DAY_STEM_LABELS[result.saju.dayStem] ?? ''}
+                  </span>
+                </div>
+                <div className="flex flex-col items-center gap-1.5">
+                  <span className="text-violet-300/90 font-mono font-bold text-base">
+                    {result.tarot.nameEn.replace('The ', '')}
+                  </span>
+                  <span className="text-slate-600 text-[8px] tracking-[0.25em] uppercase leading-none">
+                    {result.tarot.nameEn.replace('The ', '').toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex flex-col items-center gap-1.5">
+                  <span className="text-blue-300/90 font-mono font-bold text-base">
+                    {result.zodiac.signEn}
+                  </span>
+                  <span className="text-slate-600 text-[8px] tracking-[0.25em] uppercase leading-none">
+                    {ZODIAC_CODE_LABELS[result.zodiac.signEn] ?? ''}
+                  </span>
+                </div>
               </div>
             </div>
 
