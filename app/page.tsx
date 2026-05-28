@@ -892,7 +892,7 @@ export default function Home() {
               </div>
             </ResultCard>
 
-            {/* 타로 카드 (사용자가 선택한 카드) */}
+            {/* 타로 카드 */}
             <div
               className="group bg-gradient-to-br from-violet-900/20 to-purple-900/20 backdrop-blur-md
                 border border-violet-500/30 rounded-2xl p-6
@@ -932,7 +932,7 @@ export default function Home() {
               </div>
             </div>
 
-            {/* 운명 코드 강도 분석 */}
+            {/* 운명 코드 강도 */}
             {keywordStrengths.length > 0 && (
               <div
                 className="bg-slate-900/60 backdrop-blur-md border border-amber-500/20 rounded-2xl p-6 shadow-xl
@@ -970,46 +970,12 @@ export default function Home() {
               </div>
             )}
 
-            {/* 교집합 키워드 */}
-            <div
-              className="group bg-slate-900/60 backdrop-blur-md border border-purple-500/30 rounded-2xl p-6
-                shadow-xl hover:shadow-2xl hover:border-purple-400/40 hover:scale-[1.015]
-                transition-all duration-300 cursor-default
-                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-              style={{ animationDelay: '580ms' }}
-            >
-              <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-1">
-                <span className="text-purple-400 text-lg transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12">
-                  ◆
-                </span>
-                교집합 키워드
-              </h3>
-              <p className="text-slate-600 text-xs mb-4">
-                {result.mbtiTraits.type
-                  ? '사주 · 별자리 · MBTI · 혈액형 · 타로 다섯 분석의 공통 속성에서 계산된 키워드입니다'
-                  : '사주 · 별자리 · 혈액형 · 타로 네 분석의 공통 속성에서 계산된 키워드입니다'}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {result.commonKeywords.map((kw) => (
-                  <span
-                    key={kw}
-                    className="px-3 py-1 rounded-full bg-purple-500/15 border border-purple-500/30
-                      text-purple-200 text-xs font-medium
-                      hover:bg-purple-500/25 hover:border-purple-400/50 hover:scale-105
-                      transition-all duration-200 cursor-default"
-                  >
-                    {kw}
-                  </span>
-                ))}
-              </div>
-            </div>
-
             {/* 내면 갈등 패턴 */}
             {conflicts.length > 0 && (
               <div
                 className="bg-slate-900/60 backdrop-blur-md border border-orange-500/20 rounded-2xl p-6 shadow-xl
                   opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-                style={{ animationDelay: '630ms' }}
+                style={{ animationDelay: '580ms' }}
               >
                 <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-1">
                   <span className="text-orange-400 text-lg">⚡</span>
@@ -1038,7 +1004,7 @@ export default function Home() {
                 border border-purple-400/25 rounded-2xl p-6
                 shadow-xl shadow-purple-950/30
                 opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-              style={{ animationDelay: '680ms' }}
+              style={{ animationDelay: '630ms' }}
             >
               <h3 className="flex items-center gap-2 text-sm font-semibold text-purple-200 mb-6">
                 <span className="text-purple-300 text-lg">★</span>
@@ -1058,19 +1024,6 @@ export default function Home() {
                     <p className="text-slate-300 leading-relaxed text-sm ml-8">
                       {section.content}
                     </p>
-                    {sIdx === result.detailedReading.sections.length - 1 &&
-                      result.detailedReading.fateKeywords.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-4 ml-8">
-                          {result.detailedReading.fateKeywords.map((kw) => (
-                            <span
-                              key={kw}
-                              className="px-3 py-1 rounded-full bg-purple-500/15 border border-purple-400/30 text-purple-200 text-xs font-medium"
-                            >
-                              ✦ {kw}
-                            </span>
-                          ))}
-                        </div>
-                      )}
                     {sIdx < result.detailedReading.sections.length - 1 && (
                       <div className="mt-5 border-b border-purple-900/50" />
                     )}
@@ -1079,11 +1032,137 @@ export default function Home() {
               </div>
             </div>
 
-            {/* 다시 분석하기 */}
-            <div className="flex justify-center pt-2 opacity-0 [animation:fadeInUp_0.5s_ease-out_780ms_forwards]">
+            {/* ── 교집합 강조 섹션 ───────────────────────────────────────────── */}
+            <div
+              className="relative overflow-hidden rounded-2xl border border-violet-500/40
+                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
+              style={{
+                animationDelay: '730ms',
+                background: 'linear-gradient(135deg, #0d0720 0%, #120a2e 50%, #0a0520 100%)',
+              }}
+            >
+              {/* ambient glow */}
+              <div className="absolute inset-0 pointer-events-none">
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-40 bg-violet-600/15 rounded-full blur-3xl" />
+                <div className="absolute top-0 right-0 w-40 h-40 bg-amber-500/5 rounded-full blur-3xl" />
+              </div>
+
+              <div className="relative p-8 text-center">
+                {/* top eyebrow */}
+                <p className="text-amber-400/65 text-[10px] tracking-[0.45em] uppercase mb-7 font-medium">
+                  모든 흐름은 결국 하나를 가리키고 있습니다
+                </p>
+
+                {/* divider */}
+                <div className="flex items-center gap-3 mb-7">
+                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-violet-500/40 to-transparent" />
+                  <span className="text-violet-400/50 text-[9px] tracking-widest">✦</span>
+                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-violet-500/40 to-transparent" />
+                </div>
+
+                {/* identity sentence */}
+                <p className="text-white text-lg font-semibold leading-relaxed mb-8 px-2">
+                  {result.identityStatement}
+                </p>
+
+                {/* divider */}
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="flex-1 h-px bg-gradient-to-r from-transparent to-violet-500/30" />
+                  <span className="text-violet-400/50 text-[9px] tracking-[0.4em] uppercase">교집합</span>
+                  <div className="flex-1 h-px bg-gradient-to-l from-transparent to-violet-500/30" />
+                </div>
+
+                {/* keywords */}
+                <div className="flex flex-wrap justify-center gap-2 mb-6">
+                  {result.commonKeywords.map((kw) => (
+                    <span
+                      key={kw}
+                      className="px-4 py-1.5 rounded-full bg-violet-500/20 border border-violet-400/35
+                        text-violet-100 text-sm font-medium tracking-wide"
+                    >
+                      {kw}
+                    </span>
+                  ))}
+                </div>
+
+                {/* footnote */}
+                <p className="text-slate-600 text-[10px]">
+                  {result.mbtiTraits.type ? '5개' : '4개'} 분석 체계에서 독립적으로 반복 확인된 교집합입니다
+                </p>
+              </div>
+            </div>
+
+            {/* ── 최종 정체성 선언 ──────────────────────────────────────────── */}
+            <div
+              className="relative overflow-hidden rounded-2xl border border-amber-400/30
+                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
+              style={{
+                animationDelay: '830ms',
+                background: 'linear-gradient(135deg, #110800 0%, #0d0700 50%, #080808 100%)',
+              }}
+            >
+              <div className="absolute inset-0 pointer-events-none">
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-32 bg-amber-500/8 rounded-full blur-3xl" />
+              </div>
+              <div className="relative p-8 text-center">
+                <p className="text-amber-400/55 text-[9px] tracking-[0.5em] uppercase mb-5">
+                  ✦  당신의 운명 코드  ✦
+                </p>
+                <p className="text-amber-100 text-3xl font-bold tracking-wide mb-4 [text-shadow:0_0_30px_rgba(245,158,11,0.3)]">
+                  {result.archetype}
+                </p>
+                <p className="text-slate-600 text-xs leading-relaxed">
+                  수천 개의 조합 중, 당신의 패턴이 가리키는 정의입니다
+                </p>
+              </div>
+            </div>
+
+            {/* ── DESTINY CODE 카드 ─────────────────────────────────────────── */}
+            <div
+              className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 rounded-xl px-5 py-4
+                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
+              style={{ animationDelay: '880ms' }}
+            >
+              <p className="text-[9px] text-slate-600 tracking-[0.55em] uppercase text-center mb-3.5">
+                DESTINY CODE
+              </p>
+              <div className="flex items-center justify-center gap-2.5 flex-wrap">
+                {result.mbtiTraits.type && (
+                  <>
+                    <span className="text-emerald-300/80 font-mono font-bold text-sm tracking-wider">
+                      {result.mbtiTraits.type}
+                    </span>
+                    <span className="text-slate-700 text-xs">·</span>
+                  </>
+                )}
+                <span className="text-amber-300/80 font-mono font-bold text-sm tracking-wider">
+                  {result.saju.dayStem}
+                </span>
+                <span className="text-slate-700 text-xs">·</span>
+                <span className="text-violet-300/80 font-mono font-bold text-sm tracking-wider">
+                  {result.tarot.nameEn}
+                </span>
+                <span className="text-slate-700 text-xs">·</span>
+                <span className="text-blue-300/80 font-mono font-bold text-sm tracking-wider">
+                  {result.zodiac.signEn}
+                </span>
+              </div>
+            </div>
+
+            {/* 다시 분석하기 + 공유 */}
+            <div className="flex items-center justify-center gap-3 pt-2 opacity-0 [animation:fadeInUp_0.5s_ease-out_930ms_forwards]">
+              <button
+                onClick={handleShare}
+                className={`px-5 py-2.5 rounded-xl text-sm font-medium border transition-all duration-200
+                  ${shareStatus !== 'idle'
+                    ? 'bg-violet-500/15 border-violet-500/30 text-violet-300'
+                    : 'bg-violet-500/10 border-violet-500/25 text-violet-400 hover:bg-violet-500/20 hover:border-violet-400/40'}`}
+              >
+                {shareStatus === 'shared' ? '✓ 공유됨' : shareStatus === 'copied' ? '✓ 복사됨' : '결과 공유하기'}
+              </button>
               <button
                 onClick={() => setAppStep('form')}
-                className="px-6 py-2.5 rounded-xl text-sm font-medium border border-slate-700/40 text-slate-500
+                className="px-5 py-2.5 rounded-xl text-sm font-medium border border-slate-700/40 text-slate-500
                   hover:border-purple-500/30 hover:text-purple-300 transition-all duration-200"
               >
                 ↺ 다시 분석하기

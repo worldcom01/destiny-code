@@ -77,6 +77,8 @@ export interface AnalysisOutput {
   tarot: TarotResult;
   commonKeywords: string[];
   detailedReading: DetailedReading;
+  identityStatement: string;
+  archetype: string;
 }
 
 // ── 사주 — 오행 메타데이터 ───────────────────────────────────────────────────
@@ -575,6 +577,67 @@ function generateDetailedReading(
   };
 }
 
+// ── 정체성 생성 데이터 ──────────────────────────────────────────────────────
+
+const CONFLICT_IDENTITY: Array<{ tags: [CoreTag, CoreTag]; identityStatement: string; archetype: string }> = [
+  { tags: ['독립적', '포용적'],  identityStatement: '혼자이고 싶으면서도 깊이 연결되고 싶은 — 그 사이 어딘가에서 균형을 찾고 있는 사람입니다.', archetype: '경계 위에 선 사람' },
+  { tags: ['독립적', '사교적'],  identityStatement: '혼자 달리는 것이 편하지만, 혼자만으로는 충분하지 않다는 것도 아는 사람입니다.', archetype: '고독한 연결 추구자' },
+  { tags: ['분석적', '감성적'],  identityStatement: '머리로 이해되지 않으면 마음도 쉬지 못하는 — 감정까지 분석하려는 사람입니다.', archetype: '감정 분석가' },
+  { tags: ['체계적', '창의적'],  identityStatement: '구조 안에서 자유를 꿈꾸는 — 안정이 필요하지만 틀에 갇히기 싫은 사람입니다.', archetype: '통제된 창의인' },
+  { tags: ['열정적', '분석적'],  identityStatement: '행동하기 전에 너무 많이 생각하거나, 생각 없이 먼저 움직이거나 — 중간 없이 사는 사람입니다.', archetype: '충동과 이성 사이' },
+  { tags: ['포용적', '체계적'],  identityStatement: '모든 것을 받아들이고 싶지만 동시에 모든 것을 정리하고 싶은 — 내면이 분주한 사람입니다.', archetype: '질서 있는 포용자' },
+  { tags: ['독립적', '감성적'],  identityStatement: '감정이 깊지만 그것을 혼자 처리해야 한다고 느끼는 사람입니다.', archetype: '감정을 숨기는 독립인' },
+  { tags: ['직관적', '실용적'],  identityStatement: '직감이 먼저 오지만 결국 증거를 찾아야 믿게 되는 — 의심 많은 직관가입니다.', archetype: '검증하는 직관가' },
+  { tags: ['창의적', '체계적'],  identityStatement: '새로운 것을 만들고 싶지만 기반이 흔들리는 것이 두려운 사람입니다.', archetype: '안전한 도전자' },
+  { tags: ['열정적', '포용적'],  identityStatement: '에너지는 넘치지만 타인을 위해 쓰다가 스스로 소진되는 흐름이 반복되는 사람입니다.', archetype: '소진되는 열정가' },
+];
+
+const SINGLE_IDENTITY: Partial<Record<CoreTag, { identityStatement: string; archetype: string }>> = {
+  독립적:  { identityStatement: '스스로 설정한 기준이 가장 강하게 작동하는 — 자기 세계가 선명한 사람입니다.', archetype: '고독한 독립인' },
+  분석적:  { identityStatement: '이해되지 않는 것은 내려놓기 어렵고, 이해되면 비로소 편안해지는 사람입니다.', archetype: '내면의 관찰자' },
+  창의적:  { identityStatement: '가능성을 먼저 보고, 현실은 그 다음에 맞춰가는 사람입니다.', archetype: '현실 속 몽상가' },
+  감성적:  { identityStatement: '타인의 감정을 먼저 읽고, 자신의 감정은 그 뒤에야 처리하는 사람입니다.', archetype: '감정을 짊어진 사람' },
+  포용적:  { identityStatement: '경계를 세우는 것이 가장 오래 걸리는 과제인 사람입니다.', archetype: '경계 없는 포용자' },
+  체계적:  { identityStatement: '불확실성을 구조로 길들이려는 — 질서에서 안정을 찾는 사람입니다.', archetype: '질서의 수호자' },
+  직관적:  { identityStatement: '설명되지 않는 확신을 먼저 받고, 이유는 나중에 찾는 사람입니다.', archetype: '예리한 직관가' },
+  실용적:  { identityStatement: '아이디어보다 결과로 증명하려는 — 행동하는 현실주의자입니다.', archetype: '행동하는 현실주의자' },
+  사교적:  { identityStatement: '많은 사람들 속에서도 진짜 연결을 찾고 있는 사람입니다.', archetype: '고독한 사교인' },
+  열정적:  { identityStatement: '완전히 타오르거나, 완전히 식거나 — 중간 없이 사는 사람입니다.', archetype: '전부 아니면 전무형' },
+};
+
+function generateIdentity(
+  saju: SajuOutput,
+  zodiac: ZodiacResult,
+  mbti: MbtiResult,
+  bloodType: BloodTypeResult,
+  tarot: TarotResult,
+  commonKeywords: string[]
+): { identityStatement: string; archetype: string } {
+  const hasMbti = mbti.type.length === 4;
+  const allTags = [...new Set([
+    ...saju.coreTags, ...zodiac.coreTags, ...bloodType.coreTags,
+    ...(hasMbti ? mbti.coreTags : []), ...tarot.coreTags,
+  ])];
+
+  const conflictMatch = CONFLICT_IDENTITY.find(
+    ({ tags: [a, b] }) => allTags.includes(a) && allTags.includes(b)
+  );
+  if (conflictMatch) return { identityStatement: conflictMatch.identityStatement, archetype: conflictMatch.archetype };
+
+  const primaryTag = (() => {
+    const kwTag = commonKeywords.length > 0
+      ? (Object.entries(TAG_LABELS) as [CoreTag, string][]).find(([, v]) => v === commonKeywords[0])?.[0]
+      : undefined;
+    return kwTag ?? saju.coreTags[0];
+  })();
+
+  const match = primaryTag ? SINGLE_IDENTITY[primaryTag] : undefined;
+  return match ?? {
+    identityStatement: '여러 체계가 교차하며 드러나는 — 고유한 심리 패턴을 가진 사람입니다.',
+    archetype: '복합적 패턴의 소유자',
+  };
+}
+
 export function analyzeDestiny(
   birthdate: string,
   birthtime: string,
@@ -599,6 +662,7 @@ export function analyzeDestiny(
   ]);
 
   const detailedReading = generateDetailedReading(saju, zodiac, mbtiData, bloodTypeData, tarot, commonKeywords);
+  const { identityStatement, archetype } = generateIdentity(saju, zodiac, mbtiData, bloodTypeData, tarot, commonKeywords);
 
-  return { saju, zodiac, mbtiTraits: mbtiData, bloodType: bloodTypeData, tarot, commonKeywords, detailedReading };
+  return { saju, zodiac, mbtiTraits: mbtiData, bloodType: bloodTypeData, tarot, commonKeywords, detailedReading, identityStatement, archetype };
 }
