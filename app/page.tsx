@@ -371,6 +371,7 @@ export default function Home() {
       dominantElement: analysisResult.saju.dominantElement,
       createdAt: new Date().toISOString(),
     });
+    console.log('[page] 생성된 운명 코드:', code, '/ localStorage 확인:', localStorage.getItem('destiny_profiles_v1'));
 
     setConflicts(detectConflicts(
       analysisResult.saju,

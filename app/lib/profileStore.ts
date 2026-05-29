@@ -24,15 +24,23 @@ const STORE_KEY = 'destiny_profiles_v1';
 
 export function saveProfile(profile: DestinyProfile): void {
   if (typeof window === 'undefined') return;
+  console.log('[ProfileStore] 저장 시도:', profile.code);
   try {
     const list = loadAllProfiles();
     const updated = [profile, ...list.filter(p => p.code !== profile.code)].slice(0, 30);
     localStorage.setItem(STORE_KEY, JSON.stringify(updated));
-  } catch { /* ignore */ }
+    console.log('[ProfileStore] 저장 성공. 저장된 코드 목록:', updated.map(p => p.code));
+  } catch (e) {
+    console.error('[ProfileStore] 저장 실패:', e);
+  }
 }
 
 export function getProfileByCode(code: string): DestinyProfile | null {
-  return loadAllProfiles().find(p => p.code === code) ?? null;
+  const all = loadAllProfiles();
+  console.log('[ProfileStore] 코드 조회:', code, '/ 저장된 코드 목록:', all.map(p => p.code));
+  const found = all.find(p => p.code === code) ?? null;
+  console.log('[ProfileStore] 조회 결과:', found ? 'found' : 'not found');
+  return found;
 }
 
 export function loadAllProfiles(): DestinyProfile[] {

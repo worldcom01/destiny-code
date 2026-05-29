@@ -49,8 +49,11 @@ export default function CompatibilityPage() {
 
   function handleAnalyze() {
     setError('');
+    console.log('[Compatibility] 조회 시도 — A:', codeA.trim(), '/ B:', codeB.trim());
+    console.log('[Compatibility] localStorage 전체:', localStorage.getItem('destiny_profiles_v1'));
     const pA = resolveProfile(codeA);
     const pB = resolveProfile(codeB);
+    console.log('[Compatibility] pA:', pA ? 'found' : 'not found', '/ pB:', pB ? 'found' : 'not found');
 
     if (!pA && !pB) {
       setError('두 코드 모두 찾을 수 없습니다. 이 기기에서 분석을 완료한 코드를 입력해주세요.');
