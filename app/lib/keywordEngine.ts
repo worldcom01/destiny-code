@@ -1,4 +1,4 @@
-import type { SajuOutput, ZodiacResult, MbtiResult, BloodTypeResult, TarotResult, CoreTag } from './analysis';
+import type { SajuOutput, ZodiacResult, MbtiResult, BloodTypeResult, CoreTag } from './analysis';
 
 export interface KeywordStrength {
   keyword: string;
@@ -25,14 +25,12 @@ export function computeKeywordStrengths(
   zodiac: ZodiacResult,
   mbti: MbtiResult,
   bloodType: BloodTypeResult,
-  tarot: TarotResult,
 ): KeywordStrength[] {
   const systems: Array<{ label: string; tags: CoreTag[] }> = [
     { label: '사주',         tags: saju.coreTags },
     { label: '별자리',       tags: zodiac.coreTags },
     { label: mbti.type,     tags: mbti.coreTags },
     { label: `${bloodType.type}형`, tags: bloodType.coreTags },
-    { label: tarot.name,    tags: tarot.coreTags },
   ];
 
   const activeSystems = systems.filter((s) => s.tags.length > 0);

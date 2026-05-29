@@ -69,6 +69,13 @@ export interface DetailedReading {
   fateKeywords: string[];
 }
 
+export interface TarotFlow {
+  contextualNote: string;
+  currentMood: string;
+  currentRelation: string;
+  todayAttitude: string;
+}
+
 export interface AnalysisOutput {
   saju: SajuOutput;
   zodiac: ZodiacResult;
@@ -79,6 +86,7 @@ export interface AnalysisOutput {
   detailedReading: DetailedReading;
   identityStatement: string;
   archetype: string;
+  tarotFlow: TarotFlow;
 }
 
 // ── 사주 — 오행 메타데이터 ───────────────────────────────────────────────────
@@ -416,7 +424,7 @@ function generateDetailedReading(
   );
 
   const kwLabel = commonKeywords.slice(0, 3).join(' · ');
-  const systemsCount = hasMbti ? '다섯' : '네';
+  const systemsCount = hasMbti ? '네' : '세';
 
   const coreSection: ReadingSection = {
     title: '반복되는 내면 구조',
@@ -540,13 +548,12 @@ function generateDetailedReading(
       elementFlowMap[dom],
       missingNote,
       judgeFlowNote,
-      `선택된 "${tarot.name}" 카드가 현재 흐름을 확인합니다. ${tarot.currentFlow}`,
     ].filter(Boolean).join(' '),
   };
 
   // ── 5. 교차 신호 ───────────────────────────────────────────────────────────
 
-  const systemsLabel = hasMbti ? '사주 · 별자리 · MBTI · 혈액형 · 타로' : '사주 · 별자리 · 혈액형 · 타로';
+  const systemsLabel = hasMbti ? '사주 · 별자리 · MBTI · 혈액형' : '사주 · 별자리 · 혈액형';
 
   const kwConvergence = commonKeywords.map((kw) => {
     const coreTag = (Object.entries(TAG_LABELS) as [CoreTag, string][])
@@ -616,7 +623,7 @@ function generateIdentity(
   const hasMbti = mbti.type.length === 4;
   const allTags = [...new Set([
     ...saju.coreTags, ...zodiac.coreTags, ...bloodType.coreTags,
-    ...(hasMbti ? mbti.coreTags : []), ...tarot.coreTags,
+    ...(hasMbti ? mbti.coreTags : []),
   ])];
 
   const conflictMatch = CONFLICT_IDENTITY.find(
@@ -635,6 +642,105 @@ function generateIdentity(
   return match ?? {
     identityStatement: '여러 체계가 교차하며 드러나는 — 고유한 심리 패턴을 가진 사람입니다.',
     archetype: '복합적 패턴의 소유자',
+  };
+}
+
+
+function generateTarotFlow(
+  tarot: TarotResult,
+  commonKeywords: string[],
+  saju: SajuOutput,
+): TarotFlow {
+  const tp = tarot.coreTags[0];
+
+  const primaryTag = commonKeywords.length > 0
+    ? (Object.entries(TAG_LABELS) as [CoreTag, string][]).find(([, v]) => v === commonKeywords[0])?.[0]
+    : saju.coreTags[0];
+
+  const moodMap: Partial<Record<CoreTag, string>> = {
+    독립적: '지금은 혼자 있는 시간이 길어질수록 생각이 깊어지는 흐름입니다. 외부의 요청보다 내면의 신호를 먼저 확인해야 하는 시기입니다.',
+    분석적: '지금은 결정하기 전에 더 많이 살피고 싶어지는 흐름입니다. 정보를 모으고 검토하는 과정이 길어지더라도, 그것이 지금 흐름에 맞는 방식입니다.',
+    창의적: '지금은 새로운 아이디어와 방향에 에너지가 자연스럽게 쏠리는 흐름입니다. 구체적인 계획보다 탐색 자체를 허용하는 것이 지금 시기와 맞습니다.',
+    감성적: '지금은 감정의 파장이 평소보다 더 섬세하게 작동하는 시기입니다. 타인의 감정에 쉽게 영향받을 수 있는 만큼, 자신만의 공간이 더 필요해지는 흐름입니다.',
+    포용적: '지금은 주변과의 연결을 더 강하게 느끼는 흐름입니다. 다만 모든 것을 수용하려다 자신의 에너지가 소진되지 않도록 주의가 필요한 시기입니다.',
+    체계적: '지금은 모호하게 남겨두었던 것들을 정리하고 싶어지는 흐름입니다. 구체적인 계획이나 구조를 만드는 것이 지금 에너지와 잘 맞습니다.',
+    직관적: '지금은 논리보다 감각이 먼저 반응하는 흐름입니다. 설명이 어렵더라도 내면에서 오는 신호를 무시하지 않는 것이 지금 시기에 중요합니다.',
+    열정적: '지금은 특정한 것에 강하게 집중하고 싶어지는 에너지가 활성화되는 흐름입니다. 에너지가 높아지는 만큼, 그 방향이 명확하지 않으면 분산될 수 있는 시기입니다.',
+    실용적: '지금은 아이디어보다 실제 행동에 에너지를 쓰고 싶어지는 흐름입니다. 복잡하게 생각하기보다 작게라도 움직이는 것이 지금 흐름과 맞습니다.',
+    사교적: '지금은 관계와 연결에서 에너지를 얻고 싶어지는 흐름입니다. 새로운 만남이나 기존 관계의 활성화가 자연스럽게 일어나는 시기입니다.',
+  };
+
+  const relationMap: Partial<Record<CoreTag, string>> = {
+    독립적: '최근에는 사람보다 자기 회복에 에너지가 쏠리는 시기입니다. 관계에서 조금 물러서는 것이 일시적인 단절이 아니라 필요한 재충전임을 기억하는 것이 도움이 됩니다.',
+    감성적: '최근에는 관계 안에서 평소보다 더 민감하게 반응하는 흐름이 나타납니다. 상대의 말이나 행동 하나에 더 많이 영향받을 수 있는 시기입니다.',
+    포용적: '최근에는 관계에서 더 많이 주고 있다는 느낌이 강해지는 시기입니다. 자신이 이해받고 싶다는 욕구를 표현하는 것이 지금 흐름에서 중요합니다.',
+    사교적: '최근에는 새로운 연결이나 기존 관계의 깊이를 더하고 싶은 에너지가 흐릅니다. 관계의 폭을 넓히기보다 깊이를 더하는 방향이 지금과 맞습니다.',
+    체계적: '최근에는 관계에서 명확함이 필요해지는 흐름입니다. 모호하게 유지해온 관계 패턴을 정리하고 싶은 욕구가 생길 수 있습니다.',
+    창의적: '최근에는 관계에서 새로운 방식의 교류를 원하는 에너지가 흐릅니다. 익숙한 패턴에서 벗어나 다른 방식으로 연결해보고 싶어질 수 있습니다.',
+    직관적: '최근에는 관계 안에서 말하지 않은 것들을 더 강하게 감지하는 흐름입니다. 그 감각을 혼자 오래 붙잡고 있지 않는 것이 도움이 됩니다.',
+    열정적: '최근에는 관계에서 에너지가 빠르게 소진되는 패턴이 나타날 수 있습니다. 관계에서 잠시 숨을 고르는 것이 지금 필요한 조정입니다.',
+    분석적: '최근에는 관계를 더 분석적으로 바라보게 되는 흐름입니다. 상대의 행동 패턴이나 관계의 구조를 객관적으로 살피고 싶어지는 시기입니다.',
+    실용적: '최근에는 감정적 교류보다 실질적인 도움이나 행동 중심의 관계를 원하는 흐름이 나타납니다.',
+  };
+
+  const attitudeMap: Partial<Record<CoreTag, string>> = {
+    독립적: '지금은 감정을 너무 오래 혼자 붙잡고 있지 않는 것이 중요합니다. 혼자 처리하는 것이 자연스럽더라도, 작은 표현이나 나눔이 지금 시기에 도움이 됩니다.',
+    분석적: '지금은 분석이 완료되기 전에도 작게 움직일 수 있다는 것을 기억하는 것이 중요합니다. 완전한 준비를 기다리다 타이밍을 놓치지 않도록 하는 것이 지금 필요합니다.',
+    창의적: '지금은 시작된 것들을 조금이라도 구체화하는 것이 도움이 됩니다. 새로운 것을 탐색하되, 하나씩 완성해가는 것이 지금 에너지와 맞는 방향입니다.',
+    감성적: '지금은 감정을 바로 표현하기보다 안에서 오래 정리하려는 경향이 강해지는 시기입니다. 그 감정들이 쌓이지 않도록 작은 출구를 만들어두는 것이 도움이 됩니다.',
+    포용적: '지금은 모든 것을 다 받아들이려 하지 않아도 됩니다. 자신의 에너지를 먼저 확인하고, 여유가 있는 만큼만 주는 것이 지금 흐름에 맞습니다.',
+    체계적: '지금은 확신이 없는 상태에서 무리하게 결론을 내리지 않는 것이 좋습니다. 모호함을 잠시 허용하는 연습이 지금 필요할 수 있습니다.',
+    직관적: '지금은 논리로 설명되지 않는 감각을 믿어볼 수 있는 시기입니다. 이유를 먼저 찾으려 하기보다 느껴지는 것을 따라가 보는 것이 도움이 됩니다.',
+    열정적: '지금은 에너지를 한 방향에 집중하되, 소진되기 전에 멈출 줄 아는 것이 중요합니다. 열정이 지속 가능하려면 회복의 리듬도 함께 설계해야 합니다.',
+    실용적: '지금은 행동하기 전에 너무 많은 조건을 붙이지 않는 것이 중요합니다. 완벽하지 않더라도 움직이는 것이 지금 흐름을 여는 방법입니다.',
+    사교적: '지금은 관계보다 회복이 우선되는 흐름입니다. 연결에 에너지를 쓰되, 자신을 충전하는 시간도 함께 확보하는 것이 지금 필요합니다.',
+  };
+
+  const essencePatternMap: Partial<Record<CoreTag, string>> = {
+    독립적: '스스로의 기준으로 살아가는',
+    분석적: '이해를 통해 안정을 찾는',
+    창의적: '가능성을 먼저 보는',
+    감성적: '타인의 감정을 먼저 읽는',
+    포용적: '경계보다 수용을 먼저 선택하는',
+    체계적: '구조 안에서 안정을 찾는',
+    직관적: '설명 전에 먼저 아는',
+    열정적: '완전히 몰입하는',
+    실용적: '결과로 증명하려는',
+    사교적: '연결 안에서 에너지를 얻는',
+  };
+
+  const tarotEnergyMap: Partial<Record<CoreTag, string>> = {
+    독립적: '내면으로 향하는 시기의 흐름 위에 있습니다',
+    분석적: '더 깊이 살피고 검토해야 하는 흐름 위에 있습니다',
+    창의적: '새로운 가능성을 탐색하는 흐름 위에 있습니다',
+    감성적: '감정이 더 민감하게 반응하는 흐름 위에 있습니다',
+    포용적: '연결과 수용의 에너지가 강해지는 흐름 위에 있습니다',
+    체계적: '정리하고 명확하게 만들고 싶어지는 흐름 위에 있습니다',
+    직관적: '감각과 직감이 앞서는 흐름 위에 있습니다',
+    열정적: '강하게 추진하고 싶어지는 에너지가 활성화되는 흐름 위에 있습니다',
+    실용적: '행동과 실행이 중심이 되는 흐름 위에 있습니다',
+    사교적: '관계와 연결에서 에너지를 얻는 흐름 위에 있습니다',
+  };
+
+  let contextualNote: string;
+  if (primaryTag && tp && tp !== primaryTag) {
+    const essencePart = essencePatternMap[primaryTag];
+    const tarotPart = tarotEnergyMap[tp];
+    contextualNote = (essencePart && tarotPart)
+      ? `당신은 본래 ${essencePart} 사람이지만, 지금은 ${tarotPart}.`
+      : (moodMap[tp] ?? tarot.currentFlow);
+  } else {
+    const tarotPart = tp ? tarotEnergyMap[tp] : undefined;
+    contextualNote = tarotPart
+      ? `이 흐름은 당신이 가진 본질적인 패턴을 더욱 강하게 활성화하는 시기입니다. ${moodMap[tp] ?? ''}`
+      : tarot.currentFlow;
+  }
+
+  return {
+    contextualNote,
+    currentMood: (tp ? moodMap[tp] : undefined) ?? '',
+    currentRelation: (tp ? relationMap[tp] : undefined) ?? '',
+    todayAttitude: (tp ? attitudeMap[tp] : undefined) ?? '',
   };
 }
 
@@ -658,11 +764,11 @@ export function analyzeDestiny(
     mbtiData.coreTags,
     saju.coreTags,
     bloodTypeData.coreTags,
-    tarot.coreTags,
   ]);
 
   const detailedReading = generateDetailedReading(saju, zodiac, mbtiData, bloodTypeData, tarot, commonKeywords);
   const { identityStatement, archetype } = generateIdentity(saju, zodiac, mbtiData, bloodTypeData, tarot, commonKeywords);
 
-  return { saju, zodiac, mbtiTraits: mbtiData, bloodType: bloodTypeData, tarot, commonKeywords, detailedReading, identityStatement, archetype };
+  const tarotFlow = generateTarotFlow(tarot, commonKeywords, saju);
+  return { saju, zodiac, mbtiTraits: mbtiData, bloodType: bloodTypeData, tarot, commonKeywords, detailedReading, identityStatement, archetype, tarotFlow };
 }

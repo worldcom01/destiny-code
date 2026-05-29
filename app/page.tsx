@@ -14,6 +14,8 @@ import { generateShareText, shareResult, type ShareOutcome } from '@/app/lib/sha
 import { shuffleCards } from '@/app/lib/tarotEngine';
 import { detectConflicts, type ConflictPattern } from '@/app/lib/conflictEngine';
 import { computeKeywordStrengths, type KeywordStrength } from '@/app/lib/keywordEngine';
+import { generateDestinyCode } from '@/app/lib/destinyCode';
+import { saveProfile } from '@/app/lib/profileStore';
 
 const MBTI_OPTIONS = [
   'INTJ', 'INTP', 'ENTJ', 'ENTP',
@@ -292,6 +294,8 @@ export default function Home() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
   const [shareStatus, setShareStatus] = useState<ShareOutcome | 'idle'>('idle');
   const resultRef = useRef<HTMLDivElement>(null);
+  const [destinyCode, setDestinyCode] = useState('');
+  const [codeCopyStatus, setCodeCopyStatus] = useState<'idle' | 'copied'>('idle');
 
   useEffect(() => {
     setSavedList(getSavedAnalyses());
@@ -316,6 +320,7 @@ export default function Home() {
     setConflicts([]);
     setKeywordStrengths([]);
     setSaveStatus('idle');
+    setDestinyCode('');
     setShuffledCards(shuffleCards(9));
     setAppStep('picking');
   };
@@ -341,6 +346,32 @@ export default function Home() {
       card,
     );
     setResult(analysisResult);
+
+    const code = generateDestinyCode(analysisResult);
+    setDestinyCode(code);
+    const allCoreTags = [...new Set([
+      ...analysisResult.saju.coreTags,
+      ...analysisResult.zodiac.coreTags,
+      ...(analysisResult.mbtiTraits.type ? analysisResult.mbtiTraits.coreTags : []),
+      ...analysisResult.bloodType.coreTags,
+    ])];
+    saveProfile({
+      code,
+      nickname: form.name || undefined,
+      archetype: analysisResult.archetype,
+      identityStatement: analysisResult.identityStatement,
+      commonKeywords: analysisResult.commonKeywords,
+      coreTags: allCoreTags,
+      mbti: analysisResult.mbtiTraits.type,
+      bloodType: analysisResult.bloodType.type,
+      tarotName: analysisResult.tarot.name,
+      dayStem: analysisResult.saju.dayStem,
+      zodiacSign: analysisResult.zodiac.sign,
+      zodiacSignEn: analysisResult.zodiac.signEn,
+      dominantElement: analysisResult.saju.dominantElement,
+      createdAt: new Date().toISOString(),
+    });
+
     setConflicts(detectConflicts(
       analysisResult.saju,
       analysisResult.zodiac,
@@ -352,7 +383,6 @@ export default function Home() {
       analysisResult.zodiac,
       analysisResult.mbtiTraits,
       analysisResult.bloodType,
-      card,
     ));
     setAppStep('result');
     setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
@@ -753,6 +783,13 @@ export default function Home() {
               </div>
             </div>
 
+            {/* ── 당신의 본질 헤더 ── */}
+            <div className="flex items-center gap-3 pt-2 opacity-0 [animation:fadeInUp_0.4s_ease-out_50ms_forwards]">
+              <div className="flex-1 h-px bg-slate-800" />
+              <p className="text-slate-600 text-[9px] tracking-[0.5em] uppercase">당신의 본질</p>
+              <div className="flex-1 h-px bg-slate-800" />
+            </div>
+
             {/* 사주 분석 */}
             <ResultCard icon="☯" title="사주 분석" hoverBorderClass="hover:border-amber-500/30" delay={80}>
               <div className="grid grid-cols-4 gap-2 mb-4 text-center">
@@ -912,46 +949,6 @@ export default function Home() {
               </div>
             </ResultCard>
 
-            {/* 타로 카드 */}
-            <div
-              className="group bg-gradient-to-br from-violet-900/20 to-purple-900/20 backdrop-blur-md
-                border border-violet-500/30 rounded-2xl p-6
-                shadow-xl hover:shadow-2xl hover:border-violet-400/40 hover:scale-[1.015]
-                transition-all duration-300 cursor-default
-                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-              style={{ animationDelay: '480ms' }}
-            >
-              <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-4">
-                <span className="text-lg transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12">✧</span>
-                타로 카드
-                <span className="ml-auto text-[10px] text-amber-400/60 font-normal tracking-wide">직접 선택한 카드</span>
-              </h3>
-              <div className="flex items-start gap-4 mb-4">
-                <div className="flex-shrink-0 w-16 h-24 rounded-xl bg-gradient-to-b from-violet-950 to-[#1a0840] border-2 border-amber-400/50 flex flex-col items-center justify-center gap-1 shadow-lg shadow-violet-950/60 [animation:cardFloat_4s_ease-in-out_infinite]">
-                  <span className="text-amber-400/80 text-[9px] font-mono tracking-widest">{result.tarot.romanNumeral}</span>
-                  <span className="text-violet-200 text-2xl leading-none">{result.tarot.symbol}</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-violet-200 font-semibold text-sm mb-0.5">{result.tarot.name}</p>
-                  <p className="text-slate-600 text-xs mb-2">{result.tarot.nameEn}</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {result.tarot.keywords.map((kw) => (
-                      <span key={kw} className="px-2 py-0.5 rounded-full bg-violet-500/15 border border-violet-500/20 text-violet-300 text-[10px]">
-                        {kw}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <p className="text-slate-400 text-sm leading-relaxed mb-3 group-hover:text-slate-300 transition-colors duration-300">
-                {result.tarot.meaning}
-              </p>
-              <div className="pt-3 border-t border-violet-900/40">
-                <p className="text-[10px] text-violet-400/70 mb-1.5 uppercase tracking-widest">현재 흐름</p>
-                <p className="text-slate-300 text-sm leading-relaxed">{result.tarot.currentFlow}</p>
-              </div>
-            </div>
-
             {/* 운명 코드 강도 */}
             {keywordStrengths.length > 0 && (
               <div
@@ -964,7 +961,7 @@ export default function Home() {
                   운명 코드 강도
                 </h3>
                 <p className="text-slate-600 text-xs mb-4">
-                  다섯 분석 체계에서 각 성향이 얼마나 강하게 수렴되는지 나타냅니다
+                  {result.mbtiTraits.type ? '네' : '세'} 분析 체계에서 각 성향이 얼마나 강하게 수렴되는지 나타냅니다
                 </p>
                 <div className="space-y-3.5">
                   {keywordStrengths.map((ks) => (
@@ -1189,8 +1186,127 @@ export default function Home() {
               </div>
             </div>
 
+            {/* ── 또 하나의 흐름과 연결하기 ── */}
+            {destinyCode && (
+              <div
+                className="bg-slate-900/60 border border-violet-500/25 rounded-2xl p-5
+                  opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
+                style={{ animationDelay: '910ms' }}
+              >
+                <p className="text-slate-600 text-[9px] tracking-[0.45em] uppercase mb-4 text-center">
+                  또 하나의 흐름과 연결하기
+                </p>
+                <div className="text-center mb-5">
+                  <p className="text-amber-300 font-mono font-bold text-2xl tracking-widest mb-1">{destinyCode}</p>
+                  <p className="text-slate-700 text-[10px]">당신의 운명 코드</p>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(destinyCode);
+                        setCodeCopyStatus('copied');
+                        setTimeout(() => setCodeCopyStatus('idle'), 2500);
+                      } catch { /* ignore */ }
+                    }}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium border transition-all duration-200
+                      ${codeCopyStatus === 'copied'
+                        ? 'bg-amber-500/20 border-amber-400/40 text-amber-200'
+                        : 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15'}`}
+                  >
+                    {codeCopyStatus === 'copied' ? '✓ 복사됨' : '운명 코드 복사'}
+                  </button>
+                  <a
+                    href="/compatibility"
+                    className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-violet-500/30
+                      bg-violet-500/10 text-violet-300 hover:bg-violet-500/15 transition-all duration-200
+                      text-center"
+                  >
+                    교집합 궁합 보기
+                  </a>
+                </div>
+              </div>
+            )}
+
+            {/* ── 현재 흐름 헤더 ── */}
+            <div className="flex items-center gap-3 pt-4 opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]" style={{ animationDelay: '930ms' }}>
+              <div className="flex-1 h-px bg-slate-800" />
+              <p className="text-slate-600 text-[9px] tracking-[0.5em] uppercase">현재 흐름</p>
+              <div className="flex-1 h-px bg-slate-800" />
+            </div>
+
+            {/* ── 타로 카드 (흐름 섹션) ── */}
+            <div
+              className="group bg-gradient-to-br from-violet-900/20 to-purple-900/20 backdrop-blur-md
+                border border-violet-500/30 rounded-2xl p-6
+                shadow-xl hover:shadow-2xl hover:border-violet-400/40
+                transition-all duration-300 cursor-default
+                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
+              style={{ animationDelay: '980ms' }}
+            >
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-4">
+                <span className="text-lg">✧</span>
+                선택된 타로
+                <span className="ml-auto text-[10px] text-violet-400/60 font-normal tracking-wide">현재 흐름을 해석합니다</span>
+              </h3>
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 w-14 h-20 rounded-xl bg-gradient-to-b from-violet-950 to-[#1a0840] border-2 border-amber-400/50 flex flex-col items-center justify-center gap-1 shadow-lg shadow-violet-950/60 [animation:cardFloat_4s_ease-in-out_infinite]">
+                  <span className="text-amber-400/80 text-[9px] font-mono tracking-widest">{result.tarot.romanNumeral}</span>
+                  <span className="text-violet-200 text-2xl leading-none">{result.tarot.symbol}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-violet-200 font-semibold text-sm mb-0.5">{result.tarot.name}</p>
+                  <p className="text-slate-600 text-xs mb-2">{result.tarot.nameEn}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {result.tarot.keywords.map((kw) => (
+                      <span key={kw} className="px-2 py-0.5 rounded-full bg-violet-500/15 border border-violet-500/20 text-violet-300 text-[10px]">
+                        {kw}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ── 현재 흐름 해석 카드 ── */}
+            <div
+              className="bg-slate-900/60 backdrop-blur-md border border-violet-500/20 rounded-2xl p-6 shadow-xl
+                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
+              style={{ animationDelay: '1060ms' }}
+            >
+              <p className="text-violet-200 text-base font-semibold leading-relaxed mb-6">
+                {result.tarotFlow.contextualNote}
+              </p>
+              <div className="space-y-5">
+                {result.tarotFlow.currentMood && (
+                  <div>
+                    <p className="text-slate-600 text-[9px] tracking-[0.4em] uppercase mb-2">지금 에너지</p>
+                    <p className="text-slate-300 text-sm leading-relaxed">{result.tarotFlow.currentMood}</p>
+                  </div>
+                )}
+                {result.tarotFlow.currentRelation && (
+                  <div className="pt-4 border-t border-slate-800">
+                    <p className="text-slate-600 text-[9px] tracking-[0.4em] uppercase mb-2">관계 흐름</p>
+                    <p className="text-slate-300 text-sm leading-relaxed">{result.tarotFlow.currentRelation}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── 지금 필요한 태도 ── */}
+            {result.tarotFlow.todayAttitude && (
+              <div
+                className="bg-slate-900/50 border border-indigo-500/20 rounded-2xl p-6
+                  opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
+                style={{ animationDelay: '1130ms' }}
+              >
+                <p className="text-indigo-400/70 text-[9px] tracking-[0.45em] uppercase mb-4">지금 필요한 태도</p>
+                <p className="text-slate-300 text-sm leading-relaxed">{result.tarotFlow.todayAttitude}</p>
+              </div>
+            )}
+
             {/* 다시 분석하기 + 공유 */}
-            <div className="flex items-center justify-center gap-3 pt-2 opacity-0 [animation:fadeInUp_0.5s_ease-out_930ms_forwards]">
+            <div className="flex items-center justify-center gap-3 pt-2 opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]" style={{ animationDelay: '1200ms' }}>
               <button
                 onClick={handleShare}
                 className={`px-5 py-2.5 rounded-xl text-sm font-medium border transition-all duration-200
