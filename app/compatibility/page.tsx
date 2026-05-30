@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ChangeEvent } from 'react';
+import { useState, useEffect, type ChangeEvent } from 'react';
 import { analyzeCompatibility, type CompatibilityResult } from '@/app/lib/compatibilityEngine';
 import { getProfileByCode, loadAllProfiles, shareStringToProfile, type DestinyProfile } from '@/app/lib/profileStore';
 import { isShareString } from '@/app/lib/destinyCode';
@@ -8,7 +8,7 @@ import type { CoreTag } from '@/app/lib/analysis';
 
 const TAG_LABELS: Partial<Record<CoreTag, string>> = {
   창의적: '창의적 사고',
-  분석적: '분析적 사고',
+  분석적: '분석적 사고',
   감성적: '감성적 공감',
   실용적: '실용적 실행',
   사교적: '뛰어난 사교성',
@@ -36,6 +36,52 @@ function SectionDivider({ label }: { label: string }) {
   );
 }
 
+function ProfileChip({
+  profile,
+  selected,
+  accent,
+  onClick,
+}: {
+  profile: DestinyProfile;
+  selected: boolean;
+  accent: 'amber' | 'violet';
+  onClick: () => void;
+}) {
+  const activeClasses =
+    accent === 'amber'
+      ? 'bg-amber-500/20 border-amber-500/50 text-amber-200 shadow-sm shadow-amber-500/20'
+      : 'bg-violet-500/20 border-violet-500/50 text-violet-200 shadow-sm shadow-violet-500/20';
+  const hoverClasses =
+    accent === 'amber'
+      ? 'hover:border-amber-500/30 hover:text-amber-300'
+      : 'hover:border-violet-500/30 hover:text-violet-300';
+
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 text-left
+        ${selected
+          ? activeClasses
+          : `bg-slate-800/60 border-slate-700/30 text-slate-400 ${hoverClasses}`}`}
+    >
+      <div className="min-w-0">
+        <p className={`font-mono font-bold text-xs tracking-wider leading-none mb-0.5
+          ${selected ? (accent === 'amber' ? 'text-amber-200' : 'text-violet-200') : 'text-slate-300'}`}>
+          {profile.code}
+        </p>
+        {profile.nickname && (
+          <p className="text-[10px] text-slate-600 truncate leading-none">{profile.nickname}</p>
+        )}
+      </div>
+      {selected && (
+        <span className={`ml-1 text-[9px] flex-shrink-0 ${accent === 'amber' ? 'text-amber-400' : 'text-violet-400'}`}>
+          ✓
+        </span>
+      )}
+    </button>
+  );
+}
+
 export default function CompatibilityPage() {
   const [codeA, setCodeA] = useState('');
   const [codeB, setCodeB] = useState('');
@@ -44,31 +90,39 @@ export default function CompatibilityPage() {
   const [profileB, setProfileB] = useState<DestinyProfile | null>(null);
   const [error, setError] = useState('');
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
+  const [savedProfiles, setSavedProfiles] = useState<DestinyProfile[]>([]);
 
-  const savedProfiles = loadAllProfiles();
+  useEffect(() => {
+    const profiles = loadAllProfiles();
+    setSavedProfiles(profiles);
+    if (profiles.length > 0) {
+      setCodeA(profiles[0].code);
+    }
+  }, []);
+
+  const selectedProfileA = savedProfiles.find(p => p.code === codeA.trim()) ?? null;
+  const selectedProfileB = savedProfiles.find(p => p.code === codeB.trim()) ?? null;
+  const profilesForB = savedProfiles.filter(p => p.code !== codeA.trim());
 
   function handleAnalyze() {
     setError('');
-    console.log('[Compatibility] 조회 시도 — A:', codeA.trim(), '/ B:', codeB.trim());
-    console.log('[Compatibility] localStorage 전체:', localStorage.getItem('destiny_profiles_v1'));
     const pA = resolveProfile(codeA);
     const pB = resolveProfile(codeB);
-    console.log('[Compatibility] pA:', pA ? 'found' : 'not found', '/ pB:', pB ? 'found' : 'not found');
 
     if (!pA && !pB) {
-      setError('두 코드 모두 찾을 수 없습니다. 이 기기에서 분석을 완료한 코드를 입력해주세요.');
+      setError('두 코드 모두 찾을 수 없습니다. 이 기기에서 분석을 완료한 코드를 선택하거나 입력해주세요.');
       return;
     }
     if (!pA) {
-      setError(`"${codeA.trim()}" 코드를 찾을 수 없습니다. 같은 기기에서 분析한 코드를 입력해주세요.`);
+      setError(`"${codeA.trim()}" 코드를 찾을 수 없습니다. 같은 기기에서 분석한 코드를 선택해주세요.`);
       return;
     }
     if (!pB) {
-      setError(`"${codeB.trim()}" 코드를 찾을 수 없습니다. 같은 기기에서 분析한 코드를 입력해주세요.`);
+      setError(`"${codeB.trim()}" 코드를 찾을 수 없습니다. 같은 기기에서 분석한 코드를 선택해주세요.`);
       return;
     }
     if (pA.code === pB.code) {
-      setError('같은 코드가 입력되었습니다. 서로 다른 두 사람의 코드를 입력해주세요.');
+      setError('같은 코드가 선택되었습니다. 서로 다른 두 사람의 코드를 선택해주세요.');
       return;
     }
 
@@ -82,24 +136,12 @@ export default function CompatibilityPage() {
     setProfileA(null);
     setProfileB(null);
     setError('');
+    setCodeB('');
   }
 
   async function handleCopyResult() {
     if (!result || !profileA || !profileB) return;
-    const text = `✦ 운명 교차 분析
-
-${profileA.code} × ${profileB.code}
-
-[관계 교집합]
-${result.relationLabel}
-
-[관계 서사]
-${result.relationNarrative}
-
-[관계 Archetype]
-${result.relationArchetype}
-
-→ AI 운명 교차 분析으로 두 사람의 교집합을 확인해보세요`;
+    const text = `✦ 운명 교차 분석\n\n${profileA.code} × ${profileB.code}\n\n[관계 교집합]\n${result.relationLabel}\n\n[관계 서사]\n${result.relationNarrative}\n\n[관계 Archetype]\n${result.relationArchetype}\n\n→ AI 운명 교차 분석으로 두 사람의 교집합을 확인해보세요`;
     try {
       await navigator.clipboard.writeText(text);
       setCopyStatus('copied');
@@ -107,16 +149,18 @@ ${result.relationArchetype}
     } catch { /* ignore */ }
   }
 
+  const canAnalyze = codeA.trim().length > 0 && codeB.trim().length > 0;
+
   return (
     <div className="min-h-screen bg-[#060612] text-slate-100">
       <div className="max-w-md mx-auto px-4 py-10 pb-20">
 
         {/* Header */}
         <div className="text-center mb-8">
-          <p className="text-amber-400/60 text-[9px] tracking-[0.5em] uppercase mb-3">✦ 운명 교차 분析 ✦</p>
+          <p className="text-amber-400/60 text-[9px] tracking-[0.5em] uppercase mb-3">✦ 운명 교차 분석 ✦</p>
           <h1 className="text-xl font-bold text-slate-100 mb-2">두 운명의 교차</h1>
           <p className="text-slate-500 text-sm leading-relaxed">
-            두 사람의 운명 코드를 입력하면<br />서로의 교집합을 분析합니다
+            두 사람의 운명 코드를 선택하면<br />서로의 교집합을 분석합니다
           </p>
         </div>
 
@@ -124,51 +168,99 @@ ${result.relationArchetype}
           /* ── 입력 화면 ── */
           <div className="space-y-4">
 
-            {/* My code */}
-            <div className="bg-slate-900/60 border border-slate-700/40 rounded-2xl p-5">
+            {/* 최근 생성한 운명 코드 */}
+            {savedProfiles.length > 0 && (
+              <div className="bg-slate-900/50 border border-amber-500/20 rounded-2xl p-4">
+                <p className="text-amber-400/50 text-[9px] tracking-[0.45em] uppercase mb-3">최근 생성한 운명 코드</p>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-amber-300 font-mono font-bold text-xl tracking-widest leading-none mb-1">
+                      {savedProfiles[0].code}
+                    </p>
+                    {savedProfiles[0].nickname && (
+                      <p className="text-slate-500 text-xs truncate">{savedProfiles[0].nickname}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setCodeA(savedProfiles[0].code)}
+                    className={`flex-shrink-0 px-4 py-2 rounded-xl text-xs font-medium border transition-all duration-200
+                      ${codeA === savedProfiles[0].code
+                        ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                        : 'bg-slate-800/60 border-amber-500/25 text-amber-400/80 hover:bg-amber-500/15 hover:border-amber-500/40'}`}
+                  >
+                    {codeA === savedProfiles[0].code ? '✓ 선택됨' : '내 코드로 사용'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 첫 번째 코드 */}
+            <div className={`bg-slate-900/60 border rounded-2xl p-5 transition-all duration-300
+              ${selectedProfileA ? 'border-amber-500/40 shadow-lg shadow-amber-500/5' : 'border-slate-700/40'}`}>
               <p className="text-slate-500 text-[9px] tracking-[0.4em] uppercase mb-3">첫 번째 코드</p>
+
               {savedProfiles.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-3">
-                  {savedProfiles.slice(0, 3).map(p => (
-                    <button
+                  {savedProfiles.map(p => (
+                    <ProfileChip
                       key={p.code}
+                      profile={p}
+                      selected={codeA === p.code}
+                      accent="amber"
                       onClick={() => setCodeA(p.code)}
-                      className={`px-3 py-1 rounded-lg text-xs border transition-colors
-                        ${codeA === p.code
-                          ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
-                          : 'bg-slate-800/60 border-slate-700/30 text-slate-400 hover:border-amber-500/30'}`}
-                    >
-                      {p.code}{p.nickname ? ` · ${p.nickname}` : ''}
-                    </button>
+                    />
                   ))}
                 </div>
               )}
+
               <input
                 type="text"
                 value={codeA}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setCodeA(e.target.value)}
-                placeholder="예: DX-4932"
+                placeholder={savedProfiles.length > 0 ? '또는 공유 코드 직접 입력...' : '예: DX-4932'}
                 className="w-full bg-slate-800/60 border border-slate-700/30 rounded-xl px-4 py-3
                   text-slate-100 placeholder-slate-600 text-sm font-mono tracking-wider
                   focus:outline-none focus:border-amber-500/40 focus:ring-1 focus:ring-amber-500/20"
               />
             </div>
 
-            {/* Divider */}
+            {/* × 구분자 */}
             <div className="flex items-center justify-center">
               <div className="w-8 h-8 rounded-full bg-slate-800/60 border border-slate-700/30 flex items-center justify-center">
                 <span className="text-slate-500 text-xs">×</span>
               </div>
             </div>
 
-            {/* Partner code */}
-            <div className="bg-slate-900/60 border border-slate-700/40 rounded-2xl p-5">
+            {/* 두 번째 코드 */}
+            <div className={`bg-slate-900/60 border rounded-2xl p-5 transition-all duration-300
+              ${selectedProfileB ? 'border-violet-500/40 shadow-lg shadow-violet-500/5' : 'border-slate-700/40'}`}>
               <p className="text-slate-500 text-[9px] tracking-[0.4em] uppercase mb-3">두 번째 코드</p>
+
+              {profilesForB.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {profilesForB.map(p => (
+                    <ProfileChip
+                      key={p.code}
+                      profile={p}
+                      selected={codeB === p.code}
+                      accent="violet"
+                      onClick={() => setCodeB(p.code)}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {profilesForB.length === 0 && savedProfiles.length > 0 && (
+                <p className="text-slate-700 text-xs mb-3 leading-relaxed">
+                  이 기기에 다른 코드가 없습니다.<br />상대방의 공유 코드를 입력해주세요.
+                </p>
+              )}
+
               <input
                 type="text"
                 value={codeB}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setCodeB(e.target.value)}
-                placeholder="예: KC-1847"
+                placeholder="상대방 코드 또는 공유 코드 입력..."
                 className="w-full bg-slate-800/60 border border-slate-700/30 rounded-xl px-4 py-3
                   text-slate-100 placeholder-slate-600 text-sm font-mono tracking-wider
                   focus:outline-none focus:border-violet-500/40 focus:ring-1 focus:ring-violet-500/20"
@@ -181,26 +273,27 @@ ${result.relationArchetype}
 
             <button
               onClick={handleAnalyze}
-              disabled={!codeA.trim() || !codeB.trim()}
+              disabled={!canAnalyze}
               className="w-full py-3.5 rounded-xl font-semibold text-sm
                 bg-gradient-to-r from-violet-600/80 to-purple-600/80 border border-violet-500/40
                 text-violet-100 hover:from-violet-500/80 hover:to-purple-500/80
                 disabled:opacity-30 disabled:cursor-not-allowed
                 transition-all duration-200"
             >
-              교집합 분析 시작
+              두 흐름 연결하기
             </button>
 
-            <p className="text-slate-700 text-[10px] text-center leading-relaxed">
-              현재 이 기기에서 분析을 완료한 코드만 입력 가능합니다<br />
-              코드가 없다면 먼저 분析을 완료해주세요
-            </p>
+            {savedProfiles.length === 0 && (
+              <p className="text-slate-700 text-[10px] text-center leading-relaxed">
+                운명 분석을 먼저 완료하면 코드가 자동으로 저장됩니다
+              </p>
+            )}
 
             <a
               href="/"
               className="block text-center text-slate-600 text-xs hover:text-slate-400 transition-colors"
             >
-              ← 분析 시작하기
+              ← 분석 시작하기
             </a>
           </div>
         ) : (
@@ -245,7 +338,7 @@ ${result.relationArchetype}
 
             <SectionDivider label="관계 교집합" />
 
-            {/* 관계 교집합 — 가장 강조 */}
+            {/* 관계 교집합 */}
             <div
               className="relative overflow-hidden rounded-2xl border border-violet-500/40"
               style={{ background: 'linear-gradient(135deg, #0d0720 0%, #120a2e 50%, #0a0520 100%)' }}
@@ -289,14 +382,12 @@ ${result.relationArchetype}
 
             <SectionDivider label="관계 서사" />
 
-            {/* 관계 서사 */}
             <div className="bg-slate-900/60 border border-slate-700/40 rounded-2xl p-5">
               <p className="text-slate-300 text-sm leading-relaxed">{result.relationNarrative}</p>
             </div>
 
             <SectionDivider label="관계 위험요소" />
 
-            {/* 관계 위험요소 */}
             <div className="bg-slate-900/60 border border-orange-500/20 rounded-2xl p-5">
               <p className="text-orange-400/70 text-[9px] tracking-[0.4em] uppercase mb-3">⚠ 주의해야 할 흐름</p>
               <p className="text-slate-300 text-sm leading-relaxed">{result.riskFactor}</p>
@@ -304,7 +395,6 @@ ${result.relationArchetype}
 
             <SectionDivider label="관계 Archetype" />
 
-            {/* 관계 Archetype */}
             <div
               className="relative overflow-hidden rounded-2xl border border-amber-400/30"
               style={{ background: 'linear-gradient(135deg, #110800 0%, #0d0700 50%, #080808 100%)' }}
@@ -341,7 +431,7 @@ ${result.relationArchetype}
                 className="px-5 py-2.5 rounded-xl text-sm font-medium border border-slate-700/40 text-slate-500
                   hover:border-violet-500/30 hover:text-violet-300 transition-all duration-200"
               >
-                ↺ 다시 분析하기
+                ↺ 다시 분석하기
               </button>
             </div>
 
@@ -349,7 +439,7 @@ ${result.relationArchetype}
               href="/"
               className="block text-center text-slate-600 text-xs hover:text-slate-400 transition-colors pt-1"
             >
-              ← 내 분析으로 돌아가기
+              ← 내 분석으로 돌아가기
             </a>
           </div>
         )}

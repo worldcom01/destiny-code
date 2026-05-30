@@ -962,7 +962,7 @@ export default function Home() {
                   운명 코드 강도
                 </h3>
                 <p className="text-slate-600 text-xs mb-4">
-                  {result.mbtiTraits.type ? '네' : '세'} 분析 체계에서 각 성향이 얼마나 강하게 수렴되는지 나타냅니다
+                  {result.mbtiTraits.type ? '네' : '세'} 분석 체계에서 각 성향이 얼마나 강하게 수렴되는지 나타냅니다
                 </p>
                 <div className="space-y-3.5">
                   {keywordStrengths.map((ks) => (
