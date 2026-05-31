@@ -5,6 +5,7 @@ import { analyzeCompatibility, type CompatibilityResult } from '@/app/lib/compat
 import { getProfileByCode, loadAllProfiles, shareStringToProfile, type DestinyProfile } from '@/app/lib/profileStore';
 import { isShareString } from '@/app/lib/destinyCode';
 import type { CoreTag } from '@/app/lib/analysis';
+import { BrandFooter } from '@/app/components/BrandFooter';
 
 const TAG_LABELS: Partial<Record<CoreTag, string>> = {
   창의적: '창의적 사고',
@@ -443,6 +444,8 @@ export default function CompatibilityPage() {
             </a>
           </div>
         )}
+
+        <BrandFooter variant="compatibility" showSlogan={false} className="mt-10" />
 
       </div>
     </div>

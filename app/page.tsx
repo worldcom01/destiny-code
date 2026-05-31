@@ -16,6 +16,7 @@ import { detectConflicts, type ConflictPattern } from '@/app/lib/conflictEngine'
 import { computeKeywordStrengths, type KeywordStrength } from '@/app/lib/keywordEngine';
 import { generateDestinyCode } from '@/app/lib/destinyCode';
 import { saveProfile } from '@/app/lib/profileStore';
+import { BrandFooter } from '@/app/components/BrandFooter';
 
 const MBTI_OPTIONS = [
   'INTJ', 'INTP', 'ENTJ', 'ENTP',
@@ -1328,8 +1329,11 @@ export default function Home() {
           </div>
         )}
 
-        <footer className="text-center mt-14 text-slate-700 text-xs">
-          AI 분석 결과는 참고용이며 실제 운명을 보장하지 않습니다
+        <footer className="text-center mt-14 space-y-4">
+          <p className="text-slate-700 text-xs">
+            AI 분석 결과는 참고용이며 실제 운명을 보장하지 않습니다
+          </p>
+          <BrandFooter variant="result" showSlogan />
         </footer>
       </div>
     </div>
