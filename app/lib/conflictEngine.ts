@@ -1,4 +1,5 @@
 import type { SajuOutput, ZodiacResult, MbtiResult, BloodTypeResult } from './analysis';
+import type { WesternAstrologyResult } from './westernAstrology';
 
 export interface ConflictPattern {
   title: string;
@@ -10,6 +11,7 @@ export function detectConflicts(
   zodiac: ZodiacResult,
   mbti: MbtiResult,
   bloodType: BloodTypeResult,
+  westernAstrology?: WesternAstrologyResult,
 ): ConflictPattern[] {
   const conflicts: ConflictPattern[] = [];
 
@@ -67,5 +69,39 @@ export function detectConflicts(
     });
   }
 
-  return conflicts.slice(0, 2);
+  // ── 서양점성술 갈등 패턴 ──────────────────────────────────────────────────
+  if (westernAstrology?.moon) {
+    const sunElement  = westernAstrology.sun.data.element;
+    const moonElement = westernAstrology.moon.data.element;
+
+    if (sunElement === '불' && moonElement === '물') {
+      conflicts.push({
+        title: '태양(불) vs 달(물) — 의지와 감성의 충돌',
+        description: `태양궁 ${westernAstrology.sun.data.sign}의 열정적 추진 에너지와 달궁 ${westernAstrology.moon.data.sign}의 깊은 감수성이 충돌합니다. 앞으로 나아가고 싶은 의지와 내면에서 고요히 처리하고 싶은 감정이 교차하며 에너지 낭비 패턴이 반복됩니다.`,
+      });
+    }
+
+    if (sunElement === '물' && moonElement === '불') {
+      conflicts.push({
+        title: '태양(물) vs 달(불) — 내면과 외면의 온도 차',
+        description: `태양궁 ${westernAstrology.sun.data.sign}의 깊고 유동적인 에너지와 달궁 ${westernAstrology.moon.data.sign}의 즉각적·열정적 감정 반응이 내면의 온도 차를 만듭니다. 외부에서는 차분해 보이지만 내면에서는 강한 감정이 빠르게 요동치는 구조입니다.`,
+      });
+    }
+
+    if (sunElement === '땅' && moonElement === '공기') {
+      conflicts.push({
+        title: '태양(땅) vs 달(공기) — 안정 욕구 vs 변화 욕구',
+        description: `태양궁 ${westernAstrology.sun.data.sign}의 안정 지향 에너지와 달궁 ${westernAstrology.moon.data.sign}의 유연하고 탐색적인 감정 패턴이 충돌합니다. 현실적 기반을 원하면서도 내면에서는 새로운 자극을 끊임없이 원하는 긴장이 반복됩니다.`,
+      });
+    }
+
+    if (sunElement === '공기' && moonElement === '땅') {
+      conflicts.push({
+        title: '태양(공기) vs 달(땅) — 논리적 자아 vs 감각적 감정',
+        description: `태양궁 ${westernAstrology.sun.data.sign}의 이성적·개념적 에너지와 달궁 ${westernAstrology.moon.data.sign}의 안정과 감각을 중시하는 감정 패턴이 충돌합니다. 머리와 몸이 원하는 것이 다른 상황이 반복되며, 의사결정 시 내면 긴장이 높아지는 패턴이 나타납니다.`,
+      });
+    }
+  }
+
+  return conflicts.slice(0, 3);
 }

@@ -1,4 +1,5 @@
 import { calculateSaju } from 'ssaju';
+import { calcWesternAstrology, calcSunSignKey, type WesternAstrologyResult } from './westernAstrology';
 
 // ── 타입 정의 ────────────────────────────────────────────────────────────────
 
@@ -79,6 +80,7 @@ export interface TarotFlow {
 export interface AnalysisOutput {
   saju: SajuOutput;
   zodiac: ZodiacResult;
+  westernAstrology: WesternAstrologyResult;
   mbtiTraits: MbtiResult;
   bloodType: BloodTypeResult;
   tarot: TarotResult;
@@ -88,6 +90,8 @@ export interface AnalysisOutput {
   archetype: string;
   tarotFlow: TarotFlow;
 }
+
+export type { WesternAstrologyResult };
 
 // ── 사주 — 오행 메타데이터 ───────────────────────────────────────────────────
 
@@ -241,22 +245,10 @@ export const TAROT_DATA: TarotResult[] = [
 
 // ── 핵심 함수들 ──────────────────────────────────────────────────────────────
 
-/** YYYY-MM-DD → 별자리 키 */
+/** YYYY-MM-DD → 별자리 키 (하위 호환 유지) */
 export function calcZodiacSign(birthdate: string): ZodiacKey {
   const [, mm, dd] = birthdate.split('-').map(Number);
-
-  if ((mm === 12 && dd >= 22) || (mm === 1 && dd <= 19)) return 'capricorn';
-  if ((mm === 1 && dd >= 20) || (mm === 2 && dd <= 18)) return 'aquarius';
-  if ((mm === 2 && dd >= 19) || (mm === 3 && dd <= 20)) return 'pisces';
-  if ((mm === 3 && dd >= 21) || (mm === 4 && dd <= 19)) return 'aries';
-  if ((mm === 4 && dd >= 20) || (mm === 5 && dd <= 20)) return 'taurus';
-  if ((mm === 5 && dd >= 21) || (mm === 6 && dd <= 20)) return 'gemini';
-  if ((mm === 6 && dd >= 21) || (mm === 7 && dd <= 22)) return 'cancer';
-  if ((mm === 7 && dd >= 23) || (mm === 8 && dd <= 22)) return 'leo';
-  if ((mm === 8 && dd >= 23) || (mm === 9 && dd <= 22)) return 'virgo';
-  if ((mm === 9 && dd >= 23) || (mm === 10 && dd <= 22)) return 'libra';
-  if ((mm === 10 && dd >= 23) || (mm === 11 && dd <= 21)) return 'scorpio';
-  return 'sagittarius';
+  return calcSunSignKey(mm, dd);
 }
 
 /** ssaju 라이브러리로 사주 계산 후 SajuOutput 형태로 정규화 */
@@ -553,7 +545,7 @@ function generateDetailedReading(
 
   // ── 5. 교차 신호 ───────────────────────────────────────────────────────────
 
-  const systemsLabel = hasMbti ? '사주 · 별자리 · MBTI · 혈액형' : '사주 · 별자리 · 혈액형';
+  const systemsLabel = hasMbti ? '사주 · 서양점성술 · MBTI · 혈액형' : '사주 · 서양점성술 · 혈액형';
 
   const kwConvergence = commonKeywords.map((kw) => {
     const coreTag = (Object.entries(TAG_LABELS) as [CoreTag, string][])
@@ -750,17 +742,20 @@ export function analyzeDestiny(
   mbti: string,
   gender: string,
   bloodtype: string,
-  selectedCard?: TarotResult
+  selectedCard?: TarotResult,
+  birthLat?: number,
+  birthLon?: number,
 ): AnalysisOutput {
   const zodiacKey = calcZodiacSign(birthdate);
   const zodiac = ZODIAC_DATA[zodiacKey];
+  const westernAstrology = calcWesternAstrology(birthdate, birthtime, birthLat, birthLon);
   const mbtiData = MBTI_DATA[mbti] ?? NULL_MBTI;
   const bloodTypeData = BLOOD_TYPE_DATA[bloodtype];
   const saju = calcSaju(birthdate, birthtime, gender);
   const tarot = selectedCard ?? calcTarot();
 
   const commonKeywords = calcCommonKeywords([
-    zodiac.coreTags,
+    westernAstrology.coreTags,
     mbtiData.coreTags,
     saju.coreTags,
     bloodTypeData.coreTags,
@@ -770,5 +765,5 @@ export function analyzeDestiny(
   const { identityStatement, archetype } = generateIdentity(saju, zodiac, mbtiData, bloodTypeData, tarot, commonKeywords);
 
   const tarotFlow = generateTarotFlow(tarot, commonKeywords, saju);
-  return { saju, zodiac, mbtiTraits: mbtiData, bloodType: bloodTypeData, tarot, commonKeywords, detailedReading, identityStatement, archetype, tarotFlow };
+  return { saju, zodiac, westernAstrology, mbtiTraits: mbtiData, bloodType: bloodTypeData, tarot, commonKeywords, detailedReading, identityStatement, archetype, tarotFlow };
 }

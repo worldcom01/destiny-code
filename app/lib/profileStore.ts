@@ -16,6 +16,10 @@ export interface DestinyProfile {
   zodiacSignEn: string;
   dominantElement: ElementKey;
   createdAt: string;
+  // 서양점성술 — 선택적 필드 (기존 저장 데이터와 하위 호환)
+  sunSign?: string;
+  moonSign?: string;
+  ascendantSign?: string;
 }
 
 const STORE_KEY = 'destiny_profiles_v1';

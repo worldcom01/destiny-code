@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ChangeEvent, ReactNode } from 'react';
 import { analyzeDestiny, type AnalysisOutput, type TarotResult, ELEMENT_META } from '@/app/lib/analysis';
+import { CITY_OPTIONS } from '@/app/lib/westernAstrology';
 import {
   saveAnalysis,
   getSavedAnalyses,
@@ -32,6 +33,7 @@ interface FormData {
   month: string;
   day: string;
   birthHour: string;
+  birthplace: string;
   gender: string;
   mbti: string;
   bloodtype: string;
@@ -84,7 +86,7 @@ const SIJU_TIME_MAP: Record<string, string> = {
 type AppStep = 'form' | 'picking' | 'analyzing' | 'result';
 
 const LOADING_STEPS = [
-  '사주 · 별자리 분석 중',
+  '사주 · 서양점성술 분석 중',
   '혈액형 · MBTI 성향 매핑 중',
   '선택된 타로 카드 연결 중',
   '운명 교집합 키워드 도출 중',
@@ -280,6 +282,7 @@ export default function Home() {
     month: '',
     day: '',
     birthHour: '',
+    birthplace: '',
     gender: '',
     mbti: '',
     bloodtype: '',
@@ -338,6 +341,7 @@ export default function Home() {
 
     const birthdate = `${form.year}-${form.month.padStart(2, '0')}-${form.day.padStart(2, '0')}`;
     const birthtime = SIJU_TIME_MAP[form.birthHour] ?? '';
+    const cityData = CITY_OPTIONS.find((c) => c.label === form.birthplace);
     const analysisResult = analyzeDestiny(
       birthdate,
       birthtime,
@@ -345,14 +349,17 @@ export default function Home() {
       form.gender,
       form.bloodtype,
       card,
+      cityData?.lat,
+      cityData?.lon,
     );
     setResult(analysisResult);
 
     const code = generateDestinyCode(analysisResult);
     setDestinyCode(code);
+    const wa = analysisResult.westernAstrology;
     const allCoreTags = [...new Set([
       ...analysisResult.saju.coreTags,
-      ...analysisResult.zodiac.coreTags,
+      ...wa.coreTags,
       ...(analysisResult.mbtiTraits.type ? analysisResult.mbtiTraits.coreTags : []),
       ...analysisResult.bloodType.coreTags,
     ])];
@@ -371,6 +378,9 @@ export default function Home() {
       zodiacSignEn: analysisResult.zodiac.signEn,
       dominantElement: analysisResult.saju.dominantElement,
       createdAt: new Date().toISOString(),
+      sunSign: wa.sun.data.sign,
+      moonSign: wa.moon?.data.sign,
+      ascendantSign: wa.ascendant?.data.sign,
     });
     console.log('[page] 생성된 운명 코드:', code, '/ localStorage 확인:', localStorage.getItem('destiny_profiles_v1'));
 
@@ -379,12 +389,14 @@ export default function Home() {
       analysisResult.zodiac,
       analysisResult.mbtiTraits,
       analysisResult.bloodType,
+      analysisResult.westernAstrology,
     ));
     setKeywordStrengths(computeKeywordStrengths(
       analysisResult.saju,
       analysisResult.zodiac,
       analysisResult.mbtiTraits,
       analysisResult.bloodType,
+      analysisResult.westernAstrology,
     ));
     setAppStep('result');
     setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
@@ -465,7 +477,7 @@ export default function Home() {
             AI 운명 교집합 분석
           </h1>
           <p className="text-slate-400 text-sm md:text-base leading-relaxed">
-            사주 · 별자리 · MBTI · 혈액형 · 타로의 교집합으로 발견하는
+            사주 · 서양점성술 · MBTI · 혈액형 · 타로의 교집합으로 발견하는
             <br className="hidden sm:block" />
             당신만의 운명 코드
           </p>
@@ -575,6 +587,25 @@ export default function Home() {
                   ))}
                   <option value="unknown" className="bg-slate-900 text-slate-400">모름</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5 tracking-wide uppercase">
+                  출생지 <span className="text-slate-600 normal-case">(선택 · 상승궁 계산)</span>
+                </label>
+                <select
+                  value={form.birthplace}
+                  onChange={(e) => setField('birthplace', e.target.value)}
+                  className={`${selectClass} ${!form.birthplace ? 'text-slate-500' : ''}`}
+                >
+                  <option value="" className="bg-slate-900 text-slate-500">출생지를 선택하세요</option>
+                  {CITY_OPTIONS.map((c) => (
+                    <option key={c.label} value={c.label} className="bg-slate-900 text-white">{c.label}</option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-[10px] text-slate-700 leading-relaxed">
+                  출생시간을 입력하면 보다 정확한 서양점성술 분석이 가능합니다. 출생지까지 입력하면 상승궁(Ascendant)이 계산됩니다.
+                </p>
               </div>
 
               <div>
@@ -868,32 +899,85 @@ export default function Home() {
               </div>
             </ResultCard>
 
-            {/* 별자리 분석 */}
+            {/* 서양점성술 분석 */}
             <ResultCard
-              icon={result.zodiac.symbol}
-              title="별자리 분석"
+              icon="✦"
+              title="서양점성술 분석"
               hoverBorderClass="hover:border-blue-500/30"
               delay={180}
             >
-              <div className="flex flex-wrap gap-2 mb-3">
-                <span className="px-2.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs">
-                  {result.zodiac.sign}
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full bg-slate-700/50 border border-slate-600/30 text-slate-400 text-xs">
-                  {result.zodiac.element} 원소
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full bg-slate-700/50 border border-slate-600/30 text-slate-400 text-xs">
-                  {result.zodiac.rulingPlanet} 지배
-                </span>
-              </div>
-              <p className="text-slate-400 leading-relaxed text-sm group-hover:text-slate-300 transition-colors duration-300">
-                {result.zodiac.description}
-              </p>
-              <div className="flex gap-1.5 mt-3">
-                {result.zodiac.coreTags.map((tag) => (
-                  <span key={tag} className="text-xs text-blue-400/70">#{tag}</span>
+              {/* 행성 배치 목록 */}
+              <div className="space-y-4 mb-4">
+                {[
+                  result.westernAstrology.sun,
+                  result.westernAstrology.moon,
+                  result.westernAstrology.ascendant,
+                ].filter((p): p is NonNullable<typeof p> => p !== null).map((placement) => (
+                  <div key={placement.planet}>
+                    <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                      <span className="text-blue-300/70 text-base w-5 text-center flex-shrink-0">
+                        {placement.planetSymbol}
+                      </span>
+                      <span className="text-slate-400 text-xs tracking-wide">
+                        {placement.planetLabel}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-200 text-xs font-medium">
+                        {placement.data.sign}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-slate-700/50 border border-slate-600/30 text-slate-500 text-xs">
+                        {placement.data.element} · {placement.data.modality}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-slate-700/50 border border-slate-600/30 text-slate-500 text-xs">
+                        {placement.data.rulingPlanet} 지배
+                      </span>
+                    </div>
+                    <p className="text-slate-400 leading-relaxed text-sm group-hover:text-slate-300 transition-colors duration-300 ml-7">
+                      {placement.description}
+                    </p>
+                  </div>
                 ))}
               </div>
+
+              {/* 서양점성술 핵심 키워드 */}
+              <div className="border-t border-slate-800 pt-3">
+                <p className="text-xs text-slate-600 mb-2">서양점성술 핵심 키워드</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {result.westernAstrology.keywords.map((kw) => (
+                    <span key={kw} className="text-xs text-blue-400/70">#{kw}</span>
+                  ))}
+                </div>
+              </div>
+
+              {/* 강점 / 약점 */}
+              <div className="border-t border-slate-800 pt-3 mt-3 grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-[10px] text-slate-600 mb-1.5 tracking-wide">강점</p>
+                  <ul className="space-y-1">
+                    {result.westernAstrology.sun.data.strengths.map((s) => (
+                      <li key={s} className="flex items-center gap-1.5 text-xs text-slate-500">
+                        <span className="text-blue-500/50">▸</span>{s}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-600 mb-1.5 tracking-wide">과제</p>
+                  <ul className="space-y-1">
+                    {result.westernAstrology.sun.data.weaknesses.map((w) => (
+                      <li key={w} className="flex items-center gap-1.5 text-xs text-slate-500">
+                        <span className="text-orange-500/40">▸</span>{w}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              {/* 근사치 안내 */}
+              {result.westernAstrology.isApproximate && (
+                <p className="text-[9px] text-slate-700 mt-3 leading-relaxed">
+                  달궁·상승궁은 천문 근사 알고리즘으로 계산됩니다. 경계일(Sign Cusp) 근처에서는 실제 배치와 1궁 차이가 생길 수 있습니다.
+                </p>
+              )}
             </ResultCard>
 
             {/* MBTI 분석 */}
@@ -927,7 +1011,7 @@ export default function Home() {
               >
                 <span className="text-slate-700 text-base">◈</span>
                 <p className="text-slate-600 text-xs leading-relaxed">
-                  MBTI 미입력 · 사주 · 별자리 · 혈액형 · 타로 4개 체계로 분석이 진행되었습니다
+                  MBTI 미입력 · 사주 · 서양점성술 · 혈액형 · 타로 4개 체계로 분석이 진행되었습니다
                 </p>
               </div>
             )}
@@ -963,7 +1047,7 @@ export default function Home() {
                   운명 코드 강도
                 </h3>
                 <p className="text-slate-600 text-xs mb-4">
-                  {result.mbtiTraits.type ? '네' : '세'} 분석 체계에서 각 성향이 얼마나 강하게 수렴되는지 나타냅니다
+                  사주 · 서양점성술 · {result.mbtiTraits.type ? 'MBTI · ' : ''}혈액형 체계에서 각 성향이 얼마나 강하게 수렴되는지 나타냅니다
                 </p>
                 <div className="space-y-3.5">
                   {keywordStrengths.map((ks) => (
@@ -1111,7 +1195,7 @@ export default function Home() {
 
                 {/* footnote */}
                 <p className="text-slate-600 text-[10px]">
-                  {result.mbtiTraits.type ? '5개' : '4개'} 분석 체계에서 독립적으로 반복 확인된 교집합입니다
+                  {result.mbtiTraits.type ? '5개' : '4개'} 분석 체계(사주 · 서양점성술 · {result.mbtiTraits.type ? 'MBTI · ' : ''}혈액형 · 타로)에서 독립적으로 반복 확인된 교집합입니다
                 </p>
               </div>
             </div>

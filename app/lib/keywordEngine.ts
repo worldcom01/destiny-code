@@ -1,4 +1,5 @@
 import type { SajuOutput, ZodiacResult, MbtiResult, BloodTypeResult, CoreTag } from './analysis';
+import type { WesternAstrologyResult } from './westernAstrology';
 
 export interface KeywordStrength {
   keyword: string;
@@ -25,13 +26,22 @@ export function computeKeywordStrengths(
   zodiac: ZodiacResult,
   mbti: MbtiResult,
   bloodType: BloodTypeResult,
+  westernAstrology?: WesternAstrologyResult,
 ): KeywordStrength[] {
   const systems: Array<{ label: string; tags: CoreTag[] }> = [
-    { label: '사주',         tags: saju.coreTags },
-    { label: '별자리',       tags: zodiac.coreTags },
-    { label: mbti.type,     tags: mbti.coreTags },
+    { label: '사주',              tags: saju.coreTags },
+    { label: '태양궁',            tags: zodiac.coreTags },
+    { label: mbti.type,           tags: mbti.coreTags },
     { label: `${bloodType.type}형`, tags: bloodType.coreTags },
   ];
+
+  // 달궁/상승궁이 있으면 추가 소스로 포함
+  if (westernAstrology?.moon) {
+    systems.push({ label: `달궁 ${westernAstrology.moon.data.sign}`, tags: westernAstrology.moon.data.coreTags });
+  }
+  if (westernAstrology?.ascendant) {
+    systems.push({ label: `상승궁 ${westernAstrology.ascendant.data.sign}`, tags: westernAstrology.ascendant.data.coreTags });
+  }
 
   const activeSystems = systems.filter((s) => s.tags.length > 0);
   const allTags = new Set<CoreTag>(activeSystems.flatMap((s) => s.tags));
