@@ -17,6 +17,7 @@ import { detectConflicts, type ConflictPattern } from '@/app/lib/conflictEngine'
 import { computeKeywordStrengths, type KeywordStrength } from '@/app/lib/keywordEngine';
 import { generateDestinyCode } from '@/app/lib/destinyCode';
 import { saveProfile } from '@/app/lib/profileStore';
+import { saveAnalyticsResult } from '@/app/lib/analyticsEngine';
 import { BrandFooter } from '@/app/components/BrandFooter';
 
 const MBTI_OPTIONS = [
@@ -40,7 +41,6 @@ interface FormData {
 }
 
 const CURRENT_YEAR = new Date().getFullYear();
-const BIRTH_YEARS = Array.from({ length: CURRENT_YEAR - 1929 }, (_, i) => CURRENT_YEAR - i);
 
 const SIJU_LIST = [
   { value: '자시', label: '자시 (子時)  23:31 ~ 01:30' },
@@ -399,6 +399,7 @@ export default function Home() {
       analysisResult.westernAstrology,
     ));
     setAppStep('result');
+    saveAnalyticsResult(analysisResult, code); // 비동기 — 실패해도 UX에 영향 없음
     setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
   };
 
@@ -533,16 +534,15 @@ export default function Home() {
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
-                  <select
+                  <input
+                    type="number"
                     value={form.year}
                     onChange={(e) => setField('year', e.target.value)}
-                    className={`${selectClass} ${!form.year ? 'text-slate-500' : ''}`}
-                  >
-                    <option value="" disabled>년</option>
-                    {BIRTH_YEARS.map((y) => (
-                      <option key={y} value={String(y)}>{y}년</option>
-                    ))}
-                  </select>
+                    placeholder="년도"
+                    min={1930}
+                    max={CURRENT_YEAR}
+                    className={`${inputClass} ${!form.year ? 'text-slate-500' : ''}`}
+                  />
                   <select
                     value={form.month}
                     onChange={(e) => setField('month', e.target.value)}
