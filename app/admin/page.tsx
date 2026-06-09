@@ -15,6 +15,7 @@ interface AnalyticsData {
     zodiac:     DistItem[];
   };
   bias: { pct: number; label: string; warn: boolean };
+  notice?: string;
   rows: Array<{
     id: string;
     created_at: string;
@@ -216,6 +217,14 @@ export default function AdminPage() {
             </button>
           </div>
         </div>
+
+        {/* Supabase 미설정 안내 */}
+        {d?.notice && (
+          <div className="flex items-center gap-3 bg-slate-800/60 border border-slate-600/30 rounded-xl px-4 py-3">
+            <span className="text-slate-400 text-lg flex-shrink-0">ℹ</span>
+            <p className="text-slate-400 text-sm">{d.notice}</p>
+          </div>
+        )}
 
         {/* 편향 경고 */}
         {d?.bias.warn && (

@@ -21,7 +21,13 @@ export async function GET(req: NextRequest) {
 
   const client = getServiceClient();
   if (!client) {
-    return NextResponse.json({ error: 'Supabase not configured' }, { status: 503 });
+    return NextResponse.json({
+      stats: { total: 0, today: 0, week7: 0 },
+      distributions: { archetypes: [], keywords: [], mbti: [], blood: [], zodiac: [] },
+      bias: { pct: 0, label: '', warn: false },
+      rows: [],
+      notice: 'Supabase가 연결되지 않았습니다. 환경변수를 설정하면 데이터가 수집됩니다.',
+    });
   }
 
   const url = new URL(req.url);
