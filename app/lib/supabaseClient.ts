@@ -1,10 +1,15 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-const url  = process.env.NEXT_PUBLIC_SUPABASE_URL  ?? '';
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+let _client: SupabaseClient | null = null;
 
-// 클라이언트 사이드 전용 (anon key) — INSERT only
-export const supabase = createClient(url, anon);
+// 클라이언트 사이드 전용 (anon key) — INSERT only. Lazy init so build doesn't fail without env vars.
+export function getSupabaseClient(): SupabaseClient | null {
+  const url  = process.env.NEXT_PUBLIC_SUPABASE_URL  ?? '';
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+  if (!url || !anon) return null;
+  if (!_client) _client = createClient(url, anon);
+  return _client;
+}
 
 // 테이블 행 타입
 export interface AnalysisRow {

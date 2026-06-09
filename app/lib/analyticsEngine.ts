@@ -1,4 +1,4 @@
-import { supabase, type AnalysisRow } from './supabaseClient';
+import { getSupabaseClient, type AnalysisRow } from './supabaseClient';
 import type { AnalysisOutput } from './analysis';
 
 const SESSION_KEY = 'destiny_saved_codes';
@@ -29,8 +29,8 @@ export async function saveAnalyticsResult(
   result: AnalysisOutput,
   destinyCode: string,
 ): Promise<void> {
-  // env 미설정이면 skip
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return;
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
 
   // 세션 내 중복 방지
   if (getSavedCodes().has(destinyCode)) return;
