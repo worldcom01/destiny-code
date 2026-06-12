@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ChangeEvent, ReactNode } from 'react';
 import { analyzeDestiny, type AnalysisOutput, type TarotResult, ELEMENT_META } from '@/app/lib/analysis';
-import { CITY_OPTIONS } from '@/app/lib/westernAstrology';
+import { LOCATION_OPTION_GROUPS, findLocationByLabel } from '@/app/lib/regions';
 import {
   saveAnalysis,
   getSavedAnalyses,
@@ -341,7 +341,7 @@ export default function Home() {
 
     const birthdate = `${form.year}-${form.month.padStart(2, '0')}-${form.day.padStart(2, '0')}`;
     const birthtime = SIJU_TIME_MAP[form.birthHour] ?? '';
-    const cityData = CITY_OPTIONS.find((c) => c.label === form.birthplace);
+    const location = findLocationByLabel(form.birthplace);
     const analysisResult = analyzeDestiny(
       birthdate,
       birthtime,
@@ -349,8 +349,8 @@ export default function Home() {
       form.gender,
       form.bloodtype,
       card,
-      cityData?.lat,
-      cityData?.lon,
+      location?.lat,
+      location?.lon,
     );
     setResult(analysisResult);
 
@@ -593,14 +593,23 @@ export default function Home() {
                 <label className="block text-xs font-medium text-slate-400 mb-1.5 tracking-wide uppercase">
                   출생지 <span className="text-slate-600 normal-case">(선택 · 상승궁 계산)</span>
                 </label>
+                <p className="mb-1.5 text-[11px] text-slate-500">
+                  출생지와 가장 가까운 지역을 선택해주세요.
+                </p>
                 <select
                   value={form.birthplace}
                   onChange={(e) => setField('birthplace', e.target.value)}
                   className={`${selectClass} ${!form.birthplace ? 'text-slate-500' : ''}`}
                 >
                   <option value="" className="bg-slate-900 text-slate-500">출생지를 선택하세요</option>
-                  {CITY_OPTIONS.map((c) => (
-                    <option key={c.label} value={c.label} className="bg-slate-900 text-white">{c.label}</option>
+                  {LOCATION_OPTION_GROUPS.map((group) => (
+                    <optgroup key={group.label} label={group.label} className="bg-slate-900 text-slate-400">
+                      {group.options.map((opt) => (
+                        <option key={opt.code} value={opt.label} className="bg-slate-900 text-white">
+                          {opt.label}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
                 <p className="mt-1.5 text-[10px] text-slate-700 leading-relaxed">

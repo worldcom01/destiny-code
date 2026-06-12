@@ -48,41 +48,6 @@ export interface WesternAstrologyResult {
   isApproximate: boolean;
 }
 
-// ── 출생지 도시 목록 ───────────────────────────────────────────────────────────
-
-export interface CityOption {
-  label: string;
-  lat: number;
-  lon: number;
-}
-
-export const CITY_OPTIONS: CityOption[] = [
-  { label: '서울',             lat: 37.5665,  lon: 126.9780 },
-  { label: '부산',             lat: 35.1796,  lon: 129.0756 },
-  { label: '인천',             lat: 37.4563,  lon: 126.7052 },
-  { label: '대구',             lat: 35.8714,  lon: 128.6014 },
-  { label: '대전',             lat: 36.3504,  lon: 127.3845 },
-  { label: '광주',             lat: 35.1595,  lon: 126.8526 },
-  { label: '울산',             lat: 35.5384,  lon: 129.3114 },
-  { label: '수원',             lat: 37.2636,  lon: 127.0286 },
-  { label: '창원',             lat: 35.2280,  lon: 128.6811 },
-  { label: '고양',             lat: 37.6584,  lon: 126.8320 },
-  { label: '성남',             lat: 37.4200,  lon: 127.1269 },
-  { label: '청주',             lat: 36.6424,  lon: 127.4890 },
-  { label: '전주',             lat: 35.8242,  lon: 127.1480 },
-  { label: '제주',             lat: 33.4996,  lon: 126.5312 },
-  { label: '도쿄 (일본)',      lat: 35.6762,  lon: 139.6503 },
-  { label: '오사카 (일본)',    lat: 34.6937,  lon: 135.5023 },
-  { label: '뉴욕 (미국)',      lat: 40.7128,  lon: -74.0060 },
-  { label: '로스앤젤레스 (미국)', lat: 34.0522, lon: -118.2437 },
-  { label: '런던 (영국)',      lat: 51.5074,  lon: -0.1278  },
-  { label: '베이징 (중국)',    lat: 39.9042,  lon: 116.4074 },
-  { label: '상하이 (중국)',    lat: 31.2304,  lon: 121.4737 },
-  { label: '시드니 (호주)',    lat: -33.8688, lon: 151.2093 },
-  { label: '밴쿠버 (캐나다)', lat: 49.2827,  lon: -123.1207 },
-  { label: '토론토 (캐나다)', lat: 43.6532,  lon: -79.3832  },
-];
-
 // ── 12궁 상세 데이터 ───────────────────────────────────────────────────────────
 
 const SIGN_DATA: Record<ZodiacKey, WesternSignData> = {
