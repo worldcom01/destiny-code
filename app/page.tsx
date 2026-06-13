@@ -18,7 +18,9 @@ import { computeKeywordStrengths, type KeywordStrength } from '@/app/lib/keyword
 import { generateDestinyCode } from '@/app/lib/destinyCode';
 import { saveProfile } from '@/app/lib/profileStore';
 import { saveAnalyticsResult } from '@/app/lib/analyticsEngine';
-import { BrandFooter } from '@/app/components/BrandFooter';
+import { SiteHeader } from '@/app/components/SiteHeader';
+import { NextStepsCTA } from '@/app/components/NextStepsCTA';
+import { PlatformFooter } from '@/app/components/PlatformFooter';
 
 const MBTI_OPTIONS = [
   'INTJ', 'INTP', 'ENTJ', 'ENTP',
@@ -459,6 +461,9 @@ export default function Home() {
       {appStep === 'picking' && (
         <TarotPickerScreen cards={shuffledCards} onPick={handleCardPicked} />
       )}
+
+      {/* 플랫폼 헤더 */}
+      <SiteHeader active="intersection" />
 
       {/* 배경 글로우 */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
@@ -1419,14 +1424,17 @@ export default function Home() {
                 ↺ 다시 분석하기
               </button>
             </div>
+
+            {/* 다음 단계 추천 */}
+            <NextStepsCTA />
           </div>
         )}
 
-        <footer className="text-center mt-14 space-y-4">
+        <footer className="text-center mt-14 space-y-5">
           <p className="text-slate-700 text-xs">
             AI 분석 결과는 참고용이며 실제 운명을 보장하지 않습니다
           </p>
-          <BrandFooter variant="result" showSlogan />
+          <PlatformFooter />
         </footer>
       </div>
     </div>
