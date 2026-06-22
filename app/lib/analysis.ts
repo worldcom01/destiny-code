@@ -257,6 +257,7 @@ export function calcSaju(
   birthtime: string,         // "HH:mm" 또는 ""
   gender: string,            // "male" | "female" | "other"
   calendarType: 'solar' | 'lunar' = 'solar',
+  isLeapMonth: boolean = false,
 ): SajuOutput {
   const [year, month, day] = birthdate.split('-').map(Number);
   const hasTime = birthtime.length > 0;
@@ -266,7 +267,12 @@ export function calcSaju(
 
   const sajuGender = gender === 'female' ? '여' : '남';
 
-  const result = calculateSaju({ year, month, day, hour, minute, gender: sajuGender, calendar: calendarType });
+  const result = calculateSaju({
+    year, month, day, hour, minute,
+    gender: sajuGender,
+    calendar: calendarType,
+    leap: calendarType === 'lunar' ? isLeapMonth : undefined,
+  });
 
   // 오행 (fiveElements keys: '목' '화' '토' '금' '수')
   const raw = result.fiveElements as Record<string, number>;
@@ -747,12 +753,13 @@ export function analyzeDestiny(
   birthLat?: number,
   birthLon?: number,
   calendarType: 'solar' | 'lunar' = 'solar',
+  isLeapMonth: boolean = false,
 ): AnalysisOutput {
   // 별자리/서양 점성술은 항상 양력 기준 날짜가 필요하므로, 음력 입력이면 변환
   let solarBirthdate = birthdate;
   if (calendarType === 'lunar') {
     const [ly, lm, ld] = birthdate.split('-').map(Number);
-    const solar = lunarToSolar(ly, lm, ld, false);
+    const solar = lunarToSolar(ly, lm, ld, isLeapMonth);
     solarBirthdate = `${solar.year}-${String(solar.month).padStart(2, '0')}-${String(solar.day).padStart(2, '0')}`;
   }
 
@@ -761,7 +768,7 @@ export function analyzeDestiny(
   const westernAstrology = calcWesternAstrology(solarBirthdate, birthtime, birthLat, birthLon);
   const mbtiData = MBTI_DATA[mbti] ?? NULL_MBTI;
   const bloodTypeData = BLOOD_TYPE_DATA[bloodtype];
-  const saju = calcSaju(birthdate, birthtime, gender, calendarType);
+  const saju = calcSaju(birthdate, birthtime, gender, calendarType, isLeapMonth);
   const tarot = selectedCard ?? calcTarot();
 
   const commonKeywords = calcCommonKeywords([

@@ -32,6 +32,7 @@ const MBTI_OPTIONS = [
 interface FormData {
   name: string;
   solarType: 'solar' | 'lunar';
+  isLeapMonth: boolean;
   year: string;
   month: string;
   day: string;
@@ -280,6 +281,7 @@ export default function Home() {
   const [form, setForm] = useState<FormData>({
     name: '',
     solarType: 'solar',
+    isLeapMonth: false,
     year: '',
     month: '',
     day: '',
@@ -354,6 +356,7 @@ export default function Home() {
       location?.lat,
       location?.lon,
       form.solarType,
+      form.isLeapMonth,
     );
     setResult(analysisResult);
 
@@ -576,6 +579,17 @@ export default function Home() {
                     ))}
                   </select>
                 </div>
+                {form.solarType === 'lunar' && (
+                  <label className="flex items-center gap-2 mt-2 text-[11px] text-slate-400 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.isLeapMonth}
+                      onChange={(e) => setForm((prev) => ({ ...prev, isLeapMonth: e.target.checked }))}
+                      className="accent-purple-600"
+                    />
+                    윤달(윤월)에 태어났어요
+                  </label>
+                )}
               </div>
 
               <div>
