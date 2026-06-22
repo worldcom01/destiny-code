@@ -353,6 +353,7 @@ export default function Home() {
       card,
       location?.lat,
       location?.lon,
+      form.solarType,
     );
     setResult(analysisResult);
 
