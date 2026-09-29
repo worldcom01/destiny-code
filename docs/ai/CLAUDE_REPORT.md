@@ -1,3 +1,103 @@
+# Claude Implementation Report — Palm Phase 1A: Codex IMPORTANT 수정
+
+Status: PALM PHASE 1A — IMPORTANT FIX IMPLEMENTED / AWAITING CODEX RE-REVIEW
+
+Branch `refactor/palm-observation-phase1a`, 수정 커밋 `f1456eb`(검수 대상 `9f99383` 이후 새 커밋). Not merged, not pushed. Phase 1B는 시작하지 않았다. 아래의 최초 Phase 1A 보고와 이전 보고는 보존한다.
+
+## Codex 지적 (C, IMPORTANT 1)
+
+- `palmEvidence.ts`의 `checkReading()`/`checkBundle()`이 모순된 런타임 입력을 받아들였다. 수정 전 코드로 직접 재현한 결과, 아래 5종이 모두 12행을 만들었다.
+  - unreadable 선에 관찰된 curvature가 붙은 경우
+  - unreadable 판독에 value가 붙은 경우
+  - observed 판독에 reason이 붙은 경우
+  - visible 선에 reason이 붙은 경우
+  - 품질 `issues`·`palmCoverage`를 검사하지 않음
+- 검증이 adapter 내부 비공개 함수여서 향후 provider 단계가 재사용할 단일 검증 경계가 없었다.
+- (Codex 검수 원문은 저장소에 커밋되어 있지 않아, 지적 내용을 코드로 직접 재현해 확인했다.)
+
+## 수정
+
+- **공개 검증 경계 (유일):** `app/lib/palmObservation.ts`
+  - `parsePalmObservationBundle(input: unknown): PalmObservationBundle`
+  - 실패하면 `PalmObservationContractError`를 던진다. 오류 클래스는 adapter에서 계약 모듈로 옮겼다.
+  - 순환 의존성은 없다(`palmEvidence` → `palmObservation` 단방향).
+- **엄격성:** 모든 단계에서 **정확한 필드 집합**을 요구한다(bundle, observation, lines 4개 key, 각 선, 각 판독, quality, extraction). 판별 상태와 맞지 않는 필드는 무시하지 않고 거부한다.
+
+| 대상 | 허용되는 형태 |
+| --- | --- |
+| 판독 observed | `{status, value}` (value는 enum), reason 불가 |
+| 판독 unreadable | `{status, reason}` (reason은 enum), value 불가 |
+| visible 선 | `{status, curvature, continuity}` (두 판독 필수), reason 불가 |
+| not-detected 선 | `{status}`만 |
+| unreadable 선 | `{status, reason}`만, 속성 불가 |
+| quality | `{version:1, usability, palmCoverage, issues}` (issues는 enum 배열·중복 불가, 숫자 confidence 등 추가 필드 불가) |
+| extraction | 세 버전 문자열(비어 있으면 안 됨) |
+
+- **품질·관찰 모순 거부(설계 §3):**
+  - `usability: 'unusable'`이면 네 선이 모두 `unreadable`이어야 한다.
+  - `palmCoverage: 'none'`이면 `unusable`이어야 한다.
+- **정규화 없음:** 없는 값을 채우지 않고, 모순 필드를 버리지 않는다. 입력을 변경하지 않으며 새 객체를 반환한다.
+- **adapter:** `buildPalmEvidence()`는 먼저 `parsePalmObservationBundle()`로 전체를 검증한 뒤에만 행을 만든다. 따라서 **원자적 거부**가 된다(유효한 선의 행만 부분적으로 나가는 일이 없음). adapter 안의 별도 검사 코드는 제거했다. 유효성 정의는 한 곳뿐이다.
+- **유효 입력의 Evidence 의미는 변경 없음:** 12행, 순서, ID, feature, available·unreadable·missing 매핑, 이미지 없음 0행, unusable 0행 모두 그대로다.
+
+### 동작 변화 1건 (설계 §3 적용)
+
+기존 회귀 3번은 "unusable인데 관찰값이 있는 선 → 0행"을 기대했다. 이 입력은 설계 §3이 거부하라고 한 명백한 모순이므로, 이제 **거부**된다. 정상적인 unusable bundle(네 선 모두 unreadable)은 여전히 0행이다.
+
+## 추가 회귀 (`scripts/regression-palm-evidence.ts`: 44 → **76 PASS**)
+
+- **적대적 입력 24종:** 각 입력마다 공개 검증 함수와 adapter **둘 다** 거부하는지, Evidence가 0행인지, 입력이 변하지 않았는지 확인한다. 요청된 12종은 다음과 같다.
+  1. unreadable 판독 + value
+  2. observed 판독 + reason
+  3. unreadable 선 + curvature
+  4. unreadable 선 + continuity
+  5. not-detected 선 + curvature
+  6. not-detected 선 + continuity
+  7. visible 선에 판독 누락
+  8. 잘못된 curvature 값
+  9. 잘못된 continuity 값
+  10. 잘못된 reason
+  11. 잘못된 usability
+  12. 선 구조 자체가 잘못됨
+- 추가로 검사하는 조합:
+  - visible 선 + reason, not-detected 선 + reason
+  - status 없는 판독, value 없는 observed, reason 없는 unreadable 선
+  - 잘못된 palmCoverage, 잘못된 issue, 중복 issue, quality에 숫자 confidence 필드
+  - coverage none + usable, 빈 extraction 문자열, bundle에 추가 필드(`coreTags`)
+- **원자성:** life/head/heart가 유효하고 fate만 잘못돼도 오류가 나며 0행이다.
+- **공개 검증 함수 직접 검사:**
+  - 유효 입력을 받아들이고 같은 값을 반환한다.
+  - deep-freeze 입력을 변경하지 않고 새 객체를 반환한다.
+  - 결정적이며, 검증 결과와 원본에서 같은 Evidence가 나온다.
+- **Phase 1B 형태 경계:**
+  - `providerOutput: unknown` → `parsePalmObservationBundle` → `buildPalmEvidence`로 12행이 나온다.
+  - 잘못된 provider 출력은 adapter에 도달하기 **전에** 거부된다.
+- 기존 검사 44개 중 2개를 갱신했다: 위 3번의 unusable 모순 거부, 그리고 export 검사(오류 클래스는 계약 모듈에 있음). 나머지는 그대로 PASS다.
+- **Mutation check:** unreadable 선의 정확한 필드 검사를 완화하면 4개가 FAIL하고, adapter가 검증 함수를 건너뛰면 39개가 FAIL한다. 복구 후 76 PASS다.
+
+## 검증
+
+```
+npx -y tsx scripts/regression-palm-evidence.ts          # PASS (76)
+npx -y tsx scripts/golden-analysis.ts                   # PASS: golden v1/v2/v3 checks (7 cases)
+npx -y tsx scripts/regression-saved-context.ts          # PASS
+npx -y tsx scripts/regression-evidence-trace.ts         # PASS
+npx -y tsx scripts/regression-analysis-patterns.ts      # PASS (74)
+npx -y tsx scripts/regression-identity-selection.ts     # PASS (97)
+npx -y tsx scripts/regression-identity-catalog-v3.ts    # PASS (23)
+npx -y tsx scripts/diagnostic-identity-diversity.ts     # OK — 19,983 unique, selection 25ab43b8, full dab19aab
+npx tsc --noEmit -p .                                   # OK
+npm run build                                           # OK
+npm run lint                                            # 기존 9건 그대로, 신규 0
+git diff --check                                        # OK
+```
+
+- `ANALYSIS_ENGINE_VERSION = '3'`, `schemaVersion = 2` — 변경 없음.
+- 운영 파일(`analysis.ts`, `evidenceTrace.ts`, `analysisPatterns.ts`, `identitySelection.ts`, `storageEngine.ts`, `page.tsx`)과 golden v1/v2/v3이 main과 동일하다. Palm은 여전히 운영 분석에 연결되지 않았다.
+- provider, API, 업로드, Claim, CoreTag, UI, storage는 추가하지 않았다.
+
+---
+
 # Claude Implementation Report — Palm Phase 1A
 
 Status: PALM PHASE 1A — IMPLEMENTED / AWAITING CODEX REVIEW

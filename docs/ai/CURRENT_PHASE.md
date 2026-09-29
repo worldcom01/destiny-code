@@ -1,6 +1,12 @@
 # Palm Phase 1A — Observation Contract + Evidence Adapter
 
-Status: PALM PHASE 1A — IMPLEMENTED / AWAITING CODEX REVIEW
+Status: PALM PHASE 1A — IMPORTANT FIX IMPLEMENTED / AWAITING CODEX RE-REVIEW
+
+Codex 검수(`9f99383`)는 **C — NOT READY**(BLOCKER 0 / IMPORTANT 1)였다. 지적 내용은 모순 상태를 허용하는 런타임 검증과, 재사용 가능한 검증 경계의 부재다. Claude가 새 커밋 `f1456eb`로 수정했다.
+- 공개 검증 함수 `parsePalmObservationBundle(unknown)`와 `PalmObservationContractError`를 `app/lib/palmObservation.ts`에 두었다.
+- 모든 단계에서 정확한 필드 집합과 판별 상태 불변식을 요구한다. 품질과 관찰의 모순도 거부한다.
+- adapter는 같은 검증 함수를 거쳐 원자적으로 거부한다.
+- Palm 회귀는 76 PASS다. 기존 회귀·golden·digest는 불변이다.
 
 Palm 아키텍처 설계(Codex 판정 A, 커밋 `f2db08c`)의 **P1-A만** 구현했다. 브랜치는 `refactor/palm-observation-phase1a`(from main `f2db08c`)이며, 병합·push하지 않았다.
 
