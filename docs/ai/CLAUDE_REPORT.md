@@ -1,3 +1,105 @@
+# Claude Implementation Report — Palm Phase 1A
+
+Status: PALM PHASE 1A — IMPLEMENTED / AWAITING CODEX REVIEW
+
+Branch `refactor/palm-observation-phase1a` (from main `f2db08c`, Palm 아키텍처 설계 커밋 포함). Not merged, not pushed. 아래의 이전 보고는 그대로 보존한다.
+
+## 범위
+
+`CODEX_REVIEW.md` "Palm Phase 1 — Evidence Architecture Design" §13의 **P1-A**(관찰 계약 + 순수 adapter + 회귀)만 구현했다. 설계가 지정한 세 파일이다.
+
+| 파일 | 내용 |
+| --- | --- |
+| `app/lib/palmObservation.ts` | 관찰 계약 타입과 고정 enum 목록 (설계 §2 타입 그대로) |
+| `app/lib/palmEvidence.ts` | `buildPalmEvidence(bundle)` 순수 adapter, `PalmObservationContractError` |
+| `scripts/regression-palm-evidence.ts` | Palm P1-A 회귀 (44 assertions) |
+
+만들지 않은 것: 이미지 업로드, provider, API route, AI 호출, Palm InterpretationClaim, CoreTag 매핑, convergence 참여, Identity 영향, UI, snapshot·storage·Supabase 변경, `analyzeDestiny`/`evidenceTrace` 통합(dormant integration 포함).
+
+## 관찰 계약 (설계 §2와 동일)
+
+```ts
+type PalmLineKey = 'life' | 'head' | 'heart' | 'fate';
+type PalmReading<T> = { status: 'observed'; value: T } | { status: 'unreadable'; reason: PalmReadabilityReason };
+type PalmLineObservation =
+  | { status: 'visible'; curvature: PalmReading<'straight' | 'curved'>; continuity: PalmReading<'continuous' | 'interrupted'> }
+  | { status: 'not-detected' }
+  | { status: 'unreadable'; reason: PalmReadabilityReason };
+type PalmObservation = { version: 1; lines: Record<PalmLineKey, PalmLineObservation> };        // 4 key 모두 필수
+type PalmImageQuality = { version: 1; usability: 'usable' | 'partial' | 'unusable'; palmCoverage: 'full' | 'partial' | 'none'; issues: PalmImageIssue[] };
+type PalmObservationBundle = { version: 1; observation; quality; extraction: { adapterVersion; modelRevision; promptVersion } };
+```
+
+- **readability reason:** blur, lighting, cropped, occluded, perspective, ambiguous-line, not-visible
+- **image issues:** blur, lighting, occlusion, perspective, cropped-palm, multiple-hands, not-a-palm
+- 숫자 confidence가 없다. 성격·수명·미래·건강 용어도 없다. Palm Shape·Finger Ratio·mount·보조선·우세손도 없다.
+- **품질 3층 분리:**
+  - (A) 전체 사용 가능성: `quality.usability`
+  - (B) 문제 flags: `quality.issues` / `palmCoverage`
+  - (C) 속성별 판독: 각 `PalmReading.status`와 이유
+- provider 관련 개념은 `PalmObservation`에 없다. `extraction` 버전 문자열은 설계대로 bundle에만 있고, 서버 설정에서 채울 일반 메타데이터다.
+
+## Evidence adapter
+
+- `buildPalmEvidence(bundle: PalmObservationBundle | undefined): EvidenceRecord[]`
+  - 순수 함수다. 시간·난수·네트워크·SDK가 없고, 입력을 변경하지 않으며, 결정적이다.
+- 기존 `EvidenceRecord` 타입을 `import type`으로 그대로 사용한다. 새 evidence 모델이나 value 타입 확장은 없다.
+- 고정 값:
+  - `source: 'palm'`, `kind: 'image-observation'`
+  - **ID:** `palm:line:<key>:<attribute>` (snapshot 내부 유일, 기존 `<source>:<feature>` 관례)
+  - **feature:** `line.<key>.<attribute>` (provider·UI 문구·성격과 무관)
+- **순서:** life, head, heart, fate × visibility, curvature, continuity → 사용 가능한 이미지면 항상 12행이다. 입력 객체의 key 순서와 무관하다.
+
+| 관찰 | visibility | curvature / continuity |
+| --- | --- | --- |
+| `visible` | `'visible'` available | observed → 값 available / unreadable → null unreadable |
+| `not-detected` | `'not-detected'` available (관찰; 부재 단언 아님) | null **missing** (적용 안 됨) |
+| `unreadable` | null unreadable | null unreadable |
+| quality `unusable` | **0행** | — |
+| bundle 없음(이미지 없음) | **0행** (가짜 missing 행 없음) | — |
+
+- 품질은 Evidence가 아니다(설계 §4). unreadable 이유도 Evidence 값에 넣지 않고 bundle에만 남는다.
+- **계약 위반 입력은 거부한다.** `PalmObservationContractError`를 던지며, 보정하거나 일부만 출력하지 않는다. 대상은 버전, quality, 네 line key 누락·초과, 잘못된 status·enum·reason, 속성 달린 not-detected, 판독 없는 visible이다. 응답 전체 검증(unknown fields, quality·관찰 모순 거부)은 설계상 P1-B 서버 validator의 책임이다.
+
+## Claim / CoreTag / 운영 영향 확인
+
+- **Palm InterpretationClaim 0건:** adapter 출력은 EvidenceRecord 필드 6개뿐이다. `palmEvidence` 모듈의 export는 adapter와 오류 클래스뿐이다.
+- **CoreTag 매핑 0건:** 두 Palm 모듈 코드에 `CoreTag`·`InterpretationClaim`·`coreTags`나 10개 CoreTag 값이 없다.
+- **추가해도 변화 없음:** 실제 trace에 Palm Evidence 12행을 붙여도 `deriveAnalysisPatterns`와 `traitSupportInConvergenceScope`가 동일하다(Claim이 없으므로).
+- **운영 분석 경로 미연결:** `analyzeDestiny`의 trace에 palm source가 없고, snapshot에 `palm` 필드도 없다.
+- **storage 변경 0건:** `analysis.ts`, `evidenceTrace.ts`, `analysisPatterns.ts`, `identitySelection.ts`, `storageEngine.ts`, `page.tsx`, golden v1/v2/v3이 main과 동일하다.
+
+## 검증
+
+- **Palm P1-A 회귀: 44 PASS.** 요청된 18개 항목을 모두 검사한다.
+  - 1 완전 판독 / 2 부분 판독 / 3 unusable → 0 / 4 한 선만 판독
+  - 5 이미지 없음 → 0, not-detected → 속성 missing
+  - 6 ID / 7 순서(입력 key 순서 무관)
+  - 8 deep-freeze 입력 불변 / 15 반복 동일, `Math.random`·`Date.now` 미사용
+  - 9 source / 10 kind / 11 unreadable → null / 12 missing → null
+  - 13 Claim 없음 / 14 CoreTag 없음
+  - 16 품질 flags가 Evidence를 바꾸지 않고, 좋은 품질이 unreadable을 값으로 만들지 않음
+  - 17 EvidenceRecord 필드·타입 준수, available ⇔ non-null
+  - 18 잘못된 입력 13종 거부
+- **Mutation check:** unusable gate를 제거하거나 unreadable에 기본값을 채우면 각각 FAIL한다. 복구 후 PASS다.
+- **기존 회귀(변경 없음):** golden v1/v2/v3 PASS, saved-context PASS, evidence-trace PASS, Pattern **74**, Identity v2 **97**, Identity v3 **23** PASS.
+- **진단 재현:** 고유 19,983건, selection digest `25ab43b8`, full `dab19aab`(v1 `94fe72c7`, v2 `ed598f84`도 재현).
+- **TypeScript / build / diff-check:** OK. lint는 기존 9건 그대로이고 신규 0건이다.
+- `ANALYSIS_ENGINE_VERSION = '3'`, `schemaVersion = 2` — 버전 변경 없음.
+
+## 설계 대비 세부 결정
+
+1. **adapter 입력:** 설계 시그니처 `buildPalmEvidence(bundle)`에 `undefined`(이미지 없음 → 0행)를 허용했다. 설계의 "이미지 없음은 Palm Evidence 0개"를 호출자 분기 없이 표현하기 위해서다.
+2. **계약 위반 처리:** adapter는 자신이 읽는 필드만 검사하고 위반이면 오류를 던진다(fail-closed). 설계가 P1-B에 둔 전체 validator는 만들지 않았다.
+3. **enum 목록 상수:** 타입과 같은 내용의 읽기 전용 상수 목록(`PALM_LINE_KEYS` 등)을 `palmObservation.ts`에 두었다. adapter의 순서 고정과 입력 검사에 쓴다.
+
+## 남은 사항
+
+- P1-B(서버 추출: provider, 업로드 검증, rate limit), P1-C(선택적 관찰 흐름·snapshot), P1-D(상징 규칙·합성 활성화)는 설계상 각각 구현 전 검토·승인 대상이며 시작하지 않았다.
+- `main`의 설계 커밋 `f2db08c`는 아직 `origin/main`에 push되지 않았다(로컬 main만).
+
+---
+
 # Claude Implementation Report — Identity Catalog v3
 
 Status: IDENTITY CATALOG V3 — IMPLEMENTED / AWAITING CODEX FINAL REVIEW

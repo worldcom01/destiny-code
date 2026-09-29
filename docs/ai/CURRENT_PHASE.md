@@ -1,3 +1,23 @@
+# Palm Phase 1A — Observation Contract + Evidence Adapter
+
+Status: PALM PHASE 1A — IMPLEMENTED / AWAITING CODEX REVIEW
+
+Palm 아키텍처 설계(Codex 판정 A, 커밋 `f2db08c`)의 **P1-A만** 구현했다. 브랜치는 `refactor/palm-observation-phase1a`(from main `f2db08c`)이며, 병합·push하지 않았다.
+
+- 신규 파일: `app/lib/palmObservation.ts`(관찰 계약), `app/lib/palmEvidence.ts`(순수 adapter), `scripts/regression-palm-evidence.ts`
+- PalmObservationBundle → EvidenceRecord[]만 구현했다. 이미지·provider·API·UI·Claim·CoreTag 매핑·`analyzeDestiny`/trace 통합·저장은 **없음**.
+- engine `'3'`, schema `2`, trace `1` 모두 그대로다. 운영 출력 변경 0이며, golden v1/v2/v3과 진단 digest(`25ab43b8`/`dab19aab`)가 그대로다.
+
+상세 결과는 `CLAUDE_REPORT.md` 상단에 있다.
+
+## 다음 단계
+
+Codex가 `git diff main...refactor/palm-observation-phase1a`로 P1-A를 검수한다. P1-B(서버 추출) 이후 단계는 설계 문서의 구현 전 검토 절차를 따르며 이번에 시작하지 않았다.
+
+---
+
+## 이전 기록: Palm Phase 1 아키텍처 설계
+
 # Palm Phase 1 — Architecture Design
 
 Status: PALM PHASE 1 — ARCHITECTURE DESIGN

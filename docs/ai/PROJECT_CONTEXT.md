@@ -114,6 +114,7 @@ npx -y tsx scripts/regression-evidence-trace.ts         # evidence trace (must P
 npx -y tsx scripts/regression-analysis-patterns.ts      # derived patterns (must PASS)
 npx -y tsx scripts/regression-identity-selection.ts     # Identity Selection v2 rules (must PASS)
 npx -y tsx scripts/regression-identity-catalog-v3.ts    # Identity catalog v3 (must PASS)
+npx -y tsx scripts/regression-palm-evidence.ts          # Palm observation → Evidence adapter (must PASS)
 npx -y tsx scripts/diagnostic-identity-diversity.ts     # characterization + v1/v2/v3 comparison (fails only on integrity errors)
 npx tsc --noEmit -p .
 npm run build
