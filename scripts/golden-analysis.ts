@@ -1,26 +1,43 @@
-// Golden test for analyzeDestiny() across the engine v1 → v2 Identity migration.
+// Golden test for analyzeDestiny() across engine versions.
 //
-//   npx -y tsx scripts/golden-analysis.ts                # compare (v1 allowed-diff + exact v2)
-//   npx -y tsx scripts/golden-analysis.ts --capture-v2   # write the v2 baseline (refused if the v1 check fails)
+//   npx -y tsx scripts/golden-analysis.ts                # compare (v1 allowed-diff, v2 allowed-diff, exact v3)
+//   npx -y tsx scripts/golden-analysis.ts --capture-v3   # write the v3 baseline (refused if v1/v2 checks fail)
 //
-// golden-baseline.v1.json is the engine v1 baseline, byte-identical to the file
-// captured before the AnalysisSnapshot refactor. It is never rewritten. Against it,
-// only the approved Identity Selection v2 impact may differ:
-//   output.identityStatement, output.archetype, destinyCode (seeded by archetype)
-// Everything else (CoreTags, commonKeywords, Saju, narrative, conflicts, keyword
-// strengths, Tarot, ...) must stay identical.
-//
-// golden-baseline.v2.json is the engine v2 baseline (exact match, including the
-// identitySelection reason). Do not regenerate either baseline to make a diff go away.
+// Historical baselines are never rewritten:
+//   golden-baseline.v1.json — engine v1 (byte-identical to the pre-AnalysisSnapshot capture)
+//   golden-baseline.v2.json — engine v2 (Identity Selection v2)
+// Current engine (v3 = v2 selector + 창의적/독립적 catalog pair) against them:
+//   v1: only identityStatement / archetype / destinyCode may differ.
+//   v2: only identityStatement / archetype / destinyCode / engineVersion and the
+//       selection-dependent parts of identitySelection may differ; in addition the
+//       production selector run on the current trace with the engine v2 catalog prefix
+//       must reproduce the stored v2 selection exactly, and every v2 → v3 Identity change
+//       must be a selection of a pair added in v3 (catalog addition is the only cause).
+//   v3: exact match, including identitySelection and trace.
+// Do not regenerate any baseline to make a diff go away.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { analyzeDestiny, identityV1, TAROT_DATA, type AnalysisSnapshot } from '../app/lib/analysis';
+import {
+  analyzeDestiny, identityV1, TAROT_DATA, IDENTITY_PAIR_DEFINITIONS, IDENTITY_SINGLE_DEFINITIONS, IDENTITY_PAIR_COUNT_BY_ENGINE,
+  type AnalysisSnapshot, type CoreTag,
+} from '../app/lib/analysis';
+import { selectIdentityV2 } from '../app/lib/identitySelection';
 import { generateDestinyCode } from '../app/lib/destinyCode';
 
 const V1_PATH = join(__dirname, 'golden-baseline.v1.json');
 const V2_PATH = join(__dirname, 'golden-baseline.v2.json');
+const V3_PATH = join(__dirname, 'golden-baseline.v3.json');
 const ALLOWED_V1_DIFFS = new Set(['result.output.identityStatement', 'result.output.archetype', 'result.destinyCode']);
+const ALLOWED_V2_DIFFS = new Set([...ALLOWED_V1_DIFFS, 'result.engineVersion']);
+const ALLOWED_V2_SELECTION_PREFIXES = ['decision', 'pairIndex', 'selectedTraits', 'usedAuthoredOrder', 'support']
+  .map((k) => `result.identitySelection.${k}`);
+const allowedV2 = (path: string) => ALLOWED_V2_DIFFS.has(path)
+  || ALLOWED_V2_SELECTION_PREFIXES.some((pre) => path === pre || path.startsWith(`${pre}.`));
+const LABEL_TO_TAG: Record<string, CoreTag> = {
+  '창의적 사고': '창의적', '분석적 사고': '분석적', '감성적 공감': '감성적', '실용적 실행': '실용적', '뛰어난 사교성': '사교적',
+  '강한 독립심': '독립적', '예리한 직관력': '직관적', '체계적 사고': '체계적', '넘치는 열정': '열정적', '따뜻한 포용력': '포용적',
+};
 
 interface GoldenCase {
   name: string;
@@ -60,7 +77,7 @@ function fromSnapshot(s: AnalysisSnapshot) {
   const {
     saju, zodiac, westernAstrology, mbtiTraits, bloodType, tarot,
     commonKeywords, detailedReading, identityStatement, archetype, tarotFlow,
-    conflicts, keywordStrengths, coreTags, engineVersion, identitySelection,
+    conflicts, keywordStrengths, coreTags, engineVersion, identitySelection, trace,
   } = s;
   return {
     output: {
@@ -73,6 +90,7 @@ function fromSnapshot(s: AnalysisSnapshot) {
     destinyCode: generateDestinyCode(s),
     engineVersion,
     identitySelection,
+    trace,
   };
 }
 
@@ -100,66 +118,104 @@ const printDiffs = (ds: Diff[]) => {
 // JSON round-trip so undefined fields compare the same way they were stored.
 const actual = JSON.parse(JSON.stringify(CASES.map((c) => {
   const s = analyze(c);
-  return { name: c.name, result: fromSnapshot(s), v1Archetype: identityV1(s).archetype };
+  const v2Selection = selectIdentityV2({
+    trace: s.trace!, pairs: IDENTITY_PAIR_DEFINITIONS.slice(0, IDENTITY_PAIR_COUNT_BY_ENGINE['2']),
+    hasSingle: (t) => IDENTITY_SINGLE_DEFINITIONS[t] !== undefined,
+    keywordTag: LABEL_TO_TAG[s.commonKeywords[0]], sajuFirstTag: s.saju.coreTags[0],
+  });
+  return { name: c.name, result: fromSnapshot(s), v1Archetype: identityV1(s).archetype, v2Selection };
 })));
 
 let failed = false;
+const without = (r: Record<string, unknown>, keys: string[]) => {
+  const c = { ...r };
+  for (const k of keys) delete c[k];
+  return c;
+};
 
-// ── 1. engine v1 baseline: only the approved Identity impact may differ ──
-const v1 = JSON.parse(readFileSync(V1_PATH, 'utf8')) as Array<{ name: string; result: Record<string, unknown> }>;
-const unexpected: Diff[] = [];
-let identityChanged = 0;
-console.log('engine v1 → v2 golden comparison:');
-v1.forEach((base, i) => {
-  const now = actual[i];
-  const ds: Diff[] = [];
-  // keys that exist only in v2 (engineVersion, identitySelection) are new, not changes
-  const comparable: Record<string, unknown> = { ...now.result };
-  delete comparable.engineVersion;
-  delete comparable.identitySelection;
-  diff(base.result, comparable, 'result', ds);
-  unexpected.push(...ds.filter((d) => !ALLOWED_V1_DIFFS.has(d.path)).map((d) => ({ ...d, path: `[${base.name}] ${d.path}` })));
-  const v1Arch = (base.result.output as { archetype: string }).archetype;
-  const v2Arch = now.result.output.archetype;
-  // the retained v1 selector still reproduces the historical v1 Identity
-  if (now.v1Archetype !== v1Arch) {
-    unexpected.push({ path: `[${base.name}] identityV1()`, expected: v1Arch, actual: now.v1Archetype });
+// ── 1. engine v1 baseline: only the Identity text / archetype / Destiny Code may differ ──
+{
+  const v1 = JSON.parse(readFileSync(V1_PATH, 'utf8')) as Array<{ name: string; result: Record<string, unknown> }>;
+  const unexpected: Diff[] = [];
+  let changed = 0;
+  v1.forEach((base, i) => {
+    const now = actual[i];
+    const ds: Diff[] = [];
+    // keys that exist only in newer engines are additions, not changes
+    diff(base.result, without(now.result, ['engineVersion', 'identitySelection', 'trace']), 'result', ds);
+    unexpected.push(...ds.filter((d) => !ALLOWED_V1_DIFFS.has(d.path)).map((d) => ({ ...d, path: `[${base.name}] ${d.path}` })));
+    const v1Arch = (base.result.output as { archetype: string }).archetype;
+    if (now.v1Archetype !== v1Arch) unexpected.push({ path: `[${base.name}] identityV1()`, expected: v1Arch, actual: now.v1Archetype });
+    if (v1Arch !== now.result.output.archetype) changed++;
+  });
+  console.log(`engine v1 → current: Identity changed in ${changed} of ${v1.length} cases`);
+  if (unexpected.length) {
+    failed = true;
+    console.log(`FAIL: ${unexpected.length} change(s) outside the approved Identity impact (v1)`);
+    printDiffs(unexpected);
+  } else {
+    console.log('PASS: v1 baseline differs only in identityStatement / archetype / destinyCode');
   }
-  if (v1Arch !== v2Arch) identityChanged++;
-  const r = now.result.identitySelection;
-  console.log(`  ${v1Arch === v2Arch ? '=' : '≠'} [${base.name}] ${v1Arch} → ${v2Arch}`
-    + `   (${r.decision}${r.representativeTrait ? `, 대표 ${r.representativeTrait}` : ''}${r.usedAuthoredOrder ? ', authored order' : ''})`);
-});
-console.log(`  Identity changed in ${identityChanged} of ${v1.length} cases`);
-if (unexpected.length) {
-  failed = true;
-  console.log(`FAIL: ${unexpected.length} change(s) outside the approved Identity impact`);
-  printDiffs(unexpected);
-} else {
-  console.log('PASS: v1 baseline differs only in identityStatement / archetype / destinyCode');
 }
 
-// ── 2. engine v2 baseline: exact ──
-const v2Actual = actual.map((a: { name: string; result: unknown }) => ({ name: a.name, result: a.result }));
-if (process.argv.includes('--capture-v2')) {
+// ── 2. engine v2 baseline: strict allowed-change check + v2 reproduction ──
+{
+  const v2 = JSON.parse(readFileSync(V2_PATH, 'utf8')) as Array<{ name: string; result: Record<string, unknown> }>;
+  const unexpected: Diff[] = [];
+  let changed = 0;
+  console.log('engine v2 → v3 golden comparison:');
+  v2.forEach((base, i) => {
+    const now = actual[i];
+    const ds: Diff[] = [];
+    diff(base.result, without(now.result, ['trace']), 'result', ds);
+    unexpected.push(...ds.filter((d) => !allowedV2(d.path)).map((d) => ({ ...d, path: `[${base.name}] ${d.path}` })));
+    // the unchanged selector on the current trace with the v2 catalog reproduces the stored v2 selection
+    const repro: Diff[] = [];
+    diff(base.result.identitySelection, now.v2Selection, `[${base.name}] v2 selection reproduced`, repro);
+    unexpected.push(...repro);
+    const v2Arch = (base.result.output as { archetype: string }).archetype;
+    const v3Arch = now.result.output.archetype;
+    const r = now.result.identitySelection;
+    if (v2Arch !== v3Arch) {
+      changed++;
+      if (r.pairIndex === null || r.pairIndex < IDENTITY_PAIR_COUNT_BY_ENGINE['2']) {
+        unexpected.push({ path: `[${base.name}] v2 → v3 change not caused by a new catalog pair`, expected: v2Arch, actual: v3Arch });
+      }
+    }
+    console.log(`  ${v2Arch === v3Arch ? '=' : '≠'} [${base.name}] ${v2Arch} → ${v3Arch}`
+      + `   (${r.decision}${r.representativeTrait ? `, 대표 ${r.representativeTrait}` : ''}, pair #${r.pairIndex}${r.usedAuthoredOrder ? ', authored order' : ''})`);
+  });
+  console.log(`  Identity changed in ${changed} of ${v2.length} cases`);
+  if (unexpected.length) {
+    failed = true;
+    console.log(`FAIL: ${unexpected.length} unexpected v2 → v3 change(s)`);
+    printDiffs(unexpected);
+  } else {
+    console.log('PASS: v2 baseline differs only in approved catalog-addition fields; v2 selection reproduced');
+  }
+}
+
+// ── 3. engine v3 baseline: exact ──
+const v3Actual = actual.map((a: { name: string; result: unknown }) => ({ name: a.name, result: a.result }));
+if (process.argv.includes('--capture-v3')) {
   if (failed) {
-    console.log('REFUSED: not writing the v2 baseline while the v1 comparison has unexpected changes');
+    console.log('REFUSED: not writing the v3 baseline while the v1/v2 comparisons have unexpected changes');
     process.exit(1);
   }
-  writeFileSync(V2_PATH, JSON.stringify(v2Actual, null, 2) + '\n');
-  console.log(`Captured ${v2Actual.length} v2 golden cases -> ${V2_PATH}`);
+  writeFileSync(V3_PATH, JSON.stringify(v3Actual, null, 2) + '\n');
+  console.log(`Captured ${v3Actual.length} v3 golden cases -> ${V3_PATH}`);
   process.exit(0);
 }
 
-const v2Diffs: Diff[] = [];
-diff(JSON.parse(readFileSync(V2_PATH, 'utf8')), v2Actual, 'cases', v2Diffs);
-if (v2Diffs.length) {
+const v3Diffs: Diff[] = [];
+diff(JSON.parse(readFileSync(V3_PATH, 'utf8')), v3Actual, 'cases', v3Diffs);
+if (v3Diffs.length) {
   failed = true;
-  console.log(`FAIL: ${v2Diffs.length} difference(s) from the v2 baseline`);
-  printDiffs(v2Diffs);
+  console.log(`FAIL: ${v3Diffs.length} difference(s) from the v3 baseline`);
+  printDiffs(v3Diffs);
 } else {
-  console.log(`PASS: ${v2Actual.length} golden cases match v2 baseline`);
+  console.log(`PASS: ${v3Actual.length} golden cases match v3 baseline`);
 }
 
 if (failed) process.exit(1);
-console.log(`PASS: golden v1→v2 migration checks (${v2Actual.length} cases)`);
+console.log(`PASS: golden v1/v2/v3 checks (${v3Actual.length} cases)`);

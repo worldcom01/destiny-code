@@ -27,9 +27,10 @@
 // solar date space, so it would only duplicate solar cases.
 
 import {
-  analyzeDestiny, identityV1, TAROT_DATA, IDENTITY_PAIR_DEFINITIONS, IDENTITY_SINGLE_DEFINITIONS,
+  analyzeDestiny, identityV1, TAROT_DATA, IDENTITY_PAIR_DEFINITIONS, IDENTITY_SINGLE_DEFINITIONS, IDENTITY_PAIR_COUNT_BY_ENGINE,
   type AnalysisSnapshot, type CoreTag,
 } from '../app/lib/analysis';
+import { selectIdentityV2, type IdentitySelectionReason } from '../app/lib/identitySelection';
 import { deriveAnalysisPatterns, traitSupportInConvergenceScope } from '../app/lib/analysisPatterns';
 import { LOCATION_OPTION_GROUPS } from '../app/lib/regions';
 
@@ -205,49 +206,80 @@ for (const [a, v] of sorted) {
   console.log(`  ${pct(v).padStart(6)}  ${String(v).padStart(5)}  ${a}${note}`);
 }
 
-// ── engine v1 vs v2 on the unique effective inputs (each evaluated once) ──
+// ── engine v1 / v2 / v3 on the unique effective inputs (each evaluated once) ──
 // Same definitions as the Identity Selection v2 design review (CODEX_REVIEW.md §3):
 //   pair denominators = pair selections; "both-sides cross-source" = both tags supported by ≥2
 //   distinct sources in the convergence (ranking) scope; "authored order used" = v1 pair path /
-//   v2 usedAuthoredOrder, over all inputs; selection digest = djb2 of `${key}=${archetype}\n`.
+//   v2+ usedAuthoredOrder, over all inputs; selection digest = djb2 of `${key}=${archetype}\n`.
+// v1 = identityV1() (engine v1 catalog); v2 = the production selector with the engine v2 catalog prefix
+// on the same trace; v3 = the current engine result. Historical v1/v2 digests must still reproduce.
 {
+  const HISTORICAL_DIGEST: Record<string, string> = { v1: '94fe72c7', v2: 'ed598f84' };
   type Stat = { counts: Map<string, number>; pair: number; mismatch: number; crossBoth: number; orderUsed: number; h: number };
   const stat = (): Stat => ({ counts: new Map(allArchetypes.map((a) => [a, 0])), pair: 0, mismatch: 0, crossBoth: 0, orderUsed: 0, h: 5381 });
-  const v1s = stat(), v2s = stat();
-  let total = 0, changed = 0;
+  const v1s = stat(), v2s = stat(), v3s = stat();
+  const v2Pairs = pairs.slice(0, IDENTITY_PAIR_COUNT_BY_ENGINE['2']);
+  const newPairIndexes = pairs.map((_, i) => i).filter((i) => i >= IDENTITY_PAIR_COUNT_BY_ENGINE['2']);
+  let total = 0, changedV1V2 = 0, changedV2V3 = 0, singleToPair = 0, newMismatch = 0;
+  const intoNew = new Map<string, number>();
   const seen = new Set<string>();
+  const mismatchOf = (tags: readonly CoreTag[] | null, kw: CoreTag | undefined) => !!tags && (!kw || !tags.includes(kw));
   const record = (st: Stat, key: string, arch: string, tags: readonly CoreTag[] | null, kw: CoreTag | undefined,
     support: ReturnType<typeof traitSupportInConvergenceScope>, orderUsed: boolean) => {
     st.counts.set(arch, (st.counts.get(arch) ?? 0) + 1);
     if (tags) {
       st.pair++;
-      if (!kw || !tags.includes(kw)) st.mismatch++;
+      if (mismatchOf(tags, kw)) st.mismatch++;
       if (Math.min(...tags.map((t) => support.get(t)?.sources.length ?? 0)) >= 2) st.crossBoth++;
     }
     if (orderUsed) st.orderUsed++;
     for (const ch of `${key}=${arch}\n`) st.h = ((st.h << 5) + st.h + ch.charCodeAt(0)) | 0;
   };
+  const archOf = (r: IdentitySelectionReason) => r.pairIndex !== null ? pairs[r.pairIndex].archetype
+    : r.decision === 'single' ? IDENTITY_SINGLE_DEFINITIONS[r.selectedTraits[0]]!.archetype : FALLBACK_ARCHETYPE;
   for (const x of inputs(SEED, N)) {
     const key = effectiveKey(x);
     if (seen.has(key)) continue;
     seen.add(key);
     total++;
     const s = analyze(x);
-    const r = s.identitySelection;
-    if (!r || !s.trace) { integrity(false, `engine v2 result without identitySelection/trace for ${key}`); continue; }
+    const r3 = s.identitySelection;
+    if (!r3 || !s.trace) { integrity(false, `engine result without identitySelection/trace for ${key}`); continue; }
     const support = traitSupportInConvergenceScope(s.trace);
     const kw = LABEL_TO_TAG[s.commonKeywords[0]];
-    const v1Arch = identityV1(s).archetype;
+    const r2 = selectIdentityV2({
+      trace: s.trace, pairs: v2Pairs, hasSingle: (t) => IDENTITY_SINGLE_DEFINITIONS[t] !== undefined,
+      keywordTag: kw, sajuFirstTag: s.saju.coreTags[0],
+    });
+    const v1Arch = identityV1(s).archetype, v2Arch = archOf(r2), v3Arch = s.archetype;
     const v1Idx = pairs.findIndex((p) => p.archetype === v1Arch);
+    const v2Tags = r2.pairIndex !== null ? pairs[r2.pairIndex].tags : null;
+    const v3Tags = r3.pairIndex !== null ? pairs[r3.pairIndex].tags : null;
     record(v1s, key, v1Arch, v1Idx >= 0 ? pairs[v1Idx].tags : null, kw, support, v1Idx >= 0);
-    record(v2s, key, s.archetype, r.pairIndex !== null ? pairs[r.pairIndex].tags : null, kw, support, r.usedAuthoredOrder);
-    if (v1Arch !== s.archetype) changed++;
-    // without convergence, engine v2 must reproduce engine v1 exactly
-    if (r.decision !== 'ranked-pair') integrity(v1Arch === s.archetype, `no-convergence path differs from v1 for ${key}`);
+    record(v2s, key, v2Arch, v2Tags, kw, support, r2.usedAuthoredOrder);
+    record(v3s, key, v3Arch, v3Tags, kw, support, r3.usedAuthoredOrder);
+    integrity(archOf(r3) === v3Arch, `engine archetype differs from its selection reason for ${key}`);
+    if (v1Arch !== v2Arch) changedV1V2++;
+    // engine v2 without convergence must reproduce engine v1 exactly
+    if (r2.decision !== 'ranked-pair') integrity(v1Arch === v2Arch, `v2 no-convergence path differs from v1 for ${key}`);
+    if (v2Arch !== v3Arch) {
+      changedV2V3++;
+      // the catalog addition must be the only cause of a v2 → v3 change
+      integrity(r3.pairIndex !== null && newPairIndexes.includes(r3.pairIndex),
+        `v2 → v3 change not caused by a new catalog pair for ${key}: ${v2Arch} → ${v3Arch}`);
+      intoNew.set(v2Arch, (intoNew.get(v2Arch) ?? 0) + 1);
+      if (r2.pairIndex === null && r3.pairIndex !== null) singleToPair++;
+      if (mismatchOf(v3Tags, kw) && !mismatchOf(v2Tags, kw)) newMismatch++;
+    }
+    // no-convergence: first authored candidate of the engine catalog (v2 rule)
+    if (r3.decision === 'no-convergence-pair') {
+      const first = deriveAnalysisPatterns(s.trace, pairs).find((pt) => pt.kind === 'authored-pair');
+      integrity(!!first && first.kind === 'authored-pair' && first.pairIndex === r3.pairIndex, `v3 no-convergence path is not the first candidate for ${key}`);
+    }
     // if any candidate contains the representative tag, the selected pair must contain it
-    const rep = r.representativeTrait;
+    const rep = r3.representativeTrait;
     if (rep && deriveAnalysisPatterns(s.trace, pairs).some((pt) => pt.kind === 'authored-pair' && pt.traits.includes(rep))) {
-      integrity(r.selectedTraits.includes(rep), `representative ${rep} available but not selected for ${key}`);
+      integrity(r3.selectedTraits.includes(rep), `representative ${rep} available but not selected for ${key}`);
     }
   }
   const p2 = (n: number, d: number) => `${((n / d) * 100).toFixed(2)}%`;
@@ -258,24 +290,37 @@ for (const [a, v] of sorted) {
       top1: p2(sortedCounts[0], total),
       top4: p2(sortedCounts.slice(0, 4).reduce((a, b) => a + b, 0), total),
       mismatch: `${p2(st.mismatch, st.pair)} (${st.mismatch}/${st.pair})`,
+      included: `${p2(st.pair - st.mismatch, st.pair)} (${st.pair - st.mismatch}/${st.pair})`,
       crossBoth: `${p2(st.crossBoth, st.pair)} (${st.crossBoth}/${st.pair})`,
       orderUsed: `${p2(st.orderUsed, total)} (${st.orderUsed}/${total})`,
+      pairSingle: `${st.pair} / ${total - st.pair}`,
       digest: (st.h >>> 0).toString(16),
     };
   };
-  const a = summary(v1s), b = summary(v2s);
-  console.log(`\nengine v1 vs v2 — ${total} unique effective inputs, each evaluated once`);
-  const row = (label: string, k: keyof typeof a) => console.log(`  ${label.padEnd(46)} ${String(a[k]).padEnd(24)} ${b[k]}`);
-  console.log(`  ${''.padEnd(46)} ${'v1'.padEnd(24)} v2`);
-  row('observed archetypes', 'observed');
+  const a = summary(v1s), b = summary(v2s), c = summary(v3s);
+  integrity(a.digest === HISTORICAL_DIGEST.v1, `engine v1 selection digest ${a.digest} != historical ${HISTORICAL_DIGEST.v1}`);
+  integrity(b.digest === HISTORICAL_DIGEST.v2, `engine v2 selection digest ${b.digest} != historical ${HISTORICAL_DIGEST.v2}`);
+  console.log(`\nengine v1 / v2 / v3 — ${total} unique effective inputs, each evaluated once`);
+  const row = (label: string, k: keyof typeof a) =>
+    console.log(`  ${label.padEnd(46)} ${String(a[k]).padEnd(24)} ${String(b[k]).padEnd(24)} ${c[k]}`);
+  console.log(`  ${''.padEnd(46)} ${'v1'.padEnd(24)} ${'v2'.padEnd(24)} v3 (current)`);
+  row('observed archetypes (of current catalog)', 'observed');
   row('top 1 share', 'top1');
   row('top 4 share', 'top4');
   row('intersection mismatch (of pair selections)', 'mismatch');
+  row('representative tag included (of pairs)', 'included');
   row('both-sides cross-source support (of pairs)', 'crossBoth');
   row('authored order used (of all inputs)', 'orderUsed');
+  row('pair / single+generic selections', 'pairSingle');
   row('selection digest', 'digest');
-  console.log(`  Identity changed from v1: ${p2(changed, total)} (${changed}/${total})`);
-  console.log(`  pair selections v2: ${v2s.pair}   single/generic v2: ${total - v2s.pair}`);
+  console.log(`  Identity changed v1 → v2: ${p2(changedV1V2, total)} (${changedV1V2}/${total})`);
+  console.log(`  Identity changed v2 → v3: ${p2(changedV2V3, total)} (${changedV2V3}/${total})   single → pair: ${singleToPair}   new mismatch: ${newMismatch}`);
+  for (const i of newPairIndexes) {
+    const name = pairs[i].archetype;
+    console.log(`  ${name} (pair #${i}, ${pairs[i].tags.join('+')}): ${v3s.counts.get(name)} selections (${p2(v3s.counts.get(name) ?? 0, total)})`);
+  }
+  console.log(`  v2 → v3 transitions by v2 Identity:`);
+  for (const [arch, n] of [...intoNew].sort((x, y) => y[1] - x[1])) console.log(`    ${String(n).padStart(5)}  ${p2(n, changedV2V3).padStart(7)}  ${arch}`);
 }
 
 if (integrityErrors) {

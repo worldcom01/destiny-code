@@ -16,6 +16,7 @@ g.localStorage = {
 
 import {
   analyzeDestiny, identityV1, TAROT_DATA, IDENTITY_PAIR_DEFINITIONS, IDENTITY_SINGLE_DEFINITIONS,
+  ANALYSIS_ENGINE_VERSION, IDENTITY_PAIR_COUNT_BY_ENGINE,
   type AnalysisSnapshot, type CoreTag,
 } from '../app/lib/analysis';
 import type { AnalysisTrace, EvidenceRecord, InterpretationClaim } from '../app/lib/evidenceTrace';
@@ -25,7 +26,8 @@ import { getSavedAnalyses } from '../app/lib/storageEngine';
 import { activeFromNewAnalysis, activeFromSaved, activeDestinyCode, saveActive } from '../app/lib/activeAnalysis';
 
 const STORAGE_KEY = 'destiny_ai_v1';
-// djb2 of JSON {pairs, singles} on main 2746b5e (before engine v2)
+// djb2 of JSON {pairs, singles} on main 2746b5e (before engine v2). Engine v3 only appends pairs,
+// so the engine v2 prefix of the catalog must still hash to this.
 const CATALOG_DIGEST_V1 = '2a85c50';
 
 let failures = 0;
@@ -221,8 +223,8 @@ for (const x of INPUTS) {
   const s = analyze(x);
   const r = s.identitySelection!;
   const tr = s.trace!;
-  check(`${p} 13/14 engineVersion '2', schemaVersion 2, selection recorded`,
-    s.engineVersion === '2' && s.schemaVersion === 2 && !!r && r.version === 1 && r.ruleId === 'identity.selection@2');
+  check(`${p} 13/14 current engineVersion, schemaVersion 2, selection@2 recorded`,
+    s.engineVersion === ANALYSIS_ENGINE_VERSION && s.schemaVersion === 2 && !!r && r.version === 1 && r.ruleId === 'identity.selection@2');
   check(`${p} 1 deterministic across repeated analyses`, eq(analyze(x).identitySelection, r) && analyze(x).archetype === s.archetype);
   check(`${p} 11 different tarot card → same selection`,
     eq(analyze(x, TAROT_DATA[(x[4] + 9) % TAROT_DATA.length]).identitySelection, r));
@@ -287,20 +289,21 @@ for (const x of INPUTS) {
   saveActive(activeFromNewAnalysis(s, { nickname: 'n', birthdate: '1995-07-10', mbti: 'ISTJ', bloodtype: 'B' }));
   const afterFirst = store[STORAGE_KEY];
   const loaded = getSavedAnalyses()[0];
-  check('13/14 engine-v2 snapshot round-trips deep-equal (engineVersion 2, schemaVersion 2, selection kept)',
-    loaded.kind === 'v2' && eq(loaded.resultData, s) && (loaded.resultData as AnalysisSnapshot).engineVersion === '2'
+  check('13/14 new snapshot round-trips deep-equal (current engineVersion, schemaVersion 2, selection kept)',
+    loaded.kind === 'v2' && eq(loaded.resultData, s) && (loaded.resultData as AnalysisSnapshot).engineVersion === ANALYSIS_ENGINE_VERSION
     && (loaded.resultData as AnalysisSnapshot).schemaVersion === 2 && eq((loaded.resultData as AnalysisSnapshot).identitySelection, s.identitySelection));
   saveActive(activeFromSaved(loaded));
   check('13 duplicate save of an engine-v2 analysis leaves storage untouched', store[STORAGE_KEY] === afterFirst);
 }
 
-// ── 15. catalog definitions / order unchanged ──
+// ── 15. existing catalog definitions / order unchanged (engine v2 prefix + singles) ──
 {
-  const j = JSON.stringify({ pairs: IDENTITY_PAIR_DEFINITIONS, singles: IDENTITY_SINGLE_DEFINITIONS });
+  const v2Pairs = IDENTITY_PAIR_DEFINITIONS.slice(0, IDENTITY_PAIR_COUNT_BY_ENGINE['2']);
+  const j = JSON.stringify({ pairs: v2Pairs, singles: IDENTITY_SINGLE_DEFINITIONS });
   let h = 5381;
   for (const ch of j) h = ((h << 5) + h + ch.charCodeAt(0)) | 0;
   check('15 Identity catalog (pairs, singles, order, text) unchanged from engine v1',
-    (h >>> 0).toString(16) === CATALOG_DIGEST_V1 && IDENTITY_PAIR_DEFINITIONS.length === 10, (h >>> 0).toString(16));
+    (h >>> 0).toString(16) === CATALOG_DIGEST_V1 && v2Pairs.length === 10, (h >>> 0).toString(16));
 }
 
 if (failures) {

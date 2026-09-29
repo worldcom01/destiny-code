@@ -99,7 +99,8 @@ export type { WesternAstrologyResult };
 
 // 분석 규칙이 바뀌면 올린다 — 저장된 결과가 어떤 규칙으로 만들어졌는지 구분하는 용도
 // '1': Identity = 고정 순서의 첫 공존 쌍 / '2': Identity Selection v2 (identitySelection.ts)
-export const ANALYSIS_ENGINE_VERSION = '2';
+// '3': catalog에 창의적+독립적(고집스러운 실험가) 추가 — 선택 규칙은 v2 그대로
+export const ANALYSIS_ENGINE_VERSION = '3';
 
 // analyzeDestiny()가 조립하는 완성된 분석 결과. 저장 시 그대로 보관한다.
 export type AnalysisSnapshot = AnalysisOutput & {
@@ -626,7 +627,12 @@ const CONFLICT_IDENTITY: Array<{ tags: [CoreTag, CoreTag]; identityStatement: st
   { tags: ['직관적', '실용적'],  identityStatement: '느낌이 먼저 왔는데, 그것만으로는 부족한 것 같아서 증거를 찾고 나서야 움직이는 사람입니다.', archetype: '의심하는 직관가' },
   { tags: ['창의적', '체계적'],  identityStatement: '새로운 것을 탐색하고 싶지만, 기반이 흔들릴까봐 크게 움직이기 어려운 사람입니다. 안전한 범위 안에서만 모험합니다.', archetype: '안전한 탐험가' },
   { tags: ['열정적', '포용적'],  identityStatement: '타인을 위해 에너지를 쓰는 것이 자연스러운데, 어느 순간 자신이 텅 빈 것을 발견하는 패턴이 반복되는 사람입니다.', archetype: '소진되는 열정가' },
+  // engine v3 — 끝에 추가해 기존 pairIndex 0–9를 유지한다
+  { tags: ['창의적', '독립적'],  identityStatement: '주어진 방식을 따르기보다 자기 방법을 새로 만들지만, 이미 잘 돌아가는 것까지 다시 손대는 사람입니다.', archetype: '고집스러운 실험가' },
 ];
+
+// 엔진별로 사용하는 pair catalog의 앞부분 길이. catalog는 끝에만 추가하므로 pairIndex 의미가 유지된다.
+export const IDENTITY_PAIR_COUNT_BY_ENGINE: Readonly<Record<string, number>> = { '1': 10, '2': 10, '3': 11 };
 
 const SINGLE_IDENTITY: Partial<Record<CoreTag, { identityStatement: string; archetype: string }>> = {
   독립적:  { identityStatement: '스스로 결정하지 않은 것은 내 것이 아닌 것처럼 느껴지는 사람입니다. 그 선택이 외롭더라도, 직접 정한 길이라야 걸을 수 있습니다.', archetype: '자기 세계의 수호자' },
@@ -656,7 +662,7 @@ const GENERIC_IDENTITY = {
 const tagOfLabel = (label: string | undefined): CoreTag | undefined =>
   label === undefined ? undefined : (Object.entries(TAG_LABELS) as [CoreTag, string][]).find(([, v]) => v === label)?.[0];
 
-// engine v1 선택 (고정 순서의 첫 공존 쌍). v2의 비교·진단·회귀용으로 보존한다.
+// engine v1 선택 (engine v1 catalog에서 고정 순서의 첫 공존 쌍). 비교·진단·회귀용으로 보존한다.
 export function identityV1(result: AnalysisOutput): { identityStatement: string; archetype: string } {
   return generateIdentityV1(result.saju, result.zodiac, result.mbtiTraits, result.bloodType, result.tarot, result.commonKeywords);
 }
@@ -675,7 +681,7 @@ function generateIdentityV1(
     ...(hasMbti ? mbti.coreTags : []),
   ])];
 
-  const conflictMatch = CONFLICT_IDENTITY.find(
+  const conflictMatch = CONFLICT_IDENTITY.slice(0, IDENTITY_PAIR_COUNT_BY_ENGINE['1']).find(
     ({ tags: [a, b] }) => allTags.includes(a) && allTags.includes(b)
   );
   if (conflictMatch) return { identityStatement: conflictMatch.identityStatement, archetype: conflictMatch.archetype };
