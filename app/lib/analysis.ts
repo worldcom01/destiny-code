@@ -636,6 +636,13 @@ const SINGLE_IDENTITY: Partial<Record<CoreTag, { identityStatement: string; arch
   열정적:  { identityStatement: '완전히 타오르다 완전히 꺼지는 사이클이 반복됩니다. 그 강도가 삶을 풍요롭게 만들기도 하지만, 그 사이의 공백이 오래 이어질 때는 자신이 낯설어지기도 합니다.', archetype: '전부 아니면 전무형' },
 };
 
+// 읽기 전용 노출 — 패턴 파생·진단 스크립트용. Identity 선택은 generateIdentity()만 수행한다.
+export const IDENTITY_PAIR_DEFINITIONS: ReadonlyArray<{
+  readonly tags: readonly [CoreTag, CoreTag];
+  readonly archetype: string;
+}> = CONFLICT_IDENTITY;
+export const IDENTITY_SINGLE_DEFINITIONS: Readonly<Partial<Record<CoreTag, { readonly archetype: string }>>> = SINGLE_IDENTITY;
+
 function generateIdentity(
   saju: SajuOutput,
   zodiac: ZodiacResult,

@@ -1,6 +1,6 @@
-# Phase 2B — PRELIMINARY DESIGN REVIEW
+# Phase 2B — Foundation (observational)
 
-Status: PRELIMINARY DESIGN REVIEW — NOT APPROVED, NOT READY TO IMPLEMENT
+Status: PHASE 2B FOUNDATION IMPLEMENTED — IDENTITY CHANGE NOT APPROVED
 
 Previous phase: Phase 2A — Evidence Traceability is complete and merged (`main` `5758350`).
 
@@ -8,7 +8,7 @@ Previous phase: Phase 2A — Evidence Traceability is complete and merged (`main
 
 Understand what the current engine actually means by "intersection", identify the structural causes of results that feel too similar, and determine the smallest useful abstraction on top of the Phase 2A trace.
 
-This phase is analysis/design only until approved.
+Only the observational foundation (diversity baseline + derived patterns) is approved. Any change to user-visible output, including Identity selection, still requires approval.
 
 ## Out of scope
 
@@ -29,12 +29,15 @@ This phase is analysis/design only until approved.
 
 ## Current next action
 
-Claude Code가 Codex 일시 부재로 **예비** 아키텍처 분석을 `CODEX_REVIEW.md` 상단 "Phase 2B Preliminary Architecture Analysis — Claude Code"에 기록했다. 승인된 설계가 아니다.
+사용자는 Phase 2B 중 **사용자에게 보이지 않는 기반 작업**만 승인했다. Claude Code가 브랜치 `refactor/pattern-foundation-phase2b`에 구현했다. 병합·push는 하지 않았다.
+
+- 다양성 기준선 진단: `scripts/diagnostic-identity-diversity.ts`
+- 관찰용 패턴 파생: `app/lib/analysisPatterns.ts` (`convergence` / `authored-pair`)
+- 결과와 검증: `CLAUDE_REPORT.md`
+
+Identity 선택 알고리즘은 의도적으로 변경하지 않았다. Phase 2B의 제품 변경(Identity 개선)은 완료가 아니며 승인되지 않았다.
 
 다음 단계:
 
-1. Codex가 예비 분석을 독립 검토한다. 특히 측정 수치, 결과 유사성 원인 분류, `PatternRecord` 최소안(`convergence` / `authored-pair`)의 필요성을 확인한다.
-2. 사용자가 제품 결정을 내린다. 결정할 것은 두 가지다.
-   - Identity 선택 규칙을 바꿀지(의도된 출력 변경)
-   - 사주 보완 오행 태그의 의미, 그리고 "교차 신호" 섹션의 검증처럼 들리는 문구를 어떻게 다룰지
-3. 승인 후에만 구현 명세를 확정한다. 예비안의 첫 두 단계는 사용자에게 보이는 출력을 바꾸지 않는다.
+1. Codex가 기반 작업을 독립 검수한다. 검수 기준은 `git diff main...refactor/pattern-foundation-phase2b`, `CLAUDE_REPORT.md`의 검증 명령, 예비 분석(`CODEX_REVIEW.md` 상단)이다.
+2. 사용자가 Identity 선택 변경 여부와 규칙을 결정한다. 이는 의도된 출력 변경이므로 엔진 버전 증가와 golden 명시적 재설정이 필요하다.

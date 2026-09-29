@@ -1,90 +1,131 @@
 # Claude Implementation Report
 
-Status: IMPLEMENTED — AWAITING CODEX REVIEW
+Status: PHASE 2B FOUNDATION IMPLEMENTED — AWAITING REVIEW (Identity change not approved)
 
-Phase 2A — Evidence Traceability. Branch `refactor/evidence-trace-phase2a` (from main `81b0c90`). Not merged, not pushed.
+Phase 2B foundation (observational only). Branch `refactor/pattern-foundation-phase2b` (from main `5758350`). Not merged, not pushed. 이전 Phase 2A 보고는 git history(`5758350`)에 있다.
 
 ## Implemented Scope
 
-`CODEX_REVIEW.md` 3단계 계획 그대로 구현했다.
+사용자가 승인한 범위는 **사용자에게 보이지 않는 기반 작업** 두 가지다. Identity 선택은 변경하지 않았다.
 
-1. **순수 trace 모듈** `app/lib/evidenceTrace.ts`
-   - `EvidenceRecord`, `InterpretationClaim`, `AnalysisTrace`(version 1) 타입은 명세와 동일한 필드다.
-   - `buildAnalysisTrace(input)`와 소스별 함수: `traceSaju`, `traceMbti`, `traceBloodType`, `traceWesternAstrology`, `traceTarot`.
-   - 기존 계산을 다시 실행하지 않는다. 난수·시간·I/O가 없다. 입력을 변경하지 않는다. 분석 타입은 `import type`만 사용한다.
-2. **Snapshot 연결** `app/lib/analysis.ts` (+11줄)
-   - `AnalysisSnapshot`에 `trace?: AnalysisTrace`를 추가했다.
-   - `analyzeDestiny()`에서 conflicts·keywordStrengths·coreTags 계산 뒤, return 직전에 `buildAnalysisTrace()`를 한 번 호출한다. `ELEMENT_CORE_TAGS`는 복제하지 않고 참조로 전달한다.
-   - 다른 결과는 trace를 읽지 않는다. `schemaVersion: 2`와 `ANALYSIS_ENGINE_VERSION`은 유지했다.
-3. **집중 회귀** `scripts/regression-evidence-trace.ts`
-   - 수용 기준 3–10을 218개 assertion으로 검사한다.
+1. **다양성 측정 기준선**: `scripts/diagnostic-identity-diversity.ts`
+   - 결정적 LCG(seed 12345)로 합성 입력 20,000건을 만든다. `Math.random`은 쓰지 않는다.
+   - 측정 항목:
+     - archetype 분포, 상위 1개·상위 4개 점유율
+     - Identity 선택 경로(쌍 / 단일·fallback)
+     - 선택된 쌍이 대표 교집합 키워드(`commonKeywords[0]`)를 포함하는 비율과 포함하지 않는 비율
+     - 중복 authored pair, 구조적으로 도달할 수 없는 archetype
+   - 합성 균등 입력이며 **실제 사용자 분포 추정이 아님**을 파일 머리와 출력에 명시했다.
+   - **품질 기준으로 실패하지 않는다.** 실패는 무결성 오류일 때만이다. 해당 오류는 다음과 같다.
+     - `analyzeDestiny` 예외
+     - 같은 입력을 두 번 실행했을 때의 digest 불일치(비결정성)
+     - 어휘 밖의 태그, 같은 태그로 만든 쌍, 빈 archetype, archetype 이름 중복
+2. **최소 패턴 파생**: `app/lib/analysisPatterns.ts`
+   - `deriveAnalysisPatterns(trace, authoredPairs)`는 순수 함수다.
+   - 결과는 `AnalysisPattern[]` = `ConvergencePattern | AuthoredPairPattern`이다.
+   - 점수·가중치·신뢰도·순위·유사도가 없고, 다른 범주도 없다.
+   - Snapshot에 저장하지 않으며, trace에서 언제든 다시 계산할 수 있다.
+3. **읽기 전용 노출**: `app/lib/analysis.ts` +7줄
+   - `IDENTITY_PAIR_DEFINITIONS`와 `IDENTITY_SINGLE_DEFINITIONS`를 `Readonly` 타입으로 export했다. 기존 `CONFLICT_IDENTITY`·`SINGLE_IDENTITY`와 같은 참조다.
+   - 선택 로직(`generateIdentity`)과 목록 내용·순서는 그대로다.
 
-소스별 규칙은 명세를 따른다.
-- **Saju:** 지배 오행 경로, 첫 부족 오행 경로. 최종 `saju.coreTags`에 남은 태그만 Claim으로 기록한다. 시간 맥락 Evidence는 Claim에 연결하지 않는다.
-- **MBTI:** `type-mapping`. 미입력이면 missing이고 Claim이 없다.
-- **Blood type, Tarot:** `symbolic`.
-- **Western astrology:** 태양궁 Evidence를 `zodiac` 경로와 placement 경로가 공유한다. 달·상승궁이 없으면 missing이다. `is-approximate`는 원래 값 그대로 기록한다.
+### Pattern 판정 방식
+
+- **convergence**
+  - 한 CoreTag를 **서로 다른 source 2개 이상**이 지지하면 성립한다. 기록 필드는 `sources`, `evidenceIds`(중복 없음), `claimIds`다.
+  - source는 Claim의 Evidence에서 읽는다. 따라서 다음 경우는 모두 source 1개로 센다.
+    - zodiac 경로와 태양궁 placement: 같은 Evidence
+    - 태양·달·상승궁: 같은 `western-astrology` source
+    - 사주 지배·보완 경로: 같은 `saju` source
+  - 이는 현재 교집합(`calcCommonKeywords`)이 서양 점성술을 1세트로 세는 방식과 같다. 회귀 검사로 확인했다. 비fallback 교집합 키워드 = 지지 source가 가장 많은 convergence trait다.
+  - 범위: 사주·MBTI·혈액형·zodiac·태양/달/상승 Claim. **타로는 제외**한다. 타로는 merged coreTags·교집합·Identity에 참여하지 않는다.
+- **authored-pair**
+  - 기존 `IDENTITY_PAIR_DEFINITIONS`의 각 쌍에 대해, 두 태그가 모두 지지되면 성립한다.
+  - 기록 필드:
+    - `pairIndex`, `ruleId: 'identity.conflict-pair@1'`
+    - 양쪽의 `claimIds`·`sources`
+    - `sharedSources`: 두 태그를 모두 지지하는 source. 비어 있으면 서로 다른 source 간 공존이다.
+  - 범위는 `generateIdentity()`의 합집합과 같다(사주·zodiac·혈액형·MBTI). 달·상승궁·타로는 제외한다.
+  - 중복 쌍(#8 = #3)은 고치지 않고 별도 항목으로 둔다.
+  - 회귀 검사로 확인했다: 첫 authored-pair의 archetype = 실제 Identity.
+- **공통 규칙:** available Evidence가 없는 Claim은 근거로 쓰지 않는다. 사주 보완 경로 태그는 의미 판단 없이 그대로 기록한다(재가중·제거 없음).
 
 ## Files Changed
 
 | 파일 | 변경 |
 | --- | --- |
-| `app/lib/evidenceTrace.ts` | 신규 — 타입 + 순수 builder |
-| `app/lib/analysis.ts` | import, `trace?` 필드, builder 호출 1곳 |
-| `scripts/regression-evidence-trace.ts` | 신규 — Phase 2A 회귀 검사 |
-| `docs/ai/CLAUDE_REPORT.md`, `docs/ai/CURRENT_PHASE.md` | 보고·상태 갱신 |
-| `docs/ai/CODEX_REVIEW.md` | Claude가 수정하지 않음. 커밋되지 않았던 Codex 명세·C 판정을 그대로 포함해 커밋한다 |
+| `app/lib/analysisPatterns.ts` | 신규 — 타입 + 순수 파생 함수 |
+| `app/lib/analysis.ts` | Identity 정의의 읽기 전용 export 2개 (+7줄) |
+| `scripts/regression-analysis-patterns.ts` | 신규 — 패턴 회귀 검사 |
+| `scripts/diagnostic-identity-diversity.ts` | 신규 — 다양성 기준선 진단 |
+| `docs/ai/CLAUDE_REPORT.md`, `docs/ai/CURRENT_PHASE.md` | 보고·상태 |
 
-변경하지 않은 파일: UI(`page.tsx`), `activeAnalysis.ts`, `storageEngine.ts`, `westernAstrology.ts`, `conflictEngine.ts`, `keywordEngine.ts`, `destinyCode.ts`, 궁합·프로필·analytics, 기존 테스트 스크립트, `golden-baseline.json`.
+별도 커밋 `e8737a6`에 Phase 2B 예비 분석 문서(`CODEX_REVIEW.md` 앞부분)를 보존했다. Phase 2A 기록은 그 아래에 그대로 있다.
+
+변경하지 않은 것:
+- `generateIdentity`, Identity 정의·순서, 중복 쌍, 도달 불가 archetype
+- CoreTag 어휘·매핑, 사주 보완 의미, 교집합, conflictEngine, keywordStrengths
+- 서술 템플릿, Destiny Code, UI, 저장·legacy 의미, `ANALYSIS_ENGINE_VERSION`, golden baseline
 
 ## Validation
 
-- **Golden:** `PASS: 7 golden cases match baseline`. baseline은 재생성하지 않았다.
-- **Saved-context:** `PASS: all saved-context regression checks`. 기존 스크립트를 수정하지 않았다.
-- **Evidence-trace:** `PASS: all evidence-trace regression checks` (개별 assertion 218개 PASS + 최종 요약 PASS 1줄). 검사 내용:
-  - 7개 golden 입력에서 다음을 확인한다.
-    - ID 유일성, Claim이 참조하는 Evidence의 존재·available 상태
-    - target별 trait를 중복 제거한 결과가 기존 태그와 일치
-    - placement Claim의 합집합이 `westernAstrology.coreTags`와 일치
-    - Evidence 값이 실제 소스 값과 일치, ruleId·basis, 소스 순서
-    - 달·상승궁·MBTI 누락 처리
-    - merged coreTags에 타로 미참여
-  - 사주 fixture: 두 경로의 중복 태그, 3개 제한으로 빠진 태그의 미기록, 부족 오행 없음, 시간 미입력.
-  - zodiac/태양궁 키가 다를 때 별도 Evidence로 기록되는지(fixture).
-  - builder의 결정성, 입력 불변, `Math.random`·`Date.now` 미사용.
-  - 카드 없는 경로의 `Math.random` 호출 수가 기존과 같은지(2회), 카드 있는 경로는 1회인지.
-  - trace가 든 Snapshot의 저장·조회 깊은 동등성, 재저장 시 원본 보존.
-  - trace 없는 v2와 실제 legacy 형태 fixture를 따로 만들어 조회·재저장·삭제 후 재저장 시 trace가 소급되지 않고 형식(kind)이 유지되는지.
-- **Mutation check:** 사주 보완 경로의 3개 제한 필터를 일시적으로 제거하자 해당 5개 케이스가 FAIL했다. 복구 후에는 전체 PASS다.
-- **크기:** trace JSON은 최대 5,773자로 Snapshot의 약 44%다. 저장 10건은 176,695 bytes다. trace에는 생년월일·좌표·서술 문장이 들어가지 않는다.
+- **다양성 기준선** (digest `5de12fdd`, 20,000건):
+
+  | 항목 | 값 |
+  | --- | --- |
+  | 정의된 archetype / 관측된 archetype | 21 / 12 |
+  | 상위 1개 (외로운 연결주의자) | 47.6% |
+  | 상위 4개 | 91.6% |
+  | 쌍 경로 / 단일·fallback 경로 | 99.5% / 0.5% |
+  | 선택된 쌍이 `commonKeywords[0]` 포함 | 15.4% |
+  | 선택된 쌍이 `commonKeywords[0]` 미포함 | 84.6% |
+  | 중복 쌍 | #8(창의적+체계적) = #3 |
+  | 구조적 도달 불가 | 안전한 탐험가 |
+
+- **패턴 회귀** (`PASS: all analysis-pattern regression checks`, 개별 assertion 71개):
+  - fixture:
+    - 서로 다른 source → convergence, 단일 source → 없음
+    - 사주 두 경로 → 없음, zodiac+태양(공유 Evidence) → 없음, 태양+달 → 없음
+    - zodiac+태양+사주 → source 2 / Evidence 2 / Claim 3
+    - 타로 불참, missing Evidence로 근거가 만들어지지 않음
+    - 양쪽 provenance, 같은 source 공존과 다른 source 간 공존의 구분
+    - 달·타로는 Identity 범위 밖, 중복 쌍 보존
+  - 실제 분석 8건:
+    - 결정성, trace 불변, Snapshot 불변(`patterns` 필드 없음)
+    - convergence source의 유효성, 교집합 키워드와의 일치
+    - 첫 authored-pair = 실제 archetype
+    - 실제 데이터에 같은 source 공존과 다른 source 간 공존이 모두 존재
+- **Mutation check:** convergence 판정 기준을 source 수에서 Claim 수로 일시 변경하자, 이중 계산 검사 3개와 실제 사례 검사들이 FAIL했다. 복구 후 전체 PASS.
 
 ## Build / Test / Lint
 
 ```
-npx -y tsx scripts/golden-analysis.ts            # PASS
-npx -y tsx scripts/regression-saved-context.ts   # PASS
-npx -y tsx scripts/regression-evidence-trace.ts  # PASS
-npx tsc --noEmit -p .                            # OK
-npm run build                                    # OK
-npm run lint                                     # 기존 9건과 동일 (신규 0)
-git diff --check                                 # OK
+npx -y tsx scripts/golden-analysis.ts                # PASS: 7 golden cases match baseline
+npx -y tsx scripts/regression-saved-context.ts       # PASS
+npx -y tsx scripts/regression-evidence-trace.ts      # PASS
+npx -y tsx scripts/regression-analysis-patterns.ts   # PASS (71)
+npx -y tsx scripts/diagnostic-identity-diversity.ts  # OK (무결성 오류 0)
+npx tsc --noEmit -p .                                # OK
+npm run build                                        # OK
+npm run lint                                         # 기존 9건과 동일 (신규 0)
+git diff --check                                     # OK
 ```
 
-## Deviations From Codex Design
+## Deviations From Design
 
-명세의 방향은 바꾸지 않았다. 명세가 정하지 않은 세부만 다음처럼 정했다.
+예비 분석(`CODEX_REVIEW.md` 5절) 대비 세부 결정:
 
-1. **zodiac 경로의 Claim ID:** `zodiac:sun-sign:<tag>`로 정했다. zodiac과 태양궁 placement가 같은 Evidence(`western-astrology:sun-sign`)를 공유하므로, 명세 예시 형식(`<evidenceId>:<tag>`)을 그대로 쓰면 ID가 충돌한다. 나머지 Claim은 `<evidenceId>:<tag>`다.
-2. **zodiac/태양궁 키 불일치:** 명세는 "조용히 합치지 말고 보고"라고 했다. builder는 두 키가 다르면 별도 Evidence `western-astrology:zodiac-sign`에 연결한다. 현재 코드에서는 두 키가 항상 같으며, 회귀 검사가 이를 확인한다.
-3. **같은 경로 안의 중복 태그:** Claim ID 충돌을 막기 위해 같은 경로 안에서는 한 번만 기록한다. 현재 매핑 테이블에는 해당 사례가 없다.
-4. **`ZodiacKey` 타입:** `westernAstrology.ts`에서 import했다. analysis.ts의 같은 이름 타입은 export되지 않는다.
+1. **필드 이름:** `authored-pair`의 `crossSource: boolean` 대신 `sharedSources: string[]`을 썼다. 어떤 source 안에서 공존하는지까지 보여 주기 위해서다. 비어 있으면 서로 다른 source 간 공존이다.
+2. **추가 필드:** `pairIndex`를 두었다. 중복 쌍을 고치지 않고 구분하기 위해서다.
+3. **두 패턴의 범위 차이:** convergence는 교집합 범위(달·상승궁 포함), authored-pair는 Identity 범위(태양만)를 쓴다. 현재 엔진의 두 단계가 실제로 다른 범위를 쓰기 때문이며, 이를 코드 상수로 명시했다.
+4. **읽기 전용 export:** Identity 정의를 export했다. 패턴 파생과 진단이 목록을 복제하지 않도록 하기 위해서다.
 
 ## Remaining Issues
 
-- **trace 크기:** Snapshot의 약 44%로, 작지 않다. `ruleId`·`target` 문자열이 Claim마다 반복되기 때문이다. localStorage 한도 안이라 차단 사유는 아니다. 줄이려면 형식을 바꿔야 하므로 이번 범위에서 제외했다.
-- **기존 saved-context 검사 fixture:** Case C의 legacy fixture는 새 Snapshot에서 필드를 지우는 방식이어서, 이제 `trace` 키가 남는다. 이 검사는 여전히 통과하고 검사 의도에도 영향이 없다. "기존 테스트 수정 금지"에 따라 그대로 두었다. 실제 legacy 형태 검사는 새 스크립트의 9번 항목이 담당한다.
-- **trace 사용처:** 아직 UI·공유·analytics 어디에서도 trace를 사용하지 않는다. 명세대로다.
+- 다양성 진단은 현재 편향을 **기록만** 한다. 상위 집중, 교집합과 Identity의 분리, 중복 쌍, 도달 불가 archetype은 그대로 남아 있다. 모두 향후 승인 사항이다.
+- 패턴은 아직 어떤 소비자도 쓰지 않는다. Identity 개선에 쓰려면 규칙 승인, `ANALYSIS_ENGINE_VERSION` 증가, golden 명시적 재설정이 필요하다.
+- 진단 실행에 약 11초가 걸린다(20,000건 × 2회 결정성 확인). 빠른 회귀 목록과는 분리해서 운용하는 것이 좋다.
 
 ## Final Status
 
-IMPLEMENTED — AWAITING CODEX REVIEW
+PHASE 2B FOUNDATION IMPLEMENTED — IDENTITY CHANGE NOT APPROVED
