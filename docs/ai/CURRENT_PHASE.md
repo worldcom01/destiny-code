@@ -1,8 +1,8 @@
 # Identity Selection v2 — Implementation
 
-Status: IDENTITY SELECTION V2 — CODEX FINAL REVIEW PASSED, READY FOR MERGE
+Status: IDENTITY SELECTION V2 — COMPLETED / MERGED
 
-사용자가 Codex Option B를 승인했다. 이는 **의도된 사용자 출력 변경**이다. Claude Code가 브랜치 `refactor/identity-selection-v2`(from main `2746b5e`)에 구현했다. 완료나 병합이 아니며, merge/push하지 않았다.
+사용자가 Codex Option B를 승인했다. 이는 **의도된 사용자 출력 변경**이다. Claude Code가 브랜치 `refactor/identity-selection-v2`(from main `2746b5e`)에 구현했고, Codex 최종 검수(A) 후 `main`에 fast-forward로 병합했다.
 
 ## 구현 요약
 
@@ -24,6 +24,24 @@ Codex가 `75fd9c5`를 main `2746b5e` 대비 최종 독립 검수했다. 판정�
 - 상세 최종 검수와 이전 설계 이력은 `CODEX_REVIEW.md`에 보존했다.
 
 다음 단계는 **사용자 승인 후 main 병합 및 검증**이다. 이번 검수에서는 문서 두 개만 수정했으며 애플리케이션·golden 변경, commit/merge/push를 하지 않았다.
+
+### 완료 (병합)
+
+- Option B를 구현했다. 순위는 (대표 convergence 포함, min distinct-source, source 합집합)이고, 동률은 authored 순서, convergence가 없으면 v1이다.
+- `ANALYSIS_ENGINE_VERSION = '2'`, `schemaVersion = 2`.
+- 기존 v1 저장 결과는 동결되어 있다. 조회·공유·재저장 시 재계산하거나 backfill하지 않는다.
+- v1 golden 이력은 `scripts/golden-baseline.v1.json`(main 시절과 같은 blob `d79d1fa`)으로 보존했다. v2 기준은 `scripts/golden-baseline.v2.json`이다.
+- 병합 전후 검증:
+  - golden 이전 검사(7개 중 3개 Identity 변경, 허용 범위 밖 변경 0), saved-context, evidence-trace, pattern 74, Identity v2 97: PASS
+  - 진단(고유 19,983): 불일치 84.60%→34.72%, 양쪽 교차 출처 22.60%→45.12%, Identity 변경 67.18%, selection digest `ed598f84`, 전체 진단 digest `93a95fcd`
+  - TypeScript, build, diff-check: 통과
+- Identity catalog(21개, 중복 #8=#3, 도달 불가 '안전한 탐험가' 포함), CoreTag, 사주 보완 의미, conflict 미사용은 그대로다.
+
+## Next
+
+다음 작업은 Identity 선택 규칙의 추가 수정이 **아니다**.
+
+다음 조사는 **Identity Catalog Coverage Analysis**다. 남은 대표 교집합 불일치 34.72% 중 얼마가 선택 알고리즘이 아니라 기존 21개 authored Identity catalog의 한계(대표 태그를 포함하는 쌍이 catalog에 없음 등)에서 오는지 판단하는 것이 목적이다. 아직 시작하지 않았다.
 
 ---
 
