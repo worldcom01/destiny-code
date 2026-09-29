@@ -1,8 +1,8 @@
 # Identity Catalog v3 — Implementation
 
-Status: IDENTITY CATALOG V3 — CODEX APPROVED / READY FOR MERGE
+Status: IDENTITY CATALOG V3 — COMPLETED / MERGED
 
-사용자가 Identity Catalog Pair Revision(Option A)을 **제품 승인**했다. Claude Code가 브랜치 `refactor/identity-catalog-v3`(from main `74a039a`)에 구현했다. 병합·push·배포하지 않았다.
+사용자가 Identity Catalog Pair Revision(Option A)을 **제품 승인**했다. Claude Code가 브랜치 `refactor/identity-catalog-v3`(from main `74a039a`)에 구현했고, Codex 최종 검수(**A — READY FOR MERGE**, BLOCKER/IMPORTANT/MINOR/OBSERVATION 0/0/0/0, 검수 커밋 `ac578ab`) 후 `main`에 fast-forward로 병합했다. 수동 배포는 하지 않았다.
 
 ## 승인된 제품 결정
 
@@ -21,17 +21,23 @@ Status: IDENTITY CATALOG V3 — CODEX APPROVED / READY FOR MERGE
 
 상세 결과는 `CLAUDE_REPORT.md` 상단에 있다.
 
-## 다음 단계
+### 완료 (병합)
 
-Codex가 구현 `7258c7c` / 보고 `584f542`를 main `74a039a` 대비 최종 독립 검수했다. **A. READY FOR MERGE**, BLOCKER / IMPORTANT / MINOR / OBSERVATION 모두 **0**이다.
+- **승인된 Identity:** 창의적 + 독립적 → **고집스러운 실험가** — "주어진 방식을 따르기보다 자기 방법을 새로 만들지만, 이미 잘 돌아가는 것까지 다시 손대는 사람입니다." (pairIndex 10)
+- `ANALYSIS_ENGINE_VERSION = '3'`, `schemaVersion = 2`. 기존 v1·v2 저장 결과는 동결되어 있고, golden v1·v2는 그대로 보존했으며 v3 기준을 추가했다.
+- 병합 전후 검증:
+  - golden v1/v2/v3(엄격한 v2→v3 허용 변경 포함), saved-context, evidence-trace: PASS
+  - Pattern 74 / Identity v2 97 / Identity v3 23: PASS
+  - TypeScript, build, diff-check: 통과
+- **v3 진단(고유 19,983):**
+  - 불일치 3,512 / **17.57%** (v2 34.72%)
+  - v2→v3 Identity 변경 6,188 / **30.97%**(전부 고집스러운 실험가)
+  - single→pair 115, 신규 불일치 20, 관측 유형 10/22
+- **v3 digests:** selection `25ab43b8`, full `dab19aab`. 과거 digest: v1 `94fe72c7`, v2 `ed598f84` / `93a95fcd`.
 
-- 승인 이름·문장 및 pairIndex 10 일치. 기존 0–9, v2 selector·pattern·trace 의미와 v1/v2 저장 결과 보존을 확인했다.
-- golden v2→v3 3/7 변경, 모두 고집스러운 실험가 선택이다. v1/v2 baseline blob은 그대로다.
-- 회귀 pattern 74 / Identity v2 97 / Identity v3 23, TypeScript·build·diff-check가 통과했다.
-- 고유 19,983건에서 변경 6,188, mismatch 3,512, v3 digest `25ab43b8` / `dab19aab`를 재현했다. 실제 main 엔진 대비 승인 밖 snapshot 차이는 0건이다.
-- 상세 검수와 이전 이력은 `CODEX_REVIEW.md` 최상단에 있다.
+## Next
 
-검수 문서만 별도 커밋한다. feature branch는 미병합이며 main은 `74a039a`다. **다음 단계는 사용자 승인 후 별도 병합**이다. 이번 작업에서 코드 수정·main merge·push 및 다른 phase 시작은 하지 않는다.
+**NEXT PRODUCT REVIEW:** Identity Catalog / Narrative evolution, 또는 다음에 승인되는 Destiny Code phase. 아직 정의하거나 시작하지 않았다.
 
 ---
 
