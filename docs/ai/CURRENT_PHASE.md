@@ -1,3 +1,25 @@
+# Palm Phase 1A — Observation Contract + Evidence Adapter
+
+Status: PALM PHASE 1A — COMPLETED / MERGED
+
+Codex 최종 판정 **A — IMPORTANT CLOSED — READY FOR MERGE / PHASE 1B READY**(0/0/0/0, 승인 커밋 `19bf3fd`)을 받은 뒤 `refactor/palm-observation-phase1a`를 `main`에 fast-forward로 병합했다.
+
+- **PalmObservation 계약:** 네 선(life/head/heart/fate) × visibility·curvature·continuity. 판독 상태는 observed / unreadable / not-detected다. provider 중립적인 시각 관찰만 담고, 숫자 confidence는 없다. 품질(usability·palmCoverage·issues)은 관찰과 분리되어 Evidence가 아니다.
+- **공개 런타임 경계:** `parsePalmObservationBundle(input: unknown)` → 검증된 `PalmObservationBundle`, 실패 시 `PalmObservationContractError`. 정확한 필드 집합, 판별 상태 불변식, 품질·관찰 모순 거부를 적용한다. 유일한 검증 정의다.
+- **결정적 Palm Evidence adapter:** `buildPalmEvidence()`가 같은 검증을 거친 뒤 `source = 'palm'`, `kind = 'image-observation'`, `palm:line:<key>:<attr>` 12행(unusable·이미지 없음은 0행)을 만든다.
+- InterpretationClaim과 CoreTag 매핑은 아직 없다. convergence·Identity·storage·UI·provider에 연결하지 않았다.
+- `ANALYSIS_ENGINE_VERSION = '3'`, `schemaVersion = 2`. 운영 출력 변경은 0이다(golden v1/v2/v3, digest `25ab43b8` / `dab19aab` 보존).
+- Palm 회귀 76 PASS / Pattern 74 / Identity v2 97 / Identity v3 23.
+- Phase 1B는 준비가 됐지만 **시작하지 않았다**.
+
+## Next
+
+**PALM PHASE 1B — VISION EXTRACTION BOUNDARY** (시작·설계하지 않음)
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm Phase 1A — Codex 최종 재검수 완료
 
 Status: PALM PHASE 1A — CODEX APPROVED / READY FOR MERGE
