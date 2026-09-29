@@ -1,3 +1,158 @@
+# Identity Selection v2 — 설계 검토 (2026-09-30)
+
+## 결론과 승인 경계
+
+현재 `main` **`2746b5e`**의 실제 코드와 Phase 2B 문서를 검토했다. **Option B: 대표 convergence 우선 → 약한 쪽의 출처 수 → 양쪽 출처 합집합 → 기존 authored 순서**를 권장한다. 가중 점수나 분포 균등화 없이 설명 가능한 우선순위다. 아래 측정 결과와 경계 사례를 기준으로 구현 명세를 확정할 준비가 됐다. 다만 신규 결과의 Identity가 약 67.18% 바뀌므로 **사용자의 제품 변경 승인 후 구현**한다. 이 문서는 구현·출시 승인 자체가 아니다.
+
+이번 작업은 설계 검토와 임시 측정만 했다. 애플리케이션, 테스트, golden baseline, engineVersion을 수정하지 않았다. 이전 검수 이력은 아래에 보존한다. `CLAUDE_REPORT.md` 상단의 미병합 상태는 당시 보고이며, 현재 git과 `CURRENT_PHASE.md`의 완료 기록을 우선했다.
+
+## 1. 현재 v1의 편향과 서로 다른 분석 범위
+
+`app/lib/analysis.ts`의 `generateIdentity()`는 사주·zodiac·혈액형·입력된 MBTI 태그의 **합집합**에서 두 태그가 있으면 첫 `CONFLICT_IDENTITY`를 즉시 선택한다. 교차 출처 여부·대표 교집합·지지 출처 수를 비교하지 않는다. 첫 항목인 독립적+포용적이 있으면 이후 후보는 평가되지 않는다. 후보가 전혀 없을 때만 `commonKeywords[0]`에 대응하는 single Identity를 사용한다. 이것이 유사 결과와 authored 순서 편향의 직접 원인이다.
+
+혼동하면 안 되는 네 범위:
+
+| 항목 | 실제 범위와 의미 |
+| --- | --- |
+| merged `coreTags` | 사주 + 서양 점성(태양·달·상승) + MBTI + 혈액형 합집합 |
+| `commonKeywords` | 서양 점성 전체를 한 세트로 보고 MBTI·사주·혈액형과 비교. 가장 많은 세트에 겹치는 태그들을 반환. 동률은 최초 등장 순서(서양 점성부터) |
+| authored-pair 후보 | 사주 + **zodiac 경로** + MBTI + 혈액형. 달·상승 단독 태그는 후보를 만들지 않음 |
+| `keywordStrengths` | 태양·달·상승을 각각 세므로 convergence의 distinct-source 수와 다름. 상위 5개 및 반올림 percentage도 있으므로 랭킹 입력으로 사용하지 않음 |
+
+Tarot는 이 네 선택 범위에 추가하지 않는다. `AnalysisPattern`의 convergence는 available Evidence에 연결된 Claim만 사용하고 source를 중복 제거한다. 서양 점성 placement 여러 개, zodiac/sun 중복, 사주 dominant/compensation 중복은 각각 같은 source 한 표다. 이러한 체계 간 일치는 경험적으로 독립된 관측이나 성향의 검증을 의미하지 않는다.
+
+## 2. 권장 알고리즘 — 정확한 규칙
+
+입력은 **새 분석에서 이미 생성한 trace, 기존 commonKeywords, 사주 첫 태그, 변경하지 않은 authored catalog**다. 선택 함수는 순수 함수이며 시간·난수·네트워크·사용자 이력을 읽지 않는다. 새 snapshot 전체의 analysisId/createdAt이나 카드 추출까지 결정적으로 만들라는 요구는 아니다. 동일 trace와 동일 분석 입력의 **Identity 선택**이 결정적이어야 한다.
+
+1. `deriveAnalysisPatterns(trace, IDENTITY_PAIR_DEFINITIONS)`로 기존 convergence와 authored-pair를 구한다. 후보 자격은 **기존 authored-pair와 동일**하게 유지한다. 달·상승을 후보 자격에 추가하지 않고 기존 패턴 의미도 바꾸지 않는다.
+2. 실제 convergence가 있을 때만 `commonKeywords[0]`의 CoreTag를 대표 태그 R로 삼는다. R이 convergence에 있고 최대 source 수를 갖는지 검증한다. commonKeywords fallback을 convergence인 것처럼 취급하지 않는다. 동률 대표 태그는 기존 commonKeywords 순서를 보존한다. 서로 다른 선택용 대표 태그를 새로 만들어 화면과 어긋나게 하지 않는다.
+3. 후보 P=(A,B)의 `S(A)`, `S(B)`는 **convergence 범위**의 available Claim에 연결된 distinct source 집합이다. convergence pattern이 있는 태그는 그 sources/claimIds를 사용한다. 없는 태그도 같은 target allowlist로 전체 지지를 모으되 한 출처를 여러 표로 세지 않는다. 현재 유효 후보에서 convergence 없는 태그는 source 1개이고 기존 pair support와 일치한다.
+4. convergence가 있고 후보도 있으면 다음 튜플을 **사전식 내림차순**으로 비교한다.
+
+   `([A,B]에 R 포함 ? 1 : 0, min(|S(A)|, |S(B)|), |S(A) ∪ S(B)|)`
+
+   세 값이 같으면 `pairIndex` 오름차순으로 결정한다. 배열 sort의 암묵적 안정성에 의존하지 않는다. source/claim 배열 순서가 달라도 집합 수와 선택은 동일하다. 출력 provenance 배열은 고정 순서로 정렬한다.
+5. convergence가 없으면 기존 첫 matching pair를 유지한다. 후보가 없으면 기존 single fallback(`commonKeywords[0]`의 태그, 없으면 사주 첫 태그), 마지막 generic fallback을 그대로 쓴다. trace가 없는 **과거 저장 결과에는 이 함수를 호출하지 않는다**. 새 분석에서 trace 누락·대표 태그 불일치는 잘못된 통합이므로 조용히 v1 결과를 v2로 표시하지 말고 회귀 검사/불변식 오류로 검출한다.
+
+대표 태그를 포함하는 후보가 없다면 첫 항목은 모두 0이다. 이 경우 나머지 두 항목으로 비교한다. 기존 순서는 마지막 동률 해소 수단이다. 모든 후보가 한 출처에만 의존하면 min=1·union=1로 동률이므로 기존 순서가 유지된다. 한쪽만 여러 출처에서 지지되는 경우 양쪽 모두 두 출처 이상인 후보보다 min이 낮다(대표 태그 포함 여부가 같을 때). 후보가 하나면 그대로 선택하며 동률 fallback으로 세지 않는다.
+
+**세 항목의 이유:** 대표 태그 포함을 최우선으로 두어 현재 화면에 보이는 교집합과 연결한다. min은 양쪽 모두 지지되는 쌍을 우선하며 3/3을 2/2보다 강하게 취급한다. union은 같은 min에서 더 여러 체계를 연결하는 쌍을 우선한다. 별도의 both-sides boolean은 min과 중복되고, claim 수는 중복 경로를 보상하므로 사용하지 않는다. max·총합·sharedSources 보너스까지 추가할 근거는 아직 없다. 따라서 같은 min·union인 2/2와 2/3은 기존 순서로 결정될 수 있다. 이는 의도한 최소 규칙이다.
+
+`sharedSources`가 많다고 감점하지 않는다. 여러 source가 두 태그를 모두 지지하는 2/2는 좋은 교차 출처 겹침이다. sharedSources가 비어 있다고 자동으로 더 강하지도 않다(1/1일 수 있음). 서로 다른 source로 두 편을 지지할 수 있는지는 양쪽이 비어 있지 않고 union≥2인지로 설명할 수 있다. 이를 통계적 독립성으로 표현하지 않는다.
+
+**두 provenance 범위는 구분해 보존한다:** 기존 authored-pair support는 후보가 된 근거이고, ranking support는 달·상승을 포함하는 convergence 범위의 근거다. 후자를 전자에 덮어쓰지 않는다. 미래 UI가 “달에서만 나온 태그로 pair가 만들어졌다”고 설명하면 잘못이다.
+
+## 3. 실제 비교 측정
+
+현재 diagnostic의 mulberry32, seed 12345, 날짜·시간·좌표·MBTI·혈액형 설정을 그대로 사용하고 `effectiveKey`별 첫 행만 남겼다. **19,983개 고유 입력**을 한 번씩 평가했다. 기존 보고의 20,000행 가중 비율과 분모가 다르므로 아래 v1부터 다시 측정했다. 고정 Tarot·성별, 기존 분석 결과/trace에서 선택만 모의 평가했다. 모든 옵션을 두 번 실행했고 전체 결과 JSON이 동일했다. 합성 혼합 표집이며 실제 사용자 빈도 추정이 아니다.
+
+| 지표 | v1 | A 최소 convergence 우선 | B 권장 provenance 비교 | C 중복 정의만 제거 |
+| --- | ---: | ---: | ---: | ---: |
+| 관측 archetype / 기존 21 | 13/21 | 13/21 | 13/21 | 13/21 |
+| 상위 1개 | 48.08% | 24.30% | 23.68% | 48.08% |
+| 상위 4개 | 92.08% | 72.23% | 66.89% | 92.08% |
+| 대표 교집합 불일치 / pair 선택 | 84.60% | 34.72% | 34.72% | 84.60% |
+| 기존 순서 사용 / 전체 입력 | 99.42% | 61.78% | 36.60% | 99.42% |
+| 양쪽 모두 cross-source / pair 선택 | 22.60% | 32.31% | 45.12% | 22.60% |
+| v1 대비 Identity 변경 / 전체 입력 | 0% | 49.59% | **67.18%** | 0% |
+
+정확한 분모는 전체 19,983, pair 19,868, single/generic 경로 115다. A/B 불일치는 6,899/19,868, B 양쪽 cross-source는 8,964/19,868, 변경은 **13,424/19,983**, 기존 순서 사용은 7,314/19,983이다. “기존 순서 사용”은 v1/C의 모든 pair 경로 또는 A/B의 convergence 부재 경로 및 최고 튜플 후보가 둘 이상인 동률을 뜻한다. 단순히 v1과 같은 결과를 고른 비율이 아니다. 중복 pair #3/#8의 동률도 포함한다. no-pair single 경로는 이 비율에서 제외한다. cross-source 양쪽 지표는 위에서 정의한 **ranking support 범위**로 통일해 비교했다.
+
+B 상위 순서는 틀 안의 반항자 4,731, 의심하는 직관가 3,265, 멈추는 추진력 2,750, 외로운 연결주의자 2,621건이다. 상위 비율이 낮아졌다는 이유가 아니라, A와 같은 대표 태그 정합성을 유지하면서 양쪽 교차 출처 지지가 **32.31→45.12%**로 개선되고 순서 의존이 줄어 B를 권장한다.
+
+남은 불일치의 구조: convergence가 있으나 대표 태그를 포함한 matching pair가 없는 사례 **6,886건**, convergence 자체가 없는 사례 전체 **15건** 중 pair 불일치 **13건**이다. 따라서 현재 후보 범위와 기존 single 정책을 유지하는 한 6,899건은 이 지표의 도달 가능한 최솟값이다. 34.72%를 숨기거나 0%라고 약속하지 않는다. 후보/카탈로그 확장 또는 pair 대신 single 선택은 별도 제품 변경이다.
+
+재현 방법: 기존 diagnostic의 입력 생성과 key를 재사용 → 첫 key만 유지 → analyzeDestiny 고정 카드 → deriveAnalysisPatterns → 위 규칙으로 archetype 선택 → key 순서대로 지표 집계. 임시 측정 파일은 `/tmp/destiny-v2-design.cjs`, 결과는 `/tmp/destiny-v2-results.jsonl`에 뒀으며 저장소에 구현 코드를 추가하지 않았다. B 선택 digest는 **`ed598f84`**다(초깃값 5381의 기존 djb2 방식으로 `effectiveKey=archetype\n` 누적 후 unsigned hex). 이 digest는 20,000행 입력+키워드를 포함하는 기존 **`ca1e44df`와 정의가 다르다**. 구현 회귀에서는 둘을 혼용하지 않는다.
+
+## 4. 대안별 장단점과 위험
+
+**A — 최소 convergence 우선:** 실제 convergence가 있을 때 `(대표 태그 포함)`만 비교하고 기존 순서로 해소한다. 나머지 fallback은 권장안과 같다. 코드가 가장 작고 대표 교집합 불일치를 B와 같은 최소값까지 낮춘다. 하지만 같은 대표 태그 후보들 사이에서 한쪽만 지지되는 pair를 먼저 고를 수 있고, 61.78%가 순서를 사용한다. 신규 Identity 49.59% 변경이므로 A도 무위험 변경이 아니다.
+
+**B — 권장:** 위 3항목 튜플이다. 같은 대표 태그 조건에서 약한 쪽 지지와 서로 다른 체계 연결을 비교한다. 고정된 10개 pair와 짧은 trace를 순회하므로 복잡도·비용이 작다. 두 support 범위를 명시해야 하고, 대표 태그의 기존 동률 순서와 사주 보완 의미는 그대로 남는다. 변경 범위가 67.18%이므로 버전·golden·설명 기록이 필요하다. 분포가 평탄해진 것이 채택 이유는 아니다.
+
+**C — 현 선택 + 중복 카탈로그 정리:** 순서/선택은 그대로 두고 zero-based #8(창의적+체계적, 안전한 탐험가)을 제거/비활성화한다. #3이 이미 같은 두 태그로 먼저 선택되므로 결과 변화는 0이고 편향도 그대로다. 비교표는 기존 21개를 분모로 유지했지만 활성 정의 수는 20개가 된다. 도달 불가능한 정체성을 살아 있게 만들려면 #8에 새로운 조건·태그를 부여하거나 이름/문구를 합쳐야 하며, 그것은 내용 설계 없이는 평가할 수 없다. 복잡도는 가장 낮지만 목적을 달성하지 못한다. v2와 자동 결합하지 않는다.
+
+## 5. Catalog, Saju, conflict 결정
+
+**현재 catalog를 v2에 유지할 수 있다.** 정확히는 pair 10개 + single 10개 + generic 1개로 21개이며, 21개의 독립된 pair가 아니다. 10개 태그의 서로 다른 unordered pair 45가지 중 고유 authored pair는 **9가지**뿐이다. 모든 태그는 single 문구가 있지만, pair 자격이 있는 한 single을 억제하는 정책이 있다. 표본에서 13개가 관측됐다고 나머지 모두 도달 불가능하다고 말하지 않는다. 구조적으로 확정된 중복은 #8=#3이며 B에서도 점수가 같아 #8은 여전히 선택되지 않는다.
+
+이번에는 목록·문구·인덱스를 고정한다. #8을 억지로 선택하기 위해 빈도 보정이나 특수 tie-break를 넣지 않는다. 이후 catalog 전용 검토에서 중복 폐기/통합/새 조건 부여와 미포함 조합의 의미적 커버리지를 다룬다. 태그 공존이 기존 문구의 심리적 긴장을 입증하지 않는 한계 역시 선택 규칙만으로 해결되지 않는다.
+
+**Saju 선택: A — v2에서는 현행 처리 유지.** `calcSaju`가 dominant 태그와 첫 missing-element 보완 태그를 합쳐 중복 제거 후 3개로 자른다. trace는 두 ruleId를 구분하지만 현재 product 결과는 둘 다 교집합용 CoreTag다. 보완-only source를 제거/감점하면 화면 commonKeywords는 그대로인데 선택용 convergence만 달라져 이번 개선 목적과 충돌한다. 따라서 둘 다 source `saju` 한 표로 유지하되, reason에서 claimId를 보존해 보완 근거임을 추적한다. 이를 “실제로 갖춘 성향”으로 새로 단정하지 않는다. 보완과 소유 성향을 분리할지는 향후 commonKeywords·keywordStrengths·서술까지 함께 검토할 의미 변경이다. dominant와 compensation의 이중 claim으로 사주를 두 표 세는 것은 금지한다.
+
+**conflicts는 이번 v2에서 사용하지 않는다.** `ConflictPattern`은 title/description뿐이고 최대 3개로 잘린다. 정규 trait 쌍·ruleId·claim provenance가 없다. authored-pair 역시 이름에 conflict가 있어도 두 태그 공존이지 실제 conflictEngine 검출이 아니다. 제목 문자열 매칭·개수 보너스·누락을 “긴장 없음”으로 해석하는 방법은 부적합하다. 현 conflict 출력과 순서를 유지한다.
+
+## 6. 최소 설명 기록과 통합 지점
+
+`AnalysisTrace`는 입력→기존 CoreTag의 provenance를 유지한다. 선택 결정을 trace에 섞지 않는다. `AnalysisSnapshot`에 **optional `identitySelection`**을 추가하고 새 engine v2 생성 시에는 반드시 채운다. 과거 결과는 비어 있어도 정상이다. runtime에서 최신 catalog로 역사적 선택 이유를 재계산하지 않는다.
+
+권장 내부 자료형(설계 명세이며 구현 아님):
+
+```ts
+type IdentitySelectionReason = {
+  version: 1; // 설명 데이터 형식, engineVersion과 별개
+  ruleId: 'identity.selection@2';
+  representativeTrait: CoreTag | null; // 실제 convergence일 때만
+  decision: 'ranked-pair' | 'no-convergence-pair' | 'single' | 'generic';
+  pairIndex: number | null; // 고정 catalog의 위치, engineVersion으로 의미 고정
+  selectedTraits: CoreTag[];
+  usedAuthoredOrder: boolean; // 최고 튜플 동률 또는 no-convergence pair
+  support: Array<{
+    trait: CoreTag;
+    claimIds: string[]; // convergence 범위, available Evidence만
+    sources: string[]; // distinct source
+  }>;
+};
+```
+
+pair 선택이면 support는 두 태그 순서, single이면 선택된 한 태그, generic이면 빈 배열이다. Evidence는 저장된 trace의 claim 연결로 따라간다. 튜플·union·sharedSources는 이 기록에서 계산할 수 있어 중복 저장하지 않는다. 후보 자격 support는 같은 snapshot trace와 버전 고정된 authored-pair 정의로 확인할 수 있다. 미래 catalog를 재정렬하면 과거 pairIndex로 현재 정의를 조회하지 않고 저장된 selectedTraits/archetype 및 engineVersion을 사용한다.
+
+설명은 “여러 체계에서 반복된 A를 포함하고, B도 서로 다른 체계에서 함께 나타나 이 유형을 선택했습니다” 정도로 표현할 수 있다. 한쪽만 cross-source이면 양쪽 모두 반복됐다고 쓰지 않는다. 대표 태그를 포함하지 못한 선택·순서 동률은 그 사실을 기록한다. 자신감/확률/정확도 문구는 만들지 않는다. UI 구현은 이번 범위 밖이다.
+
+통합 위치: `analyzeDestiny()`에서 사주·서양 점성·MBTI·혈액형·Tarot와 commonKeywords 계산 후, **기존 buildAnalysisTrace 호출을 선택 앞쪽으로 이동해 한 번만 실행**한다. 패턴 파생과 순수 선택 helper를 호출하고 기존 catalog에서 identityStatement/archetype을 가져온다. 상세 서술·tarotFlow·conflicts·keywordStrengths·merged coreTags 계산은 그대로 둔다. Foundation의 trace가 기존 동작을 구동하지 않는다는 주석은 v2에서 Identity에 한해 사용한다는 범위로 수정해야 한다. 이는 의도적으로 다음 단계에 진입하는 변경이다.
+
+예상 구현 파일: `app/lib/identitySelection.ts`(작은 순수 helper·reason 타입), `app/lib/analysis.ts`(통합·버전·optional 필드), focused selection regression, diagnostic 비교 모드, golden migration 및 관련 회귀 스크립트/문서. 기존 `analysisPatterns.ts`의 후보/수렴 의미 변경은 필요 없다. UI·storage·catalog·Saju 매핑을 새로 작성하지 않는다.
+
+## 7. 버전과 저장·연동 호환성
+
+실제 구현 시 **ANALYSIS_ENGINE_VERSION='2'**, **schemaVersion=2 유지**를 권장한다. 결과 의미 변경은 engineVersion, backward-compatible optional 설명 필드는 현재 schema로 구분 가능하다. `AnalysisTrace.version=1`도 유지한다. 저장의 `kind:'v2'`는 schema 분류이며 engine v2라는 뜻이 아니다.
+
+기존 engine v1 snapshot, trace 없는 schema v2, legacy 모두 원래 값을 보존한다. 열기·공유·재저장에서 선택 함수/trace/reason을 호출하거나 backfill하지 않는다. 새로운 분석만 engine2와 새 ID/시각/선택 설명을 갖는다. storage의 같은 analysisId 저장과 savedId 기반 legacy 재저장 의미는 유지한다.
+
+**출력 변화의 실제 전파를 승인 범위에 명시해야 한다.** `generateDestinyCode()` seed에 archetype이 있으므로 새 Identity는 새 Destiny Code를 만들 수 있다(해시 충돌 때문에 전부 달라진다고 단정하지 않음). 새 share/profile/analytics의 archetype·identityStatement·코드도 그 결과를 따른다. compatibility의 태그 비교 규칙은 변하지 않지만 `personFlow`가 archetype을 삽입하는 경로는 새 profile에서 문구가 바뀔 수 있다. 이를 무조건 “Identity 외 모든 문자열 불변”으로 테스트하면 잘못이다. 기존 저장 profile/공유 payload는 변경하지 않는다. profileStore는 코드 단위 저장이므로 같은 입력을 새로 분석하면 별도 코드/profile이 생길 수 있다는 기존 저장 특성도 유지한다.
+
+현재 Supabase analytics row에는 engineVersion이 없어 운영 자료에서 v1/v2를 완전히 분리할 수 없다. 선택 구현에 DB migration을 섞지 않는다. 이번 합성 진단과 혼합 운영 analytics를 비교해 v2 효과를 주장하지 않으며, 운영 버전별 효과 측정을 시작하려면 별도 버전 태깅 범위를 승인받는다.
+
+## 8. Golden/회귀 이전 및 수용 기준
+
+지금은 golden을 수정하지 않는다. 구현 승인 후 기존 `scripts/golden-baseline.json`을 **바이트 그대로 역사적 v1 fixture로 별도 보존**하고, 7개 동일 입력의 v2 baseline을 별도 생성한다. 허용 diff는 identityStatement/archetype 및 그로부터 파생된 Destiny Code, 신규 선택 설명/버전 메타데이터다. detailedReading·commonKeywords·CoreTags·Saju·conflicts·keywordStrengths·Tarot 결과는 동등해야 한다. v2 전체 결과를 새 캡처해 무검토 승인하지 않는다.
+
+기존 v1 fixture는 역사적 저장 결과 복원·공유·재저장 회귀에 계속 사용한다. 매번 최신 엔진이 v1을 재생성해야 한다는 의미가 아니다. 현재 golden 스크립트는 동일 analyzeDestiny를 호출하므로 엔진을 v2로 바꾼 뒤 옛 baseline 비교를 그대로 PASS시킬 수 없다. 비교 대상/허용 변화 검사를 분리하고 v1 oracle과 v2 기대값을 모두 남긴다. 운영 코드에 v1 엔진 전체를 복제할 필요는 없다.
+
+`regression-analysis-patterns.ts`의 “first authored-pair matches actual archetype”은 명시적 v1 불변식이므로 v2에서만 갱신한다. 첫 후보의 출처/순서 검사는 유지하고 실제 선택은 새 ranking 회귀에서 검증한다. 이를 포함한 관련 테스트 수정은 승인된 의미 변경이며 패턴 의미 자체를 바꾸라는 지시가 아니다.
+
+필수 수용 기준:
+
+- 동일 trace/입력 반복, Evidence·Claim 배열 순서 변경, 동일 source 중복 경로 추가가 선택에 영향을 주지 않는다. 명시적 pairIndex tie-break, no convergence/no pair/single/generic 경로를 검사한다.
+- missing Evidence/미입력 MBTI/누락된 달·상승은 근거를 만들지 않는다. zodiac/태양·달·상승은 western source 한 표, 사주 보완도 saju 한 표다. Tarot 제외·기존 후보 범위를 검사한다.
+- 대표 태그 포함 후보가 있으면 반드시 그 안에서 선택한다. 동일 anchor 조건에서는 min 증가, 동일 min에서는 union 증가가 우선하고 완전 동률은 authored 순서다. sharedSources 개수에 숨은 점수는 없다.
+- 선택 설명의 claimIds는 같은 snapshot trace에 존재하고 available Evidence로 연결된다. sources는 그 연결과 일치하며 pair eligibility/ranking support를 혼동하지 않는다. 새 engine2 결과에는 설명이 있고 과거 결과에는 생성하지 않는다.
+- 고정 19,983개 집합에서 위 B의 정확한 건수와 `ed598f84`를 재현한다. pair 중 불일치 **6,899건(34.72418%) 이하**를 현재 후보 범위에서 달성한다. 더 낮으면 숨은 후보/내용 변경이 없는지 검토한다. 이 값은 측정된 구조적 최솟값이며 임의의 품질 점수가 아니다. 실제 convergence 및 포함 가능 후보가 있는 subset의 불일치는 **0건**이어야 한다.
+- 분포의 균등화·관측 archetype 수 증가를 합격 조건으로 삼지 않는다. 이번 권장안은 13/21을 유지한다. 두 편 cross-source 8,964건·변경 13,424건은 구현 동일성 검증이지 미래 사용자 성향 비율 목표가 아니다.
+- 기존 저장 engine1/trace 없는 schema2/legacy 열기·공유·재저장 결과와 ID/코드 보존. 신규 engine2 snapshot 저장·복원 round-trip 및 중복 저장 검사를 추가한다.
+- golden v1 보존 + v2 허용 diff 검토, saved-context·evidence-trace·pattern·selection regression, diagnostic, TypeScript, build, diff-check 통과. 새로운 금지 난수/LLM/network 호출 없음. 상세 서술·기존 태그 기반 compatibility 규칙·UI 구현은 바꾸지 않는다.
+
+## 9. Claude 구현 계획 — 제품 승인 후 최대 3단계
+
+1. 작은 순수 Identity selector와 focused 회귀를 작성한다. 현재 catalog·패턴 범위를 보존하고 위 튜플·fallback·설명 자료형을 구현한다. 고정 입력 비교 diagnostic으로 A/B/v1과 exact counts를 확인한다.
+2. analyzeDestiny의 trace 생성을 선택 앞에 연결하고 engineVersion 2 및 optional identitySelection을 추가한다. 신규 결과에만 적용한다. 저장/공유/코드 전파와 역사적 결과 보존을 검사한다.
+3. v1 golden을 보존하고 승인된 v2 golden diff를 검토한다. 패턴의 v1 선택 불변식만 의도적으로 이전하고 전체 회귀·TypeScript·build·diff-check를 실행해 CLAUDE_REPORT에 결과를 기록한 뒤 독립 검수를 요청한다. 사용자 승인 없이 merge/push하지 않는다.
+
+**다음 결정:** Option B, 현 catalog·Saju 보완 처리 유지, conflict 제외, 신규 분석 engine2 전환과 그에 따른 Identity/코드 변경 범위를 사용자에게 승인받는다. 승인 전 애플리케이션 구현을 시작하지 않는다.
+
+---
+
 # Phase 2B foundation 재검수 — 2026-09-30
 
 ## 최종 판정
