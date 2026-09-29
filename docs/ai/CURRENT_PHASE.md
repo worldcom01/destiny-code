@@ -1,3 +1,24 @@
+# Palm Phase 1A — Codex 최종 재검수 완료
+
+Status: PALM PHASE 1A — CODEX APPROVED / READY FOR MERGE
+
+**A. IMPORTANT CLOSED — READY FOR MERGE / PHASE 1B READY**
+
+Codex가 `refactor/palm-observation-phase1a`의 `011bda4`를 검수했다. 이전 `9f99383`의 IMPORTANT 1건은 수정 `f1456eb`로 종료되었다. BLOCKER / IMPORTANT / MINOR / OBSERVATION은 **0 / 0 / 0 / 0**이며 병합 전 필수 수정은 없다.
+
+- 공개 `parsePalmObservationBundle(unknown)`가 유일한 관찰 검증 경계다. adapter가 이를 재사용하며 모순 상태·마지막 선 오류를 원자적으로 거부한다.
+- Palm 76 / Pattern 74 / Identity v2 97 / v3 23 PASS. golden v1/v2/v3, saved-context, evidence-trace, diagnostic, TypeScript, build, diff-check 통과.
+- selection `25ab43b8`, full `dab19aab` 보존. engine '3' / schema 2 유지. 기존 사용자 출력·저장 의미 변경 없음.
+- 이번 재검수는 문서만 커밋한다. 코드/테스트/golden 수정과 merge/push는 하지 않는다.
+
+## 다음 단계
+
+사용자 지시에 따른 Phase 1A 병합이 가능하다. Phase 1B는 계약 의미 변경 없이 공개 parser를 재사용할 수 있다. 서버 업로드·provider·개인정보/비용 정책은 기존 설계의 구현 전 검토 대상이며 아직 구현을 시작하지 않았다. 상세 종료 근거와 이전 C 판정 이력은 `CODEX_REVIEW.md` 최상단에 보존했다.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm Phase 1A — Observation Contract + Evidence Adapter
 
 Status: PALM PHASE 1A — IMPORTANT FIX IMPLEMENTED / AWAITING CODEX RE-REVIEW

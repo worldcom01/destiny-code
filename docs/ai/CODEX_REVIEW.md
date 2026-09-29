@@ -1,3 +1,76 @@
+# Palm Phase 1A — 최종 독립 재검수 (2026-09-30)
+
+## 최종 판정
+
+**A. IMPORTANT CLOSED — READY FOR MERGE / PHASE 1B READY**
+
+**BLOCKER 0 / IMPORTANT 0 / MINOR 0 / OBSERVATION 0.** 이전 IMPORTANT 1건은 종료되었다. 병합 전 필수 수정은 없다. Phase 1B의 계약 기반이 준비되었다는 뜻이며 provider 선정·업로드 운영 정책의 기존 구현 전 검토를 생략하거나 Phase 1B 구현을 시작한 것은 아니다.
+
+검수 대상은 `refactor/palm-observation-phase1a`의 `011bda4`, 수정 구현 `f1456eb`다. 이전 검수 HEAD `9f99383`에서의 실제 diff와 local main `f2db08c` 대비 Phase 1A 전체를 읽었다. 수정은 Palm 두 모듈·관련 회귀·보고 문서에 한정되어 있다. 전체 브랜치의 PROJECT_CONTEXT 변경도 Palm 회귀 명령 한 줄 추가뿐이다. 이번 재검수는 문서 두 개만 기록·커밋하며 production/test/golden 수정, merge/push를 하지 않는다.
+
+## 이전 C 판정 이력 및 종료 근거
+
+이전 `9f99383` 검수는 **C — NOT READY — IMPORTANT CONTRACT ISSUE**, 심각도 0/1/0/0이었다. 당시 비공개 `checkReading()`/`checkBundle()`은 unreadable 선에 관찰 속성이 붙거나 unreadable 판독에 value가 붙는 모순을 받아들였고 다음 provider 단계가 재사용할 공개 검증 경계도 없었다. 당시 C 판정은 채팅으로만 보고했고 문서 커밋은 없었다. 그 이력을 이 절에 명시적으로 보존한다.
+
+현재 `palmObservation.ts`의 공개 `parsePalmObservationBundle(input: unknown)`가 전체 구조와 상태 조합을 검증한다. `palmEvidence.ts`의 별도 semantic validator는 삭제됐으며 `buildPalmEvidence()`는 공개 parser를 호출하고 반환된 객체만 변환한다. 오류 클래스도 계약 모듈 한 곳에 있다. 공개 parser와 adapter가 서로 다른 유효성 규칙을 갖는 문제가 해소됐다.
+
+기존 독립 재현 스크립트를 수정된 코드에 다시 실행했다. 다음 입력은 모두 `PalmObservationContractError`로 거부됐다: unreadable 선 + observed continuity, unreadable reading + value, extraction 누락, 잘못된 quality 필드, unusable + observed 선. 추가 /tmp 검증에서는 **CASE A: unreadable 선 + observed curvature/continuity**, **CASE B: unreadable reading + value**를 parser와 adapter 각각에 넣어 두 경로 모두 거부됨을 확인했다. `undefined`인 금지 필드도 거부한다. 12행 또는 일부 행을 반환하지 않는다.
+
+## 공개 계약과 엄격성 판단
+
+- observed reading은 정확히 status/value, unreadable reading은 status/reason만 허용한다. value/reason enum을 검사하며 서로의 필드를 금지한다.
+- visible 선에는 두 reading이 필수이고 line-level reason이 금지된다. not-detected는 status만, unreadable은 status/reason만 허용한다. not-detected의 의미는 충분히 보이는 영역에서 후보를 찾지 못했다는 것이며 생물학적 부재가 아니다.
+- bundle, observation, 네 line key, quality, extraction의 필드를 검사한다. 잘못된 coverage, 미지/중복 issue, confidence, 빈 버전 문자열도 거부한다. 숫자 confidence는 관찰/해석 정확도로 흘러가지 않는다.
+- 이 엄격성은 승인된 유한 관찰 계약과 일치한다. provider SDK envelope나 자유 서술을 그대로 받으라는 계약이 아니므로, 추가 필드 거부가 Phase 1B를 막는다는 근거는 없다. Phase 1B adapter는 vendor 응답에서 관찰 후보를 추출하고 서버 설정의 extraction metadata를 조립한 뒤 이 parser를 호출하면 된다. 관찰 의미를 다시 구현할 필요가 없다.
+- parser는 새 객체·중첩 reading·quality issues 배열을 반환한다. deep-frozen 입력 회귀와 별도 반환 객체 변경 실험으로 원본이 변하지 않음을 확인했다. missing 값을 채우거나 모순 필드를 조용히 삭제하는 정규화는 없다.
+- 검증의 보장은 구조화 관찰 계약이다. 사진 판독의 진실성·업로드 안전성·provider 오류 처리까지 이번 parser가 해결한다고 판단하지 않는다. 이들은 기존 설계의 Phase 1B 책임이다.
+
+## 품질·Evidence·원자성
+
+유효한 unusable(네 선 모두 unreadable)은 허용되고 Evidence 0행이다. unusable인데 visible/not-detected 선이 있으면 거부한다. coverage none인데 usable/partial인 경우도 거부한다. 이전의 모순 입력을 0행으로 조용히 버리던 fixture를 오류 기대로 바꾼 것은 승인 설계의 quality/관찰 일관성 요구를 구현한 것이며, 생산 엔진 동작 변경이 아니다.
+
+부분 이미지 및 한 속성만 읽히는 관찰은 계속 지원한다. quality flags를 trait 지지로 변환하거나 판독된 값을 기본값으로 대체하지 않는다. valid usable/partial 입력의 변환은 다음과 같이 유지된다.
+
+| 상태 | Evidence |
+| --- | --- |
+| visible / observed | visibility=visible available, 판독 값 available |
+| 속성 unreadable | null / unreadable |
+| not-detected | visibility=not-detected available, 두 속성 null / missing |
+| 선 unreadable | 세 행 모두 null / unreadable |
+| 유효 unusable / bundle 미제공 | 0행 |
+
+고정 순서는 life/head/heart/fate × visibility/curvature/continuity이며 12행이다. ID `palm:line:<key>:<attribute>`, feature `line.<key>.<attribute>`, source `palm`, kind `image-observation`가 유지된다. 입력 key 열거 순서와 무관하고 출력은 입력 참조를 공유하지 않는다.
+
+코드상 전체 parser 호출이 Evidence 배열 생성보다 앞선다. 마지막 fate가 잘못되어도 앞 세 선의 Evidence를 반환할 경로가 없다. missing bundle만 호출자 의도대로 parser를 생략하고 0행을 반환한다. 현재 source 문자열은 기존 패턴의 distinct-source 집계와 호환되며 추후 같은 태그에 여러 Palm 근거가 붙어도 source는 하나다. 아직 Claim과 target 허용 경로는 추가하지 않았다.
+
+## 회귀 품질과 독립 실행
+
+Palm 회귀의 실제 개별 PASS는 **76**이다(마지막 요약 줄 제외). 기존 정상 mapping·순서·결정성·deep-freeze·무해석 검증을 유지하면서 24개 adversarial fixture를 parser/adapter 양쪽에 적용한다. 각 fixture에서 오류 클래스·반환값 부재·입력 불변을 함께 검사한다. fate의 늦은 오류 fixture가 원자적 거부를 직접 확인한다. provider-style unknown 정상 입력 → 공개 parser → 12행 경로와 잘못된 unknown 입력의 adapter 도달 전 거부도 있다. 단순 export 검사나 assertion 개수에만 의존하지 않고 실제 실패 입력을 확인했다.
+
+| 독립 실행 항목 | 결과 |
+| --- | --- |
+| Palm evidence | 76 PASS |
+| golden v1/v2/v3 | 7 cases / 버전별 검사 PASS, baseline 변경 없음 |
+| saved-context / evidence-trace | PASS / PASS |
+| Pattern | 74 PASS |
+| Identity v2 / v3 | 97 PASS / 23 PASS |
+| v3 diagnostic | 종료 코드 0, selection `25ab43b8`, full `dab19aab` |
+| TypeScript `npx tsc --noEmit -p .` | PASS |
+| `npm run build` | PASS |
+| 구현 diff 및 문서 `git diff --check` | PASS |
+
+회귀는 설치된 npm cache의 tsx loader를 `node --import .../tsx/dist/loader.mjs scripts/<script>.ts`로 실행해 불필요한 패키지 다운로드 없이 재현했다. build는 Google Fonts 접근이 가능한 승인된 실행 환경에서 완료했다. lint는 이번 재검수에서 실행하지 않았으므로 신규 lint 결과를 주장하지 않는다. /tmp의 별도 재현 스크립트는 저장소에 추가하지 않았다.
+
+## 범위·운영 영향·다음 단계
+
+local main 대비 기존 production 파일과 golden의 수정은 없다. 새 Palm 두 모듈은 production 분석에서 import되지 않는다. analyzeDestiny, 기존 Evidence/Claim, Pattern/convergence, CoreTag, 사주/MBTI/점성/혈액형/Tarot, Identity 순위/catalog, conflict, compatibility, UI, snapshot/storage, Supabase는 그대로다. engineVersion **'3'**, schemaVersion **2**, trace version **1**을 유지한다. Palm Claim/CoreTag 매핑, provider SDK/호출, 이미지/API, raw image 또는 관찰 저장은 0건이다.
+
+이번 수정에 따른 새 중요 위험이나 필수 보완은 발견하지 않았다. **Phase 1B는 Phase 1A 타입의 의미를 바꾸지 않고 공개 parser를 재사용할 수 있다.** 후속 단계는 기존 설계대로 provider·업로드 제한·보관 조건·운영 비용 통제를 검토한 뒤 진행하며, Claim·합성·Identity·raw image 저장은 포함하지 않는다. 병합 및 push는 이번 재검수에서 수행하지 않는다.
+
+---
+
+# 이전 검토 이력 (원문 보존)
+
 # Palm Phase 1 — Evidence Architecture Design (2026-09-30)
 
 상태: **설계 검토 완료 / 구현 미시작 / 아래 구현 범위 승인 대기**. 기준은 실제 `main` 및 로컬 `origin/main`의 `70bc9da`, engineVersion `'3'`, schemaVersion `2`다. Identity Catalog v3는 완료·병합된 단계이며 다시 최적화하지 않는다. 아래 타입과 파일명은 구현 계약 제안이며 이번 변경은 문서뿐이다.
