@@ -1,3 +1,28 @@
+# Palm Phase 1B — Vision Extraction Design
+
+Status: PALM PHASE 1B — VISION EXTRACTION DESIGN
+
+**설계 완료 / 구현 미시작.** 기준 main `0c21092`, engine '3' / schema 2. Phase 1A는 완료·병합되었으며 의미와 parser를 변경하지 않는다.
+
+## 권고
+
+- **A. PHASE 1B CAN BE IMPLEMENTED DIRECTLY** — 별도 선행 리팩터링 없음.
+- Primary: OpenAI `gpt-4.1-2025-04-14`. Fallback: 유료 Gemini `gemini-3.8-flash` 수동 대체 후보만, 자동 전환 없음.
+- 서버 이미지 검증·준비 → 한 provider → unknown 관찰 → 서버 metadata 조립 → 기존 `parsePalmObservationBundle()` → bundle 반환에서 종료.
+- POST `/api/palm/analyze`, Node runtime. Phase 1B는 비공개 운영자 시험용으로 보호하며 UI/익명 공개는 후속 단계다.
+- Vercel 4.5 MB 제약에 맞춰 이전 8 MiB 초안을 **raw body 4,000,000 bytes**로 수정한다. JPEG/PNG/정적 WebP, 짧은 변 640px 이상, 20MP/변 8000px 이하, 준비 JPEG 긴 변 2048px 이하를 권장한다.
+- raw image·bundle 저장 없음. Evidence/Claim/CoreTag/convergence/Identity 연결 없음. engine/schema 불변.
+
+## 다음 단계
+
+상세 provider 비교·공식 출처·prompt/schema·오류·비용/보관·파일/테스트 계획은 `CODEX_REVIEW.md` 최상단에 있다. 구현 착수 전 사용자 설계 확인과 계정/보관 조건 확인이 필요하다. live 사진의 실제 선 판독 성능은 아직 검증하지 않았다.
+
+이후 Phase 1C는 선택적 UI·동의·품질/재촬영 경험을 먼저 검토한다. 상징 규칙·합성은 별도 후속 승인 대상이다. 이번 작업은 문서만 커밋하며 구현/merge/push하지 않는다.
+
+---
+
+## 이전 단계 기록 (원문 보존)
+
 # Palm Phase 1A — Observation Contract + Evidence Adapter
 
 Status: PALM PHASE 1A — COMPLETED / MERGED
