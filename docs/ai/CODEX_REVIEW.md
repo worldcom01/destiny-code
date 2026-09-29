@@ -1,3 +1,100 @@
+# Identity Selection v2 — 최종 독립 검수 (2026-09-30)
+
+## 최종 판정
+
+**A. Ready for merge**
+
+**BLOCKER 0 / IMPORTANT 0 / MINOR 0 / OBSERVATION 0.** 병합 전 필수 수정은 없다.
+
+검수 대상은 `refactor/identity-selection-v2`의 `75fd9c5`, 설계 기록 커밋 `d87c406`, 기준 main `2746b5e`다. `git diff main...refactor/identity-selection-v2`와 주변 UI·저장·공유 경로를 확인했다. Claude 보고서만 신뢰하지 않고 회귀·진단을 직접 실행했다. 이번 검수에서는 문서 두 개만 수정했고 애플리케이션·테스트·golden을 수정하지 않았다. merge/push하지 않았다. 아래의 이전 설계·검수 이력은 보존한다.
+
+## 1. 승인된 Option B와 구현 일치
+
+`app/lib/identitySelection.ts`는 `(대표 convergence 태그 포함, min(양쪽 distinct-source 수), 양쪽 source 합집합 수)`를 사전식 내림차순으로 비교한다. 세 항목이 같을 때만 `pairIndex` 오름차순으로 결정한다. 명시적 비교 루프이므로 JS sort 안정성에 의존하지 않는다. 가중 합산·의미 유사도·무작위 선택·conflict 점수는 없다.
+
+대표 태그는 기존 commonKeywords의 정확한 CoreTag이며 실제 최대 source 수의 convergence인지 검증한다. convergence 없는 fallback keyword를 가짜 convergence로 취급하지 않는다. 후보 자격은 기존 authored-pair 범위(사주·zodiac·MBTI·혈액형), 순위 지지는 기존 convergence 범위(달·상승 포함)로 구분한다. `traitSupportInConvergenceScope()` 추출은 코드 공유이며 패턴 의미 변경이 아니다.
+
+available Evidence에 연결된 Claim만 사용한다. 사주 dominant/compensation은 source 하나, zodiac/Sun 및 Sun/Moon/Ascendant도 western source 하나다. 보완 태그의 의미·3개 제한·기존 CoreTag를 바꾸지 않았고 Tarot는 후보와 순위에서 제외된다.
+
+convergence가 없으면 첫 authored 후보, 후보가 없으면 기존 keyword→사주 첫 태그의 single, 정의도 없으면 동일 generic 문구다. 임시 디렉터리에서 실제 main 엔진을 별도로 로드해 비교한 **19,983건 중 no-convergence 15건 모두 Identity 문구와 archetype이 v1과 같았다**.
+
+## 2. 테스트 품질 및 반례 확인
+
+Identity 회귀는 출력 로그에서 **개별 97 assertions**, 패턴 회귀는 **74 assertions**를 확인했다. 반복·Evidence/Claim 배열 역순, 대표 태그 우선, min 우선, union 우선, 최종 authored 순서, no-convergence pair/single/generic, 같은 source 중복, zodiac/Sun·Saju 중복 보호, missing Evidence, Tarot 제외, 달 단독 후보 제외, 이유 provenance, 저장 v1 보존·v2 round-trip, 버전·catalog를 검사한다. Ascendant source 의미는 공통 집계 코드와 기존 evidence/pattern 회귀로 함께 확인했다.
+
+특히 반례는 대표 태그를 포함하는 두 후보에 대해 `(min=1, union=3)`보다 `(min=2, union=2)`를 선택해야 한다. **파일을 수정하지 않고 메모리에서 비교 순서를 union→min으로 바꿔 실행하자 해당 `3/4 higher min beats larger union` 검사가 실제 FAIL했다.** 이름뿐인 검사가 아니다.
+
+추가로 메모리에서 반환 CoreTags를 빈 배열로 바꾸어 golden을 실행하자 허용 범위 밖 변경 **52개**로 FAIL했다. 어떤 baseline도 다시 생성하지 않았다. 회귀는 유한 fixture 검증이지만, 실제 diff와 전체 고유 입력 비교가 이를 보완한다.
+
+## 3. 저장·버전·선택 이유
+
+새 분석은 engineVersion **'2'**, schemaVersion **2**, trace version **1**이다. 기존 schema에 optional `identitySelection`을 추가하므로 schemaVersion 3이 필요하지 않다. 이유는 승인된 자료형 그대로 snapshot에 저장되고, 정렬된 claimIds/sources와 대표 태그·선택 경로·pairIndex·selectedTraits·순서 사용 여부를 담는다. trace 자체의 의미를 바꾸거나 경험적 confidence를 주장하지 않는다. 선택 이유가 별도 규칙으로 Identity를 바꾸는 경로도 없다.
+
+UI의 `handleViewSaved → activeFromSaved`는 저장된 resultData와 메타데이터를 그대로 사용한다. 저장을 열 때 analyzeDestiny/selectIdentityV2를 호출하는 경로는 없다. engine1 snapshot, trace/reason 없는 schema2, legacy에 이유를 backfill하거나 엔진 버전을 덮어쓰지 않는다. `kind:'v2'`는 저장 schema 분류이며 engineVersion 2만을 뜻하지 않는다.
+
+Destiny Code는 snapshot에 독립 필드로 저장되는 대신 기존 `generateDestinyCode(active.result)`로 **저장된 archetype과 값에서** 복원된다. 코드 생성 함수가 변경되지 않았으므로 역사적 코드를 유지한다. share/re-save 역시 현재 form이 아닌 active context를 쓰고 savedId/analysisId 중복 저장 의미를 유지한다. saved-context 및 신규 engine1 저장·재저장 바이트 보존 검사가 통과했다.
+
+## 4. Catalog와 golden 이전
+
+실제 main과 브랜치의 pair/single 정의를 deep comparison해 동일함을 확인했다. pair 10개 + single 10개 + generic 1개의 **21개**, 문구·태그·순서가 유지된다. generic은 상수로 추출했지만 문구는 같다. #8=#3 중복과 안전한 탐험가의 구조적 도달 불가도 그대로다. catalog digest **`2a85c50`** 회귀가 통과했다.
+
+`main:scripts/golden-baseline.json`과 `HEAD:scripts/golden-baseline.v1.json`의 blob은 모두 **`d79d1fa2a61558a741e640e02ce385a6f24d2958`**다. v1 역사적 기준은 파괴·재작성되지 않았다. v2 baseline은 별도로 존재하며 새 버전/선택 이유까지 exact comparison한다. v1 허용 diff는 `identityStatement`, `archetype`, 파생 `destinyCode`로 제한된다.
+
+7개 golden 중 의도된 변경은 3개이며 Option B로 재현됐다:
+
+- solar/full/Seoul: 감정을 분석하는 사람 → 틀 안의 반항자.
+- lunar/leap: 감정을 분석하는 사람 → 분주한 포용자.
+- water/B/SJ: 외로운 연결주의자 → 의심하는 직관가.
+
+나머지 4개는 동일하고 허용 필드 외 차이는 없다. v1 selector는 비교·회귀용으로 보존됐으며 새 분석이나 저장 결과 복원에서 v1을 자동 실행해 재해석하는 기능을 추가하지 않았다.
+
+## 5. 진단 독립 재현
+
+| 지표 | v1 | v2 |
+| --- | ---: | ---: |
+| 고유 유효 입력 | 19,983 | 19,983 |
+| 관측 archetype | 13/21 | 13/21 |
+| top 1 | 48.08% | 23.68% |
+| top 4 | 92.08% | 66.89% |
+| 대표 교집합 불일치(pair 분모) | 16,808/19,868 = 84.60% | 6,899/19,868 = 34.72% |
+| 양쪽 cross-source 지지(pair 분모) | 4,490/19,868 = 22.60% | 8,964/19,868 = 45.12% |
+| 기존 순서 사용(전체 분모) | 19,868/19,983 = 99.42% | 7,314/19,983 = 36.60% |
+| selection digest | `94fe72c7` | **`ed598f84`** |
+
+Identity 변경 **13,424/19,983 = 67.18%**, 20,000행 전체 diagnostic digest **`93a95fcd`**도 재현했다. 이 변경은 승인된 순위 규칙으로 설명되며 변경 비율 자체는 회귀 결함이 아니다.
+
+“기존 순서 사용”은 실제 `usedAuthoredOrder`다. 최고 튜플 동률 또는 no-convergence pair이며, v1과 결과가 같다는 뜻이 아니다. 분모는 전체 입력, single/generic은 제외된 분자, 중복 #3/#8 동률은 포함된다. 설계의 36.60%와 정의·건수가 일치한다. 진단은 합성 구조 측정이며 실제 사용자 모집단 빈도 추정이 아니다. 남은 불일치·catalog 중복·사주 보완의 의미적 한계는 승인된 설계에 이미 명시된 범위다.
+
+## 6. 예상 밖 결과 변경 검증
+
+보고서와 독립적으로 `2746b5e`의 app/lib를 임시 디렉터리에 읽어 v1 엔진을 실행하고 같은 19,983개 입력의 현재 엔진과 비교했다. `analysisId`, `createdAt`, Identity 두 필드, engineVersion, 신규 identitySelection을 제외한 **snapshot 전체 deep comparison 차이 0건**이다. source evidence/claims, CoreTags, Saju, MBTI, 혈액형, 점성, Tarot, commonKeywords, keywordStrengths, conflicts, detailedReading, tarotFlow가 포함된다. 기존/새 `deriveAnalysisPatterns` 출력도 **19,983건 모두 deep-equal**했다. 보존된 identityV1 helper도 실제 main Identity 문구·archetype과 전건 일치했다.
+
+UI·storage·share·profile·analytics·compatibility 파일은 수정되지 않았다. 새 Identity에 따라 Destiny Code, 저장/전송 profile·analytics 값, archetype 삽입 compatibility 문구가 달라질 수 있는 것은 승인된 전파다. `generateShareText`는 commonKeywords·detailedReading 등을 사용하고 archetype을 사용하지 않으므로 같은 입력의 공유 문구는 유지된다. 공유 profile payload의 archetype/code 변화와 이 공유 문구는 구분해야 한다. 템플릿·UI 구조·관계 계산 규칙 변경이나 금지된 범위 확장은 발견되지 않았다.
+
+## 7. 실행한 검증
+
+| 검증 | 결과 |
+| --- | --- |
+| saved-context regression | PASS |
+| evidence-trace regression | PASS |
+| pattern regression | PASS, 개별 74 assertions |
+| Identity v2 regression | PASS, 개별 97 assertions |
+| golden v1 허용 diff + v2 exact match | PASS, 7건 |
+| diversity diagnostic | PASS, 19,983 unique, 두 digest 재현 |
+| TypeScript (`tsc --noEmit --incremental false -p .`) | PASS |
+| `npm run build` | PASS |
+| `git diff --check main...HEAD` / `git diff --check` | PASS |
+| 실제 main 엔진과 전체 고유 입력 차등 비교 | PASS, 승인 밖 snapshot 차이 및 패턴 차이 0건 |
+| 비교 순서 역전 / CoreTags 오염 메모리 반례 | 각각 기대한 FAIL 확인 |
+
+초기 제한 환경 빌드는 Google Fonts 다운로드 실패였으며 네트워크 접근을 허용한 재실행에서 정상 통과했다. 애플리케이션 빌드 결함으로 분류하지 않는다.
+
+## 다음 단계
+
+**main 병합 준비 완료.** 사용자의 병합 승인 후 문서 기록을 포함해 병합하고 main에서 검증한다. 이번 검수에서 commit/merge/push 또는 추가 기능 구현은 수행하지 않았다.
+
+---
+
 # Identity Selection v2 — 설계 검토 (2026-09-30)
 
 ## 결론과 승인 경계

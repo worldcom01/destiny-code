@@ -1,6 +1,6 @@
 # Identity Selection v2 — Implementation
 
-Status: IDENTITY SELECTION V2 — IMPLEMENTED, AWAITING CODEX REVIEW
+Status: IDENTITY SELECTION V2 — CODEX FINAL REVIEW PASSED, READY FOR MERGE
 
 사용자가 Codex Option B를 승인했다. 이는 **의도된 사용자 출력 변경**이다. Claude Code가 브랜치 `refactor/identity-selection-v2`(from main `2746b5e`)에 구현했다. 완료나 병합이 아니며, merge/push하지 않았다.
 
@@ -16,7 +16,14 @@ Status: IDENTITY SELECTION V2 — IMPLEMENTED, AWAITING CODEX REVIEW
 
 ## 다음 단계
 
-Codex가 `git diff main...refactor/identity-selection-v2`와 `CLAUDE_REPORT.md`의 검증 명령으로 최종 검수한다. 병합은 검수와 사용자 승인 후에 한다.
+Codex가 `75fd9c5`를 main `2746b5e` 대비 최종 독립 검수했다. 판정은 **A. Ready for merge**, BLOCKER / IMPORTANT / MINOR / OBSERVATION 모두 **0**이다.
+
+- Option B 구현·v1 저장 보존·버전·golden 이전이 적합하다.
+- 전체 요청 검증이 통과했다(pattern 74, Identity 97 assertions). 고유 19,983건과 digest `ed598f84` / `93a95fcd`를 재현했다.
+- 실제 main 엔진과 고유 입력 전건 차등 비교에서 승인 밖 snapshot 변경 및 기존 패턴 변경은 0건이다. 수렴 없는 15건도 v1 Identity를 유지했다.
+- 상세 최종 검수와 이전 설계 이력은 `CODEX_REVIEW.md`에 보존했다.
+
+다음 단계는 **사용자 승인 후 main 병합 및 검증**이다. 이번 검수에서는 문서 두 개만 수정했으며 애플리케이션·golden 변경, commit/merge/push를 하지 않았다.
 
 ---
 
