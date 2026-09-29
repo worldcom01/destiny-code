@@ -1,21 +1,26 @@
-// One-off golden test for analyzeDestiny().
+// Golden test for analyzeDestiny() across the engine v1 → v2 Identity migration.
 //
-//   npx -y tsx scripts/golden-analysis.ts --capture   # write baseline
-//   npx -y tsx scripts/golden-analysis.ts             # compare against baseline
+//   npx -y tsx scripts/golden-analysis.ts                # compare (v1 allowed-diff + exact v2)
+//   npx -y tsx scripts/golden-analysis.ts --capture-v2   # write the v2 baseline (refused if the v1 check fails)
 //
-// The baseline records the analysis exactly as the UI consumed it before the
-// AnalysisSnapshot refactor: the AnalysisOutput fields, plus conflicts,
-// keyword strengths, merged core tags and destiny code that page.tsx used to
-// assemble itself. Do not regenerate the baseline to make a diff go away.
+// golden-baseline.v1.json is the engine v1 baseline, byte-identical to the file
+// captured before the AnalysisSnapshot refactor. It is never rewritten. Against it,
+// only the approved Identity Selection v2 impact may differ:
+//   output.identityStatement, output.archetype, destinyCode (seeded by archetype)
+// Everything else (CoreTags, commonKeywords, Saju, narrative, conflicts, keyword
+// strengths, Tarot, ...) must stay identical.
+//
+// golden-baseline.v2.json is the engine v2 baseline (exact match, including the
+// identitySelection reason). Do not regenerate either baseline to make a diff go away.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { analyzeDestiny, TAROT_DATA, type AnalysisOutput } from '../app/lib/analysis';
-import { detectConflicts } from '../app/lib/conflictEngine';
-import { computeKeywordStrengths } from '../app/lib/keywordEngine';
+import { analyzeDestiny, identityV1, TAROT_DATA, type AnalysisSnapshot } from '../app/lib/analysis';
 import { generateDestinyCode } from '../app/lib/destinyCode';
 
-const BASELINE_PATH = join(__dirname, 'golden-baseline.json');
+const V1_PATH = join(__dirname, 'golden-baseline.v1.json');
+const V2_PATH = join(__dirname, 'golden-baseline.v2.json');
+const ALLOWED_V1_DIFFS = new Set(['result.output.identityStatement', 'result.output.archetype', 'result.destinyCode']);
 
 interface GoldenCase {
   name: string;
@@ -41,7 +46,7 @@ const CASES: GoldenCase[] = [
   { name: 'water sign, thinking, B + SJ',      birthdate: '1995-07-10', birthtime: '12:00', mbti: 'ISTJ', gender: 'female', bloodtype: 'B',  cardIndex: 21, calendarType: 'solar', isLeapMonth: false },
 ];
 
-function analyze(c: GoldenCase) {
+function analyze(c: GoldenCase): AnalysisSnapshot {
   return analyzeDestiny(
     c.birthdate, c.birthtime, c.mbti, c.gender, c.bloodtype,
     TAROT_DATA[c.cardIndex % TAROT_DATA.length],
@@ -49,45 +54,25 @@ function analyze(c: GoldenCase) {
   );
 }
 
-function outputFields(r: AnalysisOutput) {
+// Everything the UI reads, taken from the snapshot (same shape as the v1 baseline),
+// plus the engine version and selection reason for v2.
+function fromSnapshot(s: AnalysisSnapshot) {
   const {
     saju, zodiac, westernAstrology, mbtiTraits, bloodType, tarot,
     commonKeywords, detailedReading, identityStatement, archetype, tarotFlow,
-  } = r;
+    conflicts, keywordStrengths, coreTags, engineVersion, identitySelection,
+  } = s;
   return {
-    saju, zodiac, westernAstrology, mbtiTraits, bloodType, tarot,
-    commonKeywords, detailedReading, identityStatement, archetype, tarotFlow,
-  };
-}
-
-// Baseline: reproduces the assembly page.tsx performed before the refactor
-// (handleCardPicked), using only AnalysisOutput and the standalone engines.
-function legacyPageAssembly(c: GoldenCase) {
-  const r: AnalysisOutput = analyze(c);
-  const wa = r.westernAstrology;
-  return {
-    output: outputFields(r),
-    conflicts: detectConflicts(r.saju, r.zodiac, r.mbtiTraits, r.bloodType, r.westernAstrology),
-    keywordStrengths: computeKeywordStrengths(r.saju, r.zodiac, r.mbtiTraits, r.bloodType, r.westernAstrology),
-    coreTags: [...new Set([
-      ...r.saju.coreTags,
-      ...wa.coreTags,
-      ...(r.mbtiTraits.type ? r.mbtiTraits.coreTags : []),
-      ...r.bloodType.coreTags,
-    ])],
-    destinyCode: generateDestinyCode(r),
-  };
-}
-
-// Compare: reads the same information from the AnalysisSnapshot itself.
-function fromSnapshot(c: GoldenCase) {
-  const s = analyze(c);
-  return {
-    output: outputFields(s),
-    conflicts: s.conflicts,
-    keywordStrengths: s.keywordStrengths,
-    coreTags: s.coreTags,
+    output: {
+      saju, zodiac, westernAstrology, mbtiTraits, bloodType, tarot,
+      commonKeywords, detailedReading, identityStatement, archetype, tarotFlow,
+    },
+    conflicts,
+    keywordStrengths,
+    coreTags,
     destinyCode: generateDestinyCode(s),
+    engineVersion,
+    identitySelection,
   };
 }
 
@@ -106,27 +91,75 @@ function diff(expected: unknown, actual: unknown, path: string, out: Diff[]) {
   }
 }
 
-const capture = process.argv.includes('--capture');
-const build = capture ? legacyPageAssembly : fromSnapshot;
-// JSON round-trip so undefined fields compare the same way they were stored.
-const actual = JSON.parse(JSON.stringify(CASES.map((c) => ({ name: c.name, result: build(c) }))));
+const printDiffs = (ds: Diff[]) => {
+  for (const d of ds.slice(0, 50)) {
+    console.log(`- ${d.path}\n    expected: ${JSON.stringify(d.expected)}\n    actual:   ${JSON.stringify(d.actual)}`);
+  }
+};
 
-if (capture) {
-  writeFileSync(BASELINE_PATH, JSON.stringify(actual, null, 2) + '\n');
-  console.log(`Captured ${actual.length} golden cases -> ${BASELINE_PATH}`);
+// JSON round-trip so undefined fields compare the same way they were stored.
+const actual = JSON.parse(JSON.stringify(CASES.map((c) => {
+  const s = analyze(c);
+  return { name: c.name, result: fromSnapshot(s), v1Archetype: identityV1(s).archetype };
+})));
+
+let failed = false;
+
+// ── 1. engine v1 baseline: only the approved Identity impact may differ ──
+const v1 = JSON.parse(readFileSync(V1_PATH, 'utf8')) as Array<{ name: string; result: Record<string, unknown> }>;
+const unexpected: Diff[] = [];
+let identityChanged = 0;
+console.log('engine v1 → v2 golden comparison:');
+v1.forEach((base, i) => {
+  const now = actual[i];
+  const ds: Diff[] = [];
+  // keys that exist only in v2 (engineVersion, identitySelection) are new, not changes
+  const comparable: Record<string, unknown> = { ...now.result };
+  delete comparable.engineVersion;
+  delete comparable.identitySelection;
+  diff(base.result, comparable, 'result', ds);
+  unexpected.push(...ds.filter((d) => !ALLOWED_V1_DIFFS.has(d.path)).map((d) => ({ ...d, path: `[${base.name}] ${d.path}` })));
+  const v1Arch = (base.result.output as { archetype: string }).archetype;
+  const v2Arch = now.result.output.archetype;
+  // the retained v1 selector still reproduces the historical v1 Identity
+  if (now.v1Archetype !== v1Arch) {
+    unexpected.push({ path: `[${base.name}] identityV1()`, expected: v1Arch, actual: now.v1Archetype });
+  }
+  if (v1Arch !== v2Arch) identityChanged++;
+  const r = now.result.identitySelection;
+  console.log(`  ${v1Arch === v2Arch ? '=' : '≠'} [${base.name}] ${v1Arch} → ${v2Arch}`
+    + `   (${r.decision}${r.representativeTrait ? `, 대표 ${r.representativeTrait}` : ''}${r.usedAuthoredOrder ? ', authored order' : ''})`);
+});
+console.log(`  Identity changed in ${identityChanged} of ${v1.length} cases`);
+if (unexpected.length) {
+  failed = true;
+  console.log(`FAIL: ${unexpected.length} change(s) outside the approved Identity impact`);
+  printDiffs(unexpected);
+} else {
+  console.log('PASS: v1 baseline differs only in identityStatement / archetype / destinyCode');
+}
+
+// ── 2. engine v2 baseline: exact ──
+const v2Actual = actual.map((a: { name: string; result: unknown }) => ({ name: a.name, result: a.result }));
+if (process.argv.includes('--capture-v2')) {
+  if (failed) {
+    console.log('REFUSED: not writing the v2 baseline while the v1 comparison has unexpected changes');
+    process.exit(1);
+  }
+  writeFileSync(V2_PATH, JSON.stringify(v2Actual, null, 2) + '\n');
+  console.log(`Captured ${v2Actual.length} v2 golden cases -> ${V2_PATH}`);
   process.exit(0);
 }
 
-const baseline = JSON.parse(readFileSync(BASELINE_PATH, 'utf8'));
-const diffs: Diff[] = [];
-diff(baseline, actual, 'cases', diffs);
-
-if (diffs.length === 0) {
-  console.log(`PASS: ${actual.length} golden cases match baseline`);
+const v2Diffs: Diff[] = [];
+diff(JSON.parse(readFileSync(V2_PATH, 'utf8')), v2Actual, 'cases', v2Diffs);
+if (v2Diffs.length) {
+  failed = true;
+  console.log(`FAIL: ${v2Diffs.length} difference(s) from the v2 baseline`);
+  printDiffs(v2Diffs);
 } else {
-  console.log(`FAIL: ${diffs.length} difference(s)`);
-  for (const d of diffs.slice(0, 50)) {
-    console.log(`- ${d.path}\n    expected: ${JSON.stringify(d.expected)}\n    actual:   ${JSON.stringify(d.actual)}`);
-  }
-  process.exit(1);
+  console.log(`PASS: ${v2Actual.length} golden cases match v2 baseline`);
 }
+
+if (failed) process.exit(1);
+console.log(`PASS: golden v1→v2 migration checks (${v2Actual.length} cases)`);

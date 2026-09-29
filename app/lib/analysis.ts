@@ -3,6 +3,7 @@ import { calcWesternAstrology, calcSunSignKey, type WesternAstrologyResult } fro
 import { detectConflicts, type ConflictPattern } from './conflictEngine';
 import { computeKeywordStrengths, type KeywordStrength } from './keywordEngine';
 import { buildAnalysisTrace, type AnalysisTrace } from './evidenceTrace';
+import { selectIdentityV2, type IdentitySelectionReason } from './identitySelection';
 
 // ── 타입 정의 ────────────────────────────────────────────────────────────────
 
@@ -97,7 +98,8 @@ export interface AnalysisOutput {
 export type { WesternAstrologyResult };
 
 // 분석 규칙이 바뀌면 올린다 — 저장된 결과가 어떤 규칙으로 만들어졌는지 구분하는 용도
-export const ANALYSIS_ENGINE_VERSION = '1';
+// '1': Identity = 고정 순서의 첫 공존 쌍 / '2': Identity Selection v2 (identitySelection.ts)
+export const ANALYSIS_ENGINE_VERSION = '2';
 
 // analyzeDestiny()가 조립하는 완성된 분석 결과. 저장 시 그대로 보관한다.
 export type AnalysisSnapshot = AnalysisOutput & {
@@ -112,6 +114,9 @@ export type AnalysisSnapshot = AnalysisOutput & {
 
   // Phase 2A: 기존 CoreTag의 출처 기록. 새 분석에만 있고, 기존 저장 결과에는 소급하지 않는다.
   trace?: AnalysisTrace;
+
+  // engine v2: Identity가 왜 선택됐는지. 새 분석에는 항상 있고, 과거 결과에는 재계산하지 않는다.
+  identitySelection?: IdentitySelectionReason;
 };
 
 export function isAnalysisSnapshot(r: AnalysisOutput): r is AnalysisSnapshot {
@@ -636,14 +641,27 @@ const SINGLE_IDENTITY: Partial<Record<CoreTag, { identityStatement: string; arch
   열정적:  { identityStatement: '완전히 타오르다 완전히 꺼지는 사이클이 반복됩니다. 그 강도가 삶을 풍요롭게 만들기도 하지만, 그 사이의 공백이 오래 이어질 때는 자신이 낯설어지기도 합니다.', archetype: '전부 아니면 전무형' },
 };
 
-// 읽기 전용 노출 — 패턴 파생·진단 스크립트용. Identity 선택은 generateIdentity()만 수행한다.
+// 읽기 전용 노출 — 패턴 파생·진단 스크립트용. 유일한 Identity catalog다.
 export const IDENTITY_PAIR_DEFINITIONS: ReadonlyArray<{
   readonly tags: readonly [CoreTag, CoreTag];
   readonly archetype: string;
 }> = CONFLICT_IDENTITY;
 export const IDENTITY_SINGLE_DEFINITIONS: Readonly<Partial<Record<CoreTag, { readonly archetype: string }>>> = SINGLE_IDENTITY;
 
-function generateIdentity(
+const GENERIC_IDENTITY = {
+  identityStatement: '여러 체계가 교차하며 드러나는 — 고유한 심리 패턴을 가진 사람입니다.',
+  archetype: '복합적 패턴의 소유자',
+};
+
+const tagOfLabel = (label: string | undefined): CoreTag | undefined =>
+  label === undefined ? undefined : (Object.entries(TAG_LABELS) as [CoreTag, string][]).find(([, v]) => v === label)?.[0];
+
+// engine v1 선택 (고정 순서의 첫 공존 쌍). v2의 비교·진단·회귀용으로 보존한다.
+export function identityV1(result: AnalysisOutput): { identityStatement: string; archetype: string } {
+  return generateIdentityV1(result.saju, result.zodiac, result.mbtiTraits, result.bloodType, result.tarot, result.commonKeywords);
+}
+
+function generateIdentityV1(
   saju: SajuOutput,
   zodiac: ZodiacResult,
   mbti: MbtiResult,
@@ -670,10 +688,17 @@ function generateIdentity(
   })();
 
   const match = primaryTag ? SINGLE_IDENTITY[primaryTag] : undefined;
-  return match ?? {
-    identityStatement: '여러 체계가 교차하며 드러나는 — 고유한 심리 패턴을 가진 사람입니다.',
-    archetype: '복합적 패턴의 소유자',
-  };
+  return match ?? GENERIC_IDENTITY;
+}
+
+// engine v2 선택 결과를 catalog 문구로 변환한다.
+function identityFromSelection(reason: IdentitySelectionReason): { identityStatement: string; archetype: string } {
+  if (reason.pairIndex !== null) {
+    const { identityStatement, archetype } = CONFLICT_IDENTITY[reason.pairIndex];
+    return { identityStatement, archetype };
+  }
+  const single = reason.decision === 'single' ? SINGLE_IDENTITY[reason.selectedTraits[0]] : undefined;
+  return single ?? GENERIC_IDENTITY;
 }
 
 
@@ -811,7 +836,20 @@ export function analyzeDestiny(
   ]);
 
   const detailedReading = generateDetailedReading(saju, zodiac, mbtiData, bloodTypeData, tarot, commonKeywords);
-  const { identityStatement, archetype } = generateIdentity(saju, zodiac, mbtiData, bloodTypeData, tarot, commonKeywords);
+
+  // 기존 CoreTag의 출처 기록. engine v2에서는 Identity 선택에만 사용한다 (다른 결과는 trace에 의존하지 않음)
+  const trace = buildAnalysisTrace({
+    saju, zodiacKey, zodiac, westernAstrology, mbti: mbtiData, bloodType: bloodTypeData, tarot,
+    elementCoreTags: ELEMENT_CORE_TAGS,
+  });
+  const identitySelection = selectIdentityV2({
+    trace,
+    pairs: CONFLICT_IDENTITY,
+    hasSingle: (t) => SINGLE_IDENTITY[t] !== undefined,
+    keywordTag: tagOfLabel(commonKeywords[0]),
+    sajuFirstTag: saju.coreTags[0],
+  });
+  const { identityStatement, archetype } = identityFromSelection(identitySelection);
 
   const tarotFlow = generateTarotFlow(tarot, commonKeywords, saju);
 
@@ -824,12 +862,6 @@ export function analyzeDestiny(
     ...bloodTypeData.coreTags,
   ])];
 
-  // 설명용 기록일 뿐 — 위의 어떤 결과도 trace에 의존하지 않는다
-  const trace = buildAnalysisTrace({
-    saju, zodiacKey, zodiac, westernAstrology, mbti: mbtiData, bloodType: bloodTypeData, tarot,
-    elementCoreTags: ELEMENT_CORE_TAGS,
-  });
-
   return {
     schemaVersion: 2,
     engineVersion: ANALYSIS_ENGINE_VERSION,
@@ -838,5 +870,6 @@ export function analyzeDestiny(
     saju, zodiac, westernAstrology, mbtiTraits: mbtiData, bloodType: bloodTypeData, tarot, commonKeywords, detailedReading, identityStatement, archetype, tarotFlow,
     conflicts, keywordStrengths, coreTags,
     trace,
+    identitySelection,
   };
 }

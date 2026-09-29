@@ -11,7 +11,8 @@ import type { WesternAstrologyResult, WesternPlacement, ZodiacKey } from './west
 
 // ── Phase 2A: 기존 CoreTag의 출처 추적 ─────────────────────────────────────
 // trace는 이미 계산된 분석 결과를 설명하는 기록일 뿐이다.
-// 기존 태그·Identity·충돌·키워드 강도를 구동하거나 대체하지 않는다.
+// 기존 태그·충돌·키워드 강도·서술을 구동하거나 대체하지 않는다.
+// engine v2부터 Identity 선택(identitySelection.ts)만 trace에서 파생한 패턴을 사용한다.
 // 계산을 다시 실행하지 않고, 난수·시간·I/O를 사용하지 않는다.
 
 export type EvidenceRecord = {

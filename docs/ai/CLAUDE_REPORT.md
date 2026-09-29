@@ -1,179 +1,157 @@
 # Claude Implementation Report
 
-Status: PHASE 2B FOUNDATION — CODEX FINDINGS FIXED, AWAITING RE-REVIEW (Identity change not approved)
+Status: IDENTITY SELECTION V2 — IMPLEMENTED, AWAITING CODEX REVIEW
 
-Phase 2B foundation (observational only). Branch `refactor/pattern-foundation-phase2b` (from main `5758350`). Not merged, not pushed. 이전 Phase 2A 보고는 git history(`5758350`)에 있다.
+Branch `refactor/identity-selection-v2` (from main `2746b5e`). Not merged, not pushed. 이전 Phase 2B foundation 보고는 git history(`2746b5e`)에 있다.
 
-## Codex 지적 반영 (검수 대상 `38834e8` → 수정 커밋)
-
-Codex 판정은 **C. Revision required**(BLOCKER 0 / IMPORTANT 1 / MINOR 1)였다. 두 지적만 수정했다. 애플리케이션 코드(`app/`), 패턴 의미, Identity, golden은 변경하지 않았다. 검수된 `38834e8`은 amend하지 않고 새 커밋으로 수정했다.
-
-### IMPORTANT 1 — 진단 입력 생성기의 짧은 반복
-
-- **원인:** 기존 LCG의 `s * 1103515245`를 JavaScript Number 곱셈으로 계산해서, 정수 안전 범위를 넘으며 하위 비트가 손실됐다. 그 결과 상태가 짧게 순환했다. 20,000행 중 서로 다른 입력이 **1,409개**(Codex 측정, 전체 입력 기준)뿐이었다.
-- **새 생성기:** `mulberry32`다. `Math.imul` 기반 32-bit 정수 연산이고, 주기는 2^32, 출력은 [0, 1)이다. seed는 12345이며 `Math.random`은 쓰지 않는다.
-- **유효 입력 정의** (현재 엔진에서 측정 대상 출력에 영향을 주는 필드):
-  - 양력 생년월일
-  - 출생 시간: UI의 12개 시진 값 또는 미입력
-  - 출생지 좌표: 시간이 있을 때만(없으면 상승궁을 계산하지 않음)
-  - MBTI
-  - 혈액형
-- **고정한 필드:**
-  - 성별: 분석 결과 전체에 영향이 없음을 확인했다.
-  - 타로: 서술에만 영향이 있고 Identity·교집합에는 영향이 없다.
-  - 두 필드는 진단 안에서 300건으로 다시 확인하며, 영향을 주게 되면 무결성 오류가 난다.
-  - 음력 입력은 같은 양력 날짜 공간으로 변환되므로 따로 표본을 만들지 않는다. 만들면 중복만 늘어난다.
-- **입력 공간:**
-  - 날짜: 1950-01-01~2009-12-31의 실제 달력 일자. 예전에는 1–28일만 썼다.
-  - 시진·출생지: UI 옵션의 좌표 27개.
-  - 확률: 시간 70%, 시간이 있는 행의 출생지 85%, MBTI 85%, 혈액형 균등.
-- **고유성 보고와 무결성 검사:**
-  - 유효 입력 fingerprint로 생성 행 수·고유 수·중복 수·고유율을 출력한다.
-  - 중복률이 1%를 넘으면 degenerate stream으로 보고 무결성 오류를 낸다.
-  - 옛 LCG를 일시적으로 되돌리자 고유 입력 2,412개(12.06%)로 이 검사가 FAIL했다. 유효 입력 기준이라 Codex의 전체 입력 기준 수치(1,409)와는 다르다. 복구 후 PASS.
-- **결과:**
-  - 생성 20,000행, 고유 **19,983**, 중복 **17**, 고유율 **99.91%**다.
-  - 중복 17건은 시간 미입력 행의 입력 공간(약 150만)에서 생기는 확률적 충돌이며 순환이 아니다. 고유성을 부풀리지 않고 그대로 보고한다.
-  - 새 digest는 **`ca1e44df`**다. 이전 `5de12fdd`와 그 수치는 이전 생성기의 이력일 뿐이다.
-
-### MINOR 1 — missing Evidence의 authored-pair 검사
-
-기존 검사는 pair 한쪽 태그의 Claim이 처음부터 없었기 때문에 missing 조건을 실제로 시험하지 못했다. 그 assertion을 제거하고 **대조 fixture**로 교체했다. 네 검사 모두 PASS다.
-
-1. **available:** 같은 Claim에서 MBTI Evidence가 available이면 pair가 있다. 양쪽 support에 MBTI 경로가 있고 `sharedSources = ['mbti']`다.
-2. **missing:** 같은 Claim에서 MBTI Evidence만 missing이면 pair가 없다.
-3. **혼합:** 다른 쪽이 사주로 지지되는 경우 pair는 있다. support에는 available Claim·source만 있다(`blood-type`, `saju`).
-4. **혼합 (조작 여부):** `sharedSources = []`이고, 결과 어디에도 `mbti`가 없다.
-
-- 구현 버그는 발견되지 않았다. `supported` 필터를 일시적으로 제거하자 위 3개와 기존 convergence missing 검사가 FAIL했다. 복구 후 PASS.
-- 패턴 회귀의 개별 assertion은 **74개**다(기존 71 − 1 + 4).
+사용자가 Codex **Option B**를 승인했다. 이는 **의도된 사용자 출력 변경**이다. 구현은 `CODEX_REVIEW.md` 상단 "Identity Selection v2 — 설계 검토"의 규칙·자료형·통합 지점·golden 이전 방식을 따른다.
 
 ## Implemented Scope
 
-사용자가 승인한 범위는 **사용자에게 보이지 않는 기반 작업** 두 가지다. Identity 선택은 변경하지 않았다.
+1. **순수 선택 함수** `app/lib/identitySelection.ts` — `selectIdentityV2(input) → IdentitySelectionReason`
+   - 입력은 새 분석의 trace, 기존 catalog(인자로 전달, 복제 없음), `commonKeywords[0]`의 태그, 사주 첫 태그다.
+   - **대표 태그 R:** 실제 convergence가 있을 때만 `commonKeywords[0]`를 쓴다. R이 최대 source 수의 convergence가 아니면 오류를 던진다(잘못된 통합을 v1로 조용히 대체하지 않음).
+   - **후보:** 기존 authored-pair 패턴 그대로다(사주·zodiac·혈액형·MBTI 범위). 달·상승궁·타로는 후보를 만들지 않는다.
+   - **순위 지지 S(t):** convergence 범위(달·상승 포함, 타로 제외)의 available Claim에서 센 distinct source 집합이다. 새 공용 함수 `traitSupportInConvergenceScope()`로 계산하며, 기존 convergence 계산에서 추출한 것이라 로직이 중복되지 않는다.
+   - **순위 튜플** (사전식 내림차순): `(R 포함 ? 1 : 0, min(|S(A)|, |S(B)|), |S(A) ∪ S(B)|)`. 동률이면 `pairIndex` 오름차순이다. 명시적 비교 루프를 쓰며 sort 안정성에 기대지 않는다. 가중치·점수는 없다.
+   - **convergence가 없을 때:** 첫 authored 후보를 고른다(`no-convergence-pair`). 후보도 없으면 v1과 같은 single(`commonKeywords[0]` → 사주 첫 태그), 그다음 generic이다.
+   - `usedAuthoredOrder`는 최고 튜플이 동률이거나 no-convergence pair일 때 true다.
+2. **통합** `app/lib/analysis.ts`
+   - `ANALYSIS_ENGINE_VERSION = '2'`로 올리고 `schemaVersion: 2`는 유지했다.
+   - `AnalysisSnapshot.identitySelection?: IdentitySelectionReason`을 추가했다. 새 분석에는 항상 기록되고, 과거 결과에는 재계산하지 않는다.
+   - `buildAnalysisTrace()`를 Identity 선택 앞으로 옮겼다. 실행은 여전히 한 번이다.
+   - `identityFromSelection()`은 유일한 catalog(`CONFLICT_IDENTITY`/`SINGLE_IDENTITY`)에서 문구를 가져온다. generic 문구는 `GENERIC_IDENTITY` 하나로 공유한다.
+   - v1 선택(`generateIdentityV1`)은 그대로 보존하고, 비교·진단·회귀용으로 `identityV1(result)`를 export했다.
+   - trace와 패턴의 "Identity를 구동하지 않는다"는 주석은 v2 범위(Identity 선택에만 사용)로 고쳤다.
+3. **Golden 이전** `scripts/golden-analysis.ts`
+   - `golden-baseline.json` → **`golden-baseline.v1.json`**(`git mv`, blob `d79d1fa`로 main과 동일, 다시 쓰지 않음).
+   - 신규 **`golden-baseline.v2.json`**은 `--capture-v2`로 만들며, v1 비교가 실패하면 캡처를 거부한다.
+   - v1 비교에서 허용되는 차이는 `identityStatement`, `archetype`, `destinyCode`(archetype이 seed)뿐이다. 나머지 필드는 모두 같아야 한다. `identityV1()`이 역사적 v1 archetype을 재현하는지도 확인한다.
+4. **회귀·진단**
+   - 신규 `scripts/regression-identity-selection.ts`.
+   - `regression-analysis-patterns.ts`의 v1 불변식("첫 authored-pair = 실제 archetype")을 "= `identityV1()`"로 옮겼다(Codex §8).
+   - `diagnostic-identity-diversity.ts`에 v1 vs v2 비교(고유 입력 기준)를 추가했다. 무결성 검사도 두 가지 추가했다.
+     - convergence가 없으면 v2 = v1
+     - R을 포함하는 후보가 있으면 반드시 R 포함 쌍을 선택
+5. **문서:** `PROJECT_CONTEXT.md`의 검증 명령 목록을 새 golden 파일명과 새 회귀 스크립트로 갱신했다.
 
-1. **다양성 측정 기준선**: `scripts/diagnostic-identity-diversity.ts`
-   - 결정적 `mulberry32`(seed 12345)로 UI 입력 공간에서 20,000행을 표본 추출한다. `Math.random`은 쓰지 않는다. 위 "Codex 지적 반영" 참조.
-   - 측정 항목:
-     - archetype 분포, 상위 1개·상위 4개 점유율
-     - Identity 선택 경로(쌍 / 단일·fallback)
-     - 선택된 쌍이 대표 교집합 키워드(`commonKeywords[0]`)를 포함하는 비율과 포함하지 않는 비율
-     - 중복 authored pair, 구조적으로 도달할 수 없는 archetype
-   - 합성 균등 입력이며 **실제 사용자 분포 추정이 아님**을 파일 머리와 출력에 명시했다.
-   - **품질 기준으로 실패하지 않는다.** 실패는 무결성 오류일 때만이다. 해당 오류는 다음과 같다.
-     - `analyzeDestiny` 예외
-     - 같은 입력을 두 번 실행했을 때의 digest 불일치(비결정성)
-     - 어휘 밖의 태그, 같은 태그로 만든 쌍, 빈 archetype, archetype 이름 중복
-2. **최소 패턴 파생**: `app/lib/analysisPatterns.ts`
-   - `deriveAnalysisPatterns(trace, authoredPairs)`는 순수 함수다.
-   - 결과는 `AnalysisPattern[]` = `ConvergencePattern | AuthoredPairPattern`이다.
-   - 점수·가중치·신뢰도·순위·유사도가 없고, 다른 범주도 없다.
-   - Snapshot에 저장하지 않으며, trace에서 언제든 다시 계산할 수 있다.
-3. **읽기 전용 노출**: `app/lib/analysis.ts` +7줄
-   - `IDENTITY_PAIR_DEFINITIONS`와 `IDENTITY_SINGLE_DEFINITIONS`를 `Readonly` 타입으로 export했다. 기존 `CONFLICT_IDENTITY`·`SINGLE_IDENTITY`와 같은 참조다.
-   - 선택 로직(`generateIdentity`)과 목록 내용·순서는 그대로다.
-
-### Pattern 판정 방식
-
-- **convergence**
-  - 한 CoreTag를 **서로 다른 source 2개 이상**이 지지하면 성립한다. 기록 필드는 `sources`, `evidenceIds`(중복 없음), `claimIds`다.
-  - source는 Claim의 Evidence에서 읽는다. 따라서 다음 경우는 모두 source 1개로 센다.
-    - zodiac 경로와 태양궁 placement: 같은 Evidence
-    - 태양·달·상승궁: 같은 `western-astrology` source
-    - 사주 지배·보완 경로: 같은 `saju` source
-  - 이는 현재 교집합(`calcCommonKeywords`)이 서양 점성술을 1세트로 세는 방식과 같다. 회귀 검사로 확인했다. 비fallback 교집합 키워드 = 지지 source가 가장 많은 convergence trait다.
-  - 범위: 사주·MBTI·혈액형·zodiac·태양/달/상승 Claim. **타로는 제외**한다. 타로는 merged coreTags·교집합·Identity에 참여하지 않는다.
-- **authored-pair**
-  - 기존 `IDENTITY_PAIR_DEFINITIONS`의 각 쌍에 대해, 두 태그가 모두 지지되면 성립한다.
-  - 기록 필드:
-    - `pairIndex`, `ruleId: 'identity.conflict-pair@1'`
-    - 양쪽의 `claimIds`·`sources`
-    - `sharedSources`: 두 태그를 모두 지지하는 source. 비어 있으면 서로 다른 source 간 공존이다.
-  - 범위는 `generateIdentity()`의 합집합과 같다(사주·zodiac·혈액형·MBTI). 달·상승궁·타로는 제외한다.
-  - 중복 쌍(#8 = #3)은 고치지 않고 별도 항목으로 둔다.
-  - 회귀 검사로 확인했다: 첫 authored-pair의 archetype = 실제 Identity.
-- **공통 규칙:** available Evidence가 없는 Claim은 근거로 쓰지 않는다. 사주 보완 경로 태그는 의미 판단 없이 그대로 기록한다(재가중·제거 없음).
+변경하지 않은 것:
+- Identity catalog 21개(텍스트·쌍·순서·중복 #8=#3·도달 불가 '안전한 탐험가'). catalog digest `2a85c50`으로 확인했다.
+- CoreTag 어휘·매핑, 사주 보완 의미(source `saju` 한 표), conflictEngine(선택에 미사용)
+- 교집합·keywordStrengths·서술 템플릿·tarotFlow
+- UI, storage 분류, schemaVersion, trace 형식, 과거 저장 결과
 
 ## Files Changed
 
 | 파일 | 변경 |
 | --- | --- |
-| `app/lib/analysisPatterns.ts` | 신규 — 타입 + 순수 파생 함수 |
-| `app/lib/analysis.ts` | Identity 정의의 읽기 전용 export 2개 (+7줄) |
-| `scripts/regression-analysis-patterns.ts` | 신규 — 패턴 회귀 검사 |
-| `scripts/diagnostic-identity-diversity.ts` | 신규 — 다양성 기준선 진단 |
-| `docs/ai/CLAUDE_REPORT.md`, `docs/ai/CURRENT_PHASE.md` | 보고·상태 |
-
-별도 커밋 `e8737a6`에 Phase 2B 예비 분석 문서(`CODEX_REVIEW.md` 앞부분)를 보존했다. Phase 2A 기록은 그 아래에 그대로 있다.
-
-변경하지 않은 것:
-- `generateIdentity`, Identity 정의·순서, 중복 쌍, 도달 불가 archetype
-- CoreTag 어휘·매핑, 사주 보완 의미, 교집합, conflictEngine, keywordStrengths
-- 서술 템플릿, Destiny Code, UI, 저장·legacy 의미, `ANALYSIS_ENGINE_VERSION`, golden baseline
+| `app/lib/identitySelection.ts` | 신규 — 순수 v2 선택 + `IdentitySelectionReason` |
+| `app/lib/analysis.ts` | 엔진 버전 2, `identitySelection?`, trace 선행, v2 연결, `identityV1` 보존·export |
+| `app/lib/analysisPatterns.ts` | `traitSupportInConvergenceScope()` 추출(convergence 의미 불변), 주석 |
+| `app/lib/evidenceTrace.ts` | 주석 1줄 |
+| `scripts/golden-analysis.ts` | v1 허용 diff + v2 정확 비교 |
+| `scripts/golden-baseline.v1.json` | 이름만 변경(바이트 동일) |
+| `scripts/golden-baseline.v2.json` | 신규 v2 기준 |
+| `scripts/regression-identity-selection.ts` | 신규 |
+| `scripts/regression-analysis-patterns.ts` | v1 불변식을 `identityV1`로 이전 |
+| `scripts/diagnostic-identity-diversity.ts` | v1/v2 비교 + 무결성 검사 2개 |
+| `docs/ai/*` | 보고·상태·검증 명령 |
 
 ## Validation
 
-- **다양성 기준선** (수정된 생성기 기준). 엔진의 구조적 특성을 기록한 것이며, 실제 사용자 분포 추정이 아니다.
+### Golden (7 cases)
 
-  | 항목 | 수정 후 (`ca1e44df`) | 이전 생성기 (`5de12fdd`, 이력) |
-  | --- | --- | --- |
-  | 생성 행 / 고유 유효 입력 / 중복 / 고유율 | 20,000 / 19,983 / 17 / 99.91% | 20,000 / 1,409(전체 입력 기준, Codex) / 18,591 / 7.0% |
-  | 정의된 archetype / 관측된 archetype | 21 / 13 | 21 / 12 |
-  | 상위 1개 (외로운 연결주의자) | 48.1% | 47.6% |
-  | 상위 4개 | 92.1% | 91.6% |
-  | 쌍 경로 / 단일·fallback 경로 | 99.4% / 0.6% | 99.5% / 0.5% |
-  | 선택된 쌍이 `commonKeywords[0]` 포함 (분모: 쌍 선택 건수) | 15.4% | 15.4% |
-  | 선택된 쌍이 `commonKeywords[0]` 미포함 | 84.6% | 84.6% |
-  | 중복 쌍 | #8(창의적+체계적) = #3 | 같음 |
-  | 구조적 도달 불가 | 안전한 탐험가 | 같음 |
+v1 기준 대비 허용 필드 외 변경은 0건이다. Identity가 바뀐 케이스는 **3/7**이다.
 
-  넓은 표본에서도 구조적 편향은 거의 같게 나타났다. 새로 관측된 archetype은 '전부 아니면 전무형'(6건)이다.
+| 케이스 | v1 → v2 | 선택 근거 |
+| --- | --- | --- |
+| solar, full input, Seoul | 감정을 분석하는 사람 → **틀 안의 반항자** | ranked, 대표 체계적, authored order(#3/#8 동률) |
+| solar, no time, no place | 군중 속의 고독자 = | ranked, 대표 창의적 |
+| solar, no MBTI | 군중 속의 고독자 = | ranked, 대표 창의적 |
+| lunar, regular month | 틀 안의 반항자 = | ranked, 대표 분석적(포함 후보 없음), authored order |
+| lunar, leap month | 감정을 분석하는 사람 → **분주한 포용자** | ranked, 대표 포용적 |
+| ISFP + fire sign + A | 감정을 분석하는 사람 = | ranked, 대표 실용적(포함 후보 없음), authored order |
+| water sign, B + SJ | 외로운 연결주의자 → **의심하는 직관가** | ranked, 대표 직관적 |
 
-- **패턴 회귀** (`PASS: all analysis-pattern regression checks`, 개별 assertion 74개 — Codex MINOR 1 대조 fixture 포함):
-  - fixture:
-    - 서로 다른 source → convergence, 단일 source → 없음
-    - 사주 두 경로 → 없음, zodiac+태양(공유 Evidence) → 없음, 태양+달 → 없음
-    - zodiac+태양+사주 → source 2 / Evidence 2 / Claim 3
-    - 타로 불참, missing Evidence로 근거가 만들어지지 않음
-    - 양쪽 provenance, 같은 source 공존과 다른 source 간 공존의 구분
-    - 달·타로는 Identity 범위 밖, 중복 쌍 보존
-  - 실제 분석 8건:
-    - 결정성, trace 불변, Snapshot 불변(`patterns` 필드 없음)
-    - convergence source의 유효성, 교집합 키워드와의 일치
-    - 첫 authored-pair = 실제 archetype
-    - 실제 데이터에 같은 source 공존과 다른 source 간 공존이 모두 존재
-- **Mutation check:** convergence 판정 기준을 source 수에서 Claim 수로 일시 변경하자, 이중 계산 검사 3개와 실제 사례 검사들이 FAIL했다. 복구 후 전체 PASS.
+### Diagnostic — engine v1 vs v2
+
+고유 유효 입력 19,983개를 각각 한 번씩 평가했다(생성 20,000행, 중복 17). 합성 균등 표본이며 실제 사용자 분포가 아니다.
+
+| 지표 | v1 | v2 | Codex 설계 측정 (B) |
+| --- | --- | --- | --- |
+| observed archetypes | 13/21 | 13/21 | 13/21 |
+| top 1 | 48.08% | 23.68% | 23.68% |
+| top 4 | 92.08% | 66.89% | 66.89% |
+| intersection mismatch (pair 분모) | 84.60% (16,808/19,868) | 34.72% (6,899/19,868) | 34.72% (6,899) |
+| both-sides cross-source (pair 분모) | 22.60% (4,490) | 45.12% (8,964) | 45.12% (8,964) |
+| authored order used (전체 분모) | 99.42% | 36.60% (7,314) | 36.60% (7,314) |
+| Identity changed from v1 | — | 67.18% (13,424/19,983) | 67.18% (13,424) |
+| selection digest | `94fe72c7` | **`ed598f84`** | `ed598f84` |
+
+- 설계 측정과 **건수와 digest가 정확히 일치**한다. 알고리즘을 수치에 맞추는 조정은 하지 않았다.
+- 20,000행 기준 진단 digest는 `ca1e44df`(engine v1) → **`93a95fcd`**(engine v2)다. 정의가 다르므로 selection digest와 혼용하지 않는다.
+- 무결성 검사 두 가지 모두 오류 0이다: "no-convergence 경로 = v1", "R 포함 후보가 있으면 R 포함 쌍 선택".
+
+### Identity v2 regression (`PASS`, 개별 assertion 97개)
+
+요청된 15개 항목을 모두 검사한다.
+
+| # | 검사 내용 |
+| --- | --- |
+| 1 | 결정성 |
+| 2 | R 포함 후보가 앞선 강한 쌍을 이김 |
+| 3 | min 우선 |
+| 4 | union 우선 |
+| 5 | authored 순서 동률 해소와 `usedAuthoredOrder` |
+| 6 | no-convergence / single / 사주 fallback / generic = v1 |
+| 7·9 | 사주 지배+보완 경로가 1 source |
+| 8 | zodiac+태양이 1 source, 태양+달이 1 source |
+| 10 | missing Evidence는 근거를 만들지 않음 |
+| 11 | 타로 무영향(fixture, 실제 카드 교체) |
+| 12 | engine-v1 저장본은 그대로 로드되고, 코드도 저장된 v1 archetype 기준이며, 재저장해도 바이트 동일 |
+| 13·14 | 새 분석은 engineVersion '2' / schemaVersion 2, 저장 round-trip, 중복 저장 안전 |
+| 15 | catalog digest 불변 |
+
+추가 검사:
+- **min과 union이 다른 답을 낼 때 min 우선.** "합집합 우선" 변이를 잡기 위해 추가했다. 처음에는 이 변이가 통과해서 보강했다.
+- Moon-only 태그는 후보 불가, 대표 태그 불변식 위반 시 오류
+- 실제 분석 8건:
+  - archetype이 catalog 항목과 일치
+  - reason의 claimIds가 같은 trace의 available Evidence에 연결되고, source와 일치
+  - Evidence·Claim 배열을 뒤집어도 선택이 같음
+
+**Mutation check:** 튜플 순서를 (R, union, min)로 바꾸거나 R 항목을 제거하면 각각 FAIL한다. 복구 후 PASS다.
 
 ## Build / Test / Lint
 
 ```
-npx -y tsx scripts/golden-analysis.ts                # PASS: 7 golden cases match baseline
-npx -y tsx scripts/regression-saved-context.ts       # PASS
-npx -y tsx scripts/regression-evidence-trace.ts      # PASS
-npx -y tsx scripts/regression-analysis-patterns.ts   # PASS (74)
-npx -y tsx scripts/diagnostic-identity-diversity.ts  # OK (무결성 오류 0, digest ca1e44df)
-npx tsc --noEmit -p .                                # OK
-npm run build                                        # OK
-npm run lint                                         # 기존 9건과 동일 (신규 0)
-git diff --check                                     # OK
+npx -y tsx scripts/golden-analysis.ts                 # PASS: golden v1→v2 migration checks (7 cases)
+npx -y tsx scripts/regression-saved-context.ts        # PASS
+npx -y tsx scripts/regression-evidence-trace.ts       # PASS
+npx -y tsx scripts/regression-analysis-patterns.ts    # PASS (74)
+npx -y tsx scripts/regression-identity-selection.ts   # PASS (97)
+npx -y tsx scripts/diagnostic-identity-diversity.ts   # OK (무결성 오류 0)
+npx tsc --noEmit -p .                                 # OK
+npm run build                                         # OK
+npm run lint                                          # 기존 9건과 동일 (신규 0)
+git diff --check                                      # OK
 ```
 
-## Deviations From Design
+## Deviations From Codex Design
 
-예비 분석(`CODEX_REVIEW.md` 5절) 대비 세부 결정:
+없음. 명세가 정하지 않은 세부는 다음과 같다.
 
-1. **필드 이름:** `authored-pair`의 `crossSource: boolean` 대신 `sharedSources: string[]`을 썼다. 어떤 source 안에서 공존하는지까지 보여 주기 위해서다. 비어 있으면 서로 다른 source 간 공존이다.
-2. **추가 필드:** `pairIndex`를 두었다. 중복 쌍을 고치지 않고 구분하기 위해서다.
-3. **두 패턴의 범위 차이:** convergence는 교집합 범위(달·상승궁 포함), authored-pair는 Identity 범위(태양만)를 쓴다. 현재 엔진의 두 단계가 실제로 다른 범위를 쓰기 때문이며, 이를 코드 상수로 명시했다.
-4. **읽기 전용 export:** Identity 정의를 export했다. 패턴 파생과 진단이 목록을 복제하지 않도록 하기 위해서다.
+1. **single 경로의 reason:** `support`에 선택 태그 하나의 convergence 범위 지지를 넣었다. 명세 "single이면 선택된 한 태그"대로다.
+2. **대표 태그 불변식 위반:** 선택 함수가 `Error`를 던진다. 새 분석에서는 발생하지 않는다. 교집합과 convergence가 같은 계산 규칙이며, 19,983건 진단에서 0건이다.
+3. **순위 계산 공용 함수:** `traitSupportInConvergenceScope()`를 `analysisPatterns.ts`에서 export했다. 기존 convergence는 이 함수를 그대로 사용하며, 패턴 회귀 74개는 변경 없이 PASS다(v1 불변식 이전 1건 제외).
 
 ## Remaining Issues
 
-- 다양성 진단은 현재 편향을 **기록만** 한다. 상위 집중, 교집합과 Identity의 분리, 중복 쌍, 도달 불가 archetype은 그대로 남아 있다. 모두 향후 승인 사항이다.
-- 패턴은 아직 어떤 소비자도 쓰지 않는다. Identity 개선에 쓰려면 규칙 승인, `ANALYSIS_ENGINE_VERSION` 증가, golden 명시적 재설정이 필요하다.
-- 진단 실행에 약 12초가 걸린다(20,000건 × 2회 결정성 확인 + 고정 필드 확인 300건). 빠른 회귀 목록과는 분리해서 운용하는 것이 좋다.
-- 진단 표본은 UI 입력 공간의 균등 표본이다. 확률 설정(시간 70% 등)은 임의이며 실제 사용 비율이 아니다.
+- **예상된 사용자 영향:** 새 분석의 결과 화면 Identity(약 67%)와 그에 따른 Destiny Code, 프로필·analytics의 archetype/identityStatement, 궁합 문구 중 archetype 삽입 부분(`compatibilityEngine.ts` personFlow)이 바뀐다. 공유 문구(`shareEngine.ts`)에는 archetype이 없어 바뀌지 않는다. 모두 승인 범위다. 기존 저장 결과는 바뀌지 않는다.
+- **대표 교집합 불일치 34.72%:** 현재 후보 범위와 catalog에서 도달할 수 있는 최솟값이다. 더 낮추려면 catalog나 후보 범위를 바꾸는 별도 제품 결정이 필요하다.
+- **analytics 버전 구분:** Supabase analytics row에 engineVersion이 없어 운영 데이터에서 v1/v2를 구분할 수 없다. 범위 밖이며 별도 승인 사항이다.
+- **catalog 정리:** 중복 쌍 #8, 도달 불가 archetype은 별도 제품 결정이다.
 
 ## Final Status
 
-PHASE 2B FOUNDATION IMPLEMENTED — IDENTITY CHANGE NOT APPROVED
+IDENTITY SELECTION V2 — IMPLEMENTED, AWAITING CODEX REVIEW

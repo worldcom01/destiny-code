@@ -6,7 +6,7 @@
 // Phase 2A trace. It must not feed or change any existing analysis output.
 
 import {
-  analyzeDestiny, TAROT_DATA, IDENTITY_PAIR_DEFINITIONS,
+  analyzeDestiny, identityV1, TAROT_DATA, IDENTITY_PAIR_DEFINITIONS,
   type AnalysisSnapshot, type CoreTag,
 } from '../app/lib/analysis';
 import type { AnalysisTrace, EvidenceRecord, InterpretationClaim } from '../app/lib/evidenceTrace';
@@ -211,10 +211,12 @@ for (const c of CASES) {
   check(`${p} every pair side has claims whose trait matches`,
     pp.every((x) => x.support.every((side, i) => side.claimIds.length > 0
       && side.claimIds.every((id) => tr.claims.find((cl) => cl.id === id)?.trait === x.traits[i]))));
-  // provenance agrees with the actual (unchanged) Identity selection
+  // engine v1 invariant: the first authored-pair is what v1 selected (engine v2 ranks candidates instead;
+  // see scripts/regression-identity-selection.ts)
   const first = pp[0];
   const expected = first ? IDENTITY_PAIR_DEFINITIONS[first.pairIndex].archetype : undefined;
-  if (expected) check(`${p} first authored-pair matches actual archetype`, expected === s.archetype, `${expected} vs ${s.archetype}`);
+  const v1 = identityV1(s).archetype;
+  if (expected) check(`${p} first authored-pair matches v1 archetype`, expected === v1, `${expected} vs ${v1}`);
   for (const x of pp) {
     if (x.sharedSources.length) sawSameSourcePair = true;
     else sawCrossSourcePair = true;

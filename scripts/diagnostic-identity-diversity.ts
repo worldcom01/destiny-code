@@ -27,9 +27,10 @@
 // solar date space, so it would only duplicate solar cases.
 
 import {
-  analyzeDestiny, TAROT_DATA, IDENTITY_PAIR_DEFINITIONS, IDENTITY_SINGLE_DEFINITIONS,
+  analyzeDestiny, identityV1, TAROT_DATA, IDENTITY_PAIR_DEFINITIONS, IDENTITY_SINGLE_DEFINITIONS,
   type AnalysisSnapshot, type CoreTag,
 } from '../app/lib/analysis';
+import { deriveAnalysisPatterns, traitSupportInConvergenceScope } from '../app/lib/analysisPatterns';
 import { LOCATION_OPTION_GROUPS } from '../app/lib/regions';
 
 const N = 20000;
@@ -202,6 +203,79 @@ console.log(`\narchetype distribution:`);
 for (const [a, v] of sorted) {
   const note = v > 0 ? '' : unreachable.includes(a) ? '   (structurally unreachable)' : '   (not observed in this sample)';
   console.log(`  ${pct(v).padStart(6)}  ${String(v).padStart(5)}  ${a}${note}`);
+}
+
+// ── engine v1 vs v2 on the unique effective inputs (each evaluated once) ──
+// Same definitions as the Identity Selection v2 design review (CODEX_REVIEW.md §3):
+//   pair denominators = pair selections; "both-sides cross-source" = both tags supported by ≥2
+//   distinct sources in the convergence (ranking) scope; "authored order used" = v1 pair path /
+//   v2 usedAuthoredOrder, over all inputs; selection digest = djb2 of `${key}=${archetype}\n`.
+{
+  type Stat = { counts: Map<string, number>; pair: number; mismatch: number; crossBoth: number; orderUsed: number; h: number };
+  const stat = (): Stat => ({ counts: new Map(allArchetypes.map((a) => [a, 0])), pair: 0, mismatch: 0, crossBoth: 0, orderUsed: 0, h: 5381 });
+  const v1s = stat(), v2s = stat();
+  let total = 0, changed = 0;
+  const seen = new Set<string>();
+  const record = (st: Stat, key: string, arch: string, tags: readonly CoreTag[] | null, kw: CoreTag | undefined,
+    support: ReturnType<typeof traitSupportInConvergenceScope>, orderUsed: boolean) => {
+    st.counts.set(arch, (st.counts.get(arch) ?? 0) + 1);
+    if (tags) {
+      st.pair++;
+      if (!kw || !tags.includes(kw)) st.mismatch++;
+      if (Math.min(...tags.map((t) => support.get(t)?.sources.length ?? 0)) >= 2) st.crossBoth++;
+    }
+    if (orderUsed) st.orderUsed++;
+    for (const ch of `${key}=${arch}\n`) st.h = ((st.h << 5) + st.h + ch.charCodeAt(0)) | 0;
+  };
+  for (const x of inputs(SEED, N)) {
+    const key = effectiveKey(x);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    total++;
+    const s = analyze(x);
+    const r = s.identitySelection;
+    if (!r || !s.trace) { integrity(false, `engine v2 result without identitySelection/trace for ${key}`); continue; }
+    const support = traitSupportInConvergenceScope(s.trace);
+    const kw = LABEL_TO_TAG[s.commonKeywords[0]];
+    const v1Arch = identityV1(s).archetype;
+    const v1Idx = pairs.findIndex((p) => p.archetype === v1Arch);
+    record(v1s, key, v1Arch, v1Idx >= 0 ? pairs[v1Idx].tags : null, kw, support, v1Idx >= 0);
+    record(v2s, key, s.archetype, r.pairIndex !== null ? pairs[r.pairIndex].tags : null, kw, support, r.usedAuthoredOrder);
+    if (v1Arch !== s.archetype) changed++;
+    // without convergence, engine v2 must reproduce engine v1 exactly
+    if (r.decision !== 'ranked-pair') integrity(v1Arch === s.archetype, `no-convergence path differs from v1 for ${key}`);
+    // if any candidate contains the representative tag, the selected pair must contain it
+    const rep = r.representativeTrait;
+    if (rep && deriveAnalysisPatterns(s.trace, pairs).some((pt) => pt.kind === 'authored-pair' && pt.traits.includes(rep))) {
+      integrity(r.selectedTraits.includes(rep), `representative ${rep} available but not selected for ${key}`);
+    }
+  }
+  const p2 = (n: number, d: number) => `${((n / d) * 100).toFixed(2)}%`;
+  const summary = (st: Stat) => {
+    const sortedCounts = [...st.counts.values()].sort((a, b) => b - a);
+    return {
+      observed: `${sortedCounts.filter((v) => v > 0).length}/${allArchetypes.length}`,
+      top1: p2(sortedCounts[0], total),
+      top4: p2(sortedCounts.slice(0, 4).reduce((a, b) => a + b, 0), total),
+      mismatch: `${p2(st.mismatch, st.pair)} (${st.mismatch}/${st.pair})`,
+      crossBoth: `${p2(st.crossBoth, st.pair)} (${st.crossBoth}/${st.pair})`,
+      orderUsed: `${p2(st.orderUsed, total)} (${st.orderUsed}/${total})`,
+      digest: (st.h >>> 0).toString(16),
+    };
+  };
+  const a = summary(v1s), b = summary(v2s);
+  console.log(`\nengine v1 vs v2 — ${total} unique effective inputs, each evaluated once`);
+  const row = (label: string, k: keyof typeof a) => console.log(`  ${label.padEnd(46)} ${String(a[k]).padEnd(24)} ${b[k]}`);
+  console.log(`  ${''.padEnd(46)} ${'v1'.padEnd(24)} v2`);
+  row('observed archetypes', 'observed');
+  row('top 1 share', 'top1');
+  row('top 4 share', 'top4');
+  row('intersection mismatch (of pair selections)', 'mismatch');
+  row('both-sides cross-source support (of pairs)', 'crossBoth');
+  row('authored order used (of all inputs)', 'orderUsed');
+  row('selection digest', 'digest');
+  console.log(`  Identity changed from v1: ${p2(changed, total)} (${changed}/${total})`);
+  console.log(`  pair selections v2: ${v2s.pair}   single/generic v2: ${total - v2s.pair}`);
 }
 
 if (integrityErrors) {
