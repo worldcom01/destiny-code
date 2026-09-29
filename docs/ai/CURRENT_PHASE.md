@@ -1,3 +1,55 @@
+# Identity Catalog Pair Revision — Design Review
+
+Status: IDENTITY CATALOG PAIR REVISION — DESIGN REVIEW COMPLETE / AWAITING PRODUCT APPROVAL
+
+기준 production main `74a039a`, engineVersion `2`, schemaVersion `2`. Identity Selection v2는 완료 상태이며 재설계하지 않는다.
+
+## 권장안
+
+Option A: **창의적+독립적 신규 authored pair 1개만** 기존 catalog 끝에 추가하는 설계다. 기존 21개는 유지하여 정의 22개·고유 pair 10개가 된다. 아직 catalog를 수정하지 않았다.
+
+- 이름 후보: **고집 있는 실험가 / 자기 길의 편집자 / 남의 답이 불편한 사람**. 제품 검토용이며 미확정이다.
+- 개념: 새로운 방법을 실험하면서 그 방법의 결정권도 스스로 갖고 싶어 하는 패턴.
+- 합성 진단 예상: mismatch 34.72%→17.57%, Identity 변경 6,188건(30.97%), 기존 불일치 3,407건 해소, 신규 불일치 20건.
+- 관측 archetype은 13/21→10/22로 줄고 single 115건이 pair로 전환된다. 이 부작용을 승인 없이 숨기거나 selector로 보정하지 않는다.
+- 중복 안전한 탐험가와 도달 불가 single 6개는 유지한다. 나머지 top5 pair는 보류한다.
+- 창의적 편중은 적은 catalog 이웃과 넓은 upstream 매핑이 함께 기여한다. 매핑이 의미적으로 부적절하다는 결론은 이번 측정으로 입증되지 않았다.
+
+## 다음 단계
+
+사용자가 개념·이름·최종 문구와 전환 부작용을 승인한 뒤에만 구현한다. 승인되면 engineVersion `3`, schemaVersion `2` 유지, 과거 v1/v2 저장 및 golden 보존, 별도 v3 golden 검토가 필요하다. 아직 구현 승인 상태가 아니다.
+
+상세 21개 개념 지도, 5개 pair 의미 분석, A/B/C/D 실측, 재사용/중복/single 검토, 서사 시제품과 이전 전략은 `CODEX_REVIEW.md` 최상단에 있다. 기존 회귀·TypeScript·build·diff-check와 두 생산 digest 유지 검증이 통과했다. 이번 작업은 문서 두 개와 /tmp 임시 측정뿐이며 생산 코드·catalog·버전·golden은 변경하지 않았다.
+
+---
+
+## 이전 단계 이력
+
+# Identity Catalog Coverage Analysis
+
+Status: IDENTITY CATALOG COVERAGE ANALYSIS — COMPLETE / AWAITING PRODUCT DECISION
+
+기준 main `74a039a`, engineVersion `2`, schemaVersion `2`. Identity Selection v2는 구현·검수·병합 완료 상태이며 이번 조사에서 재설계하지 않았다.
+
+## 분석 결과
+
+- 고유 19,983건에서 mismatch 6,899/19,868 pair = 34.72%다.
+- 상호 배타적 원인: catalog 호환 조합 부재 4,569(66.23%), candidate/provenance 범위 차이 2,317(33.58%), no-convergence fallback 13(0.19%). 유효 대표 후보가 순위에서 밀린 사례는 0이다.
+- 분석 분류 **A. Catalog coverage is the primary remaining limitation**.
+- raw demand top1/3/5 pair의 임시 추가 시 mismatch는 17.57% / 12.19% / 4.87%다. 분모·새 불일치·기존 정합 결과 변경이 있으므로 content 추가 승인으로 해석하지 않는다.
+- 13/21 관측은 중복 shadowing 1개, 현재 매핑/pair-first에서 도달하지 못하는 single 6개, 정상 입력에서 도달하지 않는 generic 1개로 설명된다.
+- 원래 선택과 golden은 보존됐고 모든 요청된 검증이 통과했다. 상세 근거·표·반사실 조건과 이전 이력은 `CODEX_REVIEW.md`에 있다.
+
+## 다음 제품 결정
+
+권장 단일 다음 단계는 **Identity Catalog Pair Revision — DESIGN**이다. 의미적 일관성과 서사의 구별 가능성을 실제 coverage 수요와 함께 평가한다. 새 pair 추가·catalog 수정·selector 변경은 아직 승인하거나 구현하지 않았다.
+
+이번 조사에서는 문서 두 개만 변경했다. 임시 스크립트는 /tmp에 두었고 production·engineVersion·golden 변경 및 merge/push는 없다. 수치는 합성 엔진 구조 진단이며 실제 사용자 분포 추정이 아니다.
+
+---
+
+## 이전 단계 이력
+
 # Identity Selection v2 — Implementation
 
 Status: IDENTITY SELECTION V2 — COMPLETED / MERGED
