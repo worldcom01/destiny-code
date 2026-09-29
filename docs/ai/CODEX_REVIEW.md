@@ -1,3 +1,308 @@
+# Palm Phase 1 — Evidence Architecture Design (2026-09-30)
+
+상태: **설계 검토 완료 / 구현 미시작 / 아래 구현 범위 승인 대기**. 기준은 실제 `main` 및 로컬 `origin/main`의 `70bc9da`, engineVersion `'3'`, schemaVersion `2`다. Identity Catalog v3는 완료·병합된 단계이며 다시 최적화하지 않는다. 아래 타입과 파일명은 구현 계약 제안이며 이번 변경은 문서뿐이다.
+
+## 판정과 핵심 근거
+
+**A. EXISTING ARCHITECTURE CAN ACCEPT PALM WITH SMALL EXTENSIONS**
+
+현재 `EvidenceRecord`는 이미 `image-observation`, 자유로운 `source`, `unreadable`을 지원하고, 패턴 계산은 Evidence의 서로 다른 source를 센다. 따라서 엔진 교체나 범용 플러그인 계층이 필요하지 않다. 새로 필요한 것은 독립적인 이미지 관찰 경계와 작은 순수 adapter다. 다만 이미지 업로드·검증·provider 호출은 현재 없으므로 이를 기존 기능으로 오인해서는 안 된다.
+
+**Palm trace 추가와 Palm의 합성 참여는 다른 변경이다.** `analysisPatterns.ts`의 두 target allowlist, `analysis.ts`의 `calcCommonKeywords()` 입력을 함께 맞춰야 한다. 한쪽만 바꾸면 `selectIdentityV2()`의 최대 지지 대표 태그 검증이 실패하거나 화면과 선택 근거가 달라진다. 실제 합성 활성화는 별도 제품 승인·엔진 버전 증가 대상이다.
+
+이번에 읽은 `CLAUDE_REPORT.md` 상단은 v3 구현 당시의 검수 대기 상태다. 병합 완료 여부는 현재 git와 `CURRENT_PHASE.md`를 기준으로 판정했다. 이전 리뷰·보고는 역사 기록으로 보존한다.
+
+## 1. 실제 현재 구조와 Palm 삽입점
+
+| 단계 / 실제 파일 | 현재 책임 | 향후 Palm 변경 |
+| --- | --- | --- |
+| `app/page.tsx` / `handleCardPicked` | 입력·카드 선택 후 클라이언트에서 동기 `analyzeDestiny()` 호출 | 선택적 이미지 요청을 **호출 전** 완료/포기. 이미지 처리 자체를 엔진에 넣지 않음 |
+| `app/lib/analysis.ts`, `saju`, `westernAstrology` 관련 모듈 | 날짜 정규화, 사주·점성 계산, MBTI/혈액형 조회, Tarot 결정 | 기존 계산 유지. 검증된 Palm 결과를 마지막 선택적 인자로 받는 작은 확장만 향후 검토 |
+| `AnalysisOutput` | 기존 소스 결과, commonKeywords, 상세 서술, Identity, TarotFlow | 당장은 변경 없음. Palm 시각 관찰을 기존 소스 결과처럼 가장하지 않음 |
+| `app/lib/evidenceTrace.ts` | 계산된 소스 결과 → Evidence/Claim, `AnalysisTrace.version: 1` | 별도 `palmEvidence.ts` 결과를 기존 순서 **뒤에** 합침. 기존 출처·ID·순서 보존 |
+| `app/lib/analysisPatterns.ts` | available Evidence만 연결된 Claim에서 convergence/authored-pair 파생 | 실제 활성화 때만 `palm.coreTags` target을 명시적으로 허용 |
+| `app/lib/identitySelection.ts` | 대표 태그 포함 → min distinct-source → source union → authored 순서 | 선택 순위·동률 규칙·catalog 수정 불필요. 새로운 지지를 기존 계약으로 전달 |
+| `app/lib/analysis.ts` / snapshot 조립 | conflicts, keywordStrengths, merged coreTags, trace, 선택 이유, ID/시각 완성 | 새 분석에 선택적 Palm 관찰 묶음. 비동기 네트워크 없이 한 번 완성 |
+| `app/lib/storageEngine.ts` | snapshot 전체 JSON을 localStorage에 보관, analysisId 중복 저장 방지 | optional 필드 보존을 회귀 검증. 읽기/재저장 재분석 금지. 새 저장 엔진 불필요 |
+| `app/lib/activeAnalysis.ts`, `page.tsx` | 저장 당시 result/meta 복원, 해당 결과로 저장·공유·코드 생성 | optional Palm 표시만. 오래된 결과에 추출 요청/trace 보충 금지 |
+| `app/lib/profileStore.ts`, `destinyCode.ts`, `compatibilityEngine.ts` | 별도 축약 profile·공유, archetype 등의 코드 seed, profile.coreTags 기반 궁합 | Palm 원본/관찰을 복사하지 않음. 활성화가 출력·궁합에 미칠 간접 영향은 별도 승인 |
+| `app/lib/analyticsEngine.ts`, `supabaseClient.ts` | 명시적으로 고른 요약을 `analysis_results`에 전송 | Palm 이미지/관찰/trace 전송 없음. snapshot 원격 보관 기능으로 오인하지 않음 |
+| `app/api/admin/analytics/route.ts` | 현재 존재하는 관리자 조회 API | Palm 분석 API가 아님. 새 Palm 전용 POST 경계 필요 |
+
+현재 trace source는 `saju`, `mbti`, `blood-type`, `western-astrology`, `tarot`이다. 합성은 Tarot를 제외한 **4개 체계**다. 따라서 Palm은 trace로는 여섯 번째 source이고, 승인 후 convergence에 들어가면 다섯 번째 체계다. 점성의 Sun/Moon/Ascendant와 zodiac 경로는 같은 source다. 서로 다른 체계 이름이라는 뜻이지 통계적 독립성이나 성격 타당성이 입증됐다는 뜻은 아니다.
+
+현재 상세 서술은 trace 이전에 생성되며, `conflictEngine.ts`는 별도 고정 규칙이다. `keywordEngine.ts`는 Sun/Moon/Ascendant를 나누어 백분율을 계산하므로 패턴의 distinct-source 수와 같지 않다. authored-pair도 검증된 심리적 모순 판정이 아니라 catalog의 태그 쌍 공존이다. 이 차이를 Palm 도입을 빌미로 전면 통합하지 않는다.
+
+## 2. 최소 관찰 모델
+
+v1은 **한 번에 한 손바닥 이미지**만 받는다. 손금 명칭은 선 후보를 구분하는 관례적 이름이며 생명선에서 수명, 운명선에서 미래를 추론하지 않는다. 양손 비교·우세손 추론·개인 식별은 제외한다.
+
+| 후보 | v1 결정 |
+| --- | --- |
+| Life / Head / Heart / Fate Line | 네 선의 후보 식별 상태. 보이는 선만 curvature/continuity 두 속성을 각각 판독 |
+| visible / unreadable / absent | `visible`, `unreadable`, `not-detected` 구분. `not-detected`는 충분히 보이는 영역에서 후보를 찾지 못했다는 관찰이며 해부학적 부재 단언이 아님 |
+| length | 좌표·기준 길이 정의와 촬영 배율 평가가 없어 보류 |
+| depth / prominence | 실제 깊이는 사진으로 단언하지 않음. 명암·조명 의존적 prominence도 첫 계약에서는 보류 |
+| curvature | `straight / curved` 두 범주. 경계나 불분명한 경우 unreadable |
+| continuity | `continuous / interrupted` 두 범주. 해당 선 전체를 추적할 수 있을 때만 판정 |
+| start/end / branching | 좌표계·분기 동일성 정의가 필요하므로 보류 |
+| Palm Shape / Finger Ratio | 자세·원근·손가락 전체 가시성·측정 기준이 필요하므로 보류. 없다고 임의 값 생성하지 않음 |
+
+```ts
+export type PalmLineKey = 'life' | 'head' | 'heart' | 'fate';
+export type PalmReadabilityReason =
+  | 'blur' | 'lighting' | 'cropped' | 'occluded'
+  | 'perspective' | 'ambiguous-line' | 'not-visible';
+
+export type PalmReading<T extends string> =
+  | { status: 'observed'; value: T }
+  | { status: 'unreadable'; reason: PalmReadabilityReason };
+
+export type PalmLineObservation =
+  | {
+      status: 'visible';
+      curvature: PalmReading<'straight' | 'curved'>;
+      continuity: PalmReading<'continuous' | 'interrupted'>;
+    }
+  | { status: 'not-detected' }
+  | { status: 'unreadable'; reason: PalmReadabilityReason };
+
+export type PalmObservation = {
+  version: 1;
+  lines: Record<PalmLineKey, PalmLineObservation>;
+};
+
+export type PalmImageQuality = {
+  version: 1;
+  usability: 'usable' | 'partial' | 'unusable';
+  palmCoverage: 'full' | 'partial' | 'none';
+  issues: Array<
+    'blur' | 'lighting' | 'occlusion' | 'perspective'
+    | 'cropped-palm' | 'multiple-hands' | 'not-a-palm'
+  >;
+};
+
+export type PalmObservationBundle = {
+  version: 1;
+  observation: PalmObservation;
+  quality: PalmImageQuality;
+  extraction: {
+    adapterVersion: string;
+    modelRevision: string;
+    promptVersion: string;
+  };
+};
+```
+
+**네 line key는 모두 필수이며 읽지 못한 항목도 명시적으로 unreadable**로 반환한다. 누락된 key를 서버가 정상 관찰처럼 보완하지 않는다. `not-detected`에는 curvature/continuity를 넣을 수 없다. 해당 영역이 잘렸거나 흐리면 `not-detected`가 아니라 unreadable이다. `visible`인 선의 curvature만 읽히고 continuity가 안 읽히는 경우를 허용한다. 실제 추출 용어 기준과 경계 예시 사진은 provider 연결 단계에서 평가해야 하며 모델이 항상 안정적으로 분류한다는 가정은 하지 않는다.
+
+## 3. 품질과 해석의 분리
+
+권장 모델은 **범주 + 제한된 사유 flags + 속성별 판독 상태**다. 숫자 confidence는 보정 근거가 없으므로 v1에서 제외한다. 초점·조명·가림·원근은 issues에 기록하고 손바닥 coverage를 따로 둔다. 손가락 비율을 쓰지 않으므로 finger visibility 점수는 현재 불필요하다.
+
+- 전체 unusable이면 trait Evidence/Claim을 만들지 않는다. 예: 손바닥이 아니거나 여러 손을 구분할 수 없음.
+- partial이면 읽힌 속성만 available이다. 부분 crop이라도 해당 선의 곡률을 판독할 수 있으면 그것만 사용할 수 있고, 전체 선이 필요한 continuity는 unreadable이다.
+- 품질은 **관찰을 사용할 수 있는가**의 gate다. 높은 품질을 성격 해석의 높은 정확도나 source 가중치로 변환하지 않는다.
+- 해석 타당성은 `basis: 'symbolic'` 및 별도 제품 규칙 설명으로 표시한다. 사용자 동의/공감 평가는 별도 피드백이며 이번 모델에 넣지 않는다.
+- 서버 validator는 quality와 observation의 명백한 모순(unusable인데 observed 등)을 거부한다. 그 검사로 시각 관찰의 진실성까지 검증되는 것은 아니다.
+
+## 4. Evidence adapter 계약과 구체 예
+
+향후 `app/lib/palmEvidence.ts`에 순수 `buildPalmEvidence(bundle: PalmObservationBundle): EvidenceRecord[]`를 권장한다. 시간·난수·네트워크·provider SDK가 없으며 고정 순서 `life, head, heart, fate`, 각 선 `visibility, curvature, continuity`를 따른다.
+
+- `source: 'palm'`, `kind: 'image-observation'` 고정.
+- feature: `line.<key>.visibility`, `line.<key>.curvature`, `line.<key>.continuity`.
+- ID: `palm:line:<key>:<attribute>`. snapshot 내부 유일성이다. 다른 snapshot에도 같은 의미의 ID가 있는 것은 정상이며 전역 이미지 식별자가 아니다.
+- available은 실제 판독된 enum 값. missing은 관찰 대상 속성이 적용되지 않음/관찰 미제공, unreadable은 시도했으나 판독 불가. null에 default 값을 채우지 않는다.
+- 이미지 없음/전체 실패는 **Palm Evidence 0개**. 선택적 source 부재를 표현하기 위해 네 선을 가짜 missing 관찰로 생성할 필요가 없다.
+- not-detected이면 visibility 값만 available=`not-detected`, 두 속성은 missing/null. 그 사실을 성격의 부정 근거로 사용하지 않는다.
+- quality는 bundle metadata에만 둔다. 품질 Evidence에 Claim이 연결되어 성격 지지가 되는 일을 피한다. 원본 파일명·EXIF·GPS·URL·base64·이미지 hash도 Evidence에서 제외한다.
+
+다음은 가능한 행 예시이며 서로 다른 이미지 상태를 예시하므로 한 trace에 모두 넣는 fixture가 아니다. 모든 행의 source/kind는 위 고정값이다.
+
+| id | feature | value | status |
+| --- | --- | --- | --- |
+| `palm:line:life:visibility` | `line.life.visibility` | `visible` | available |
+| `palm:line:life:continuity` | `line.life.continuity` | `continuous` | available |
+| `palm:line:head:curvature` | `line.head.curvature` | `curved` | available |
+| `palm:line:head:continuity` | `line.head.continuity` | null | unreadable |
+| `palm:line:heart:curvature` | `line.heart.curvature` | `straight` | available |
+| `palm:line:heart:visibility` | `line.heart.visibility` | null | unreadable |
+| `palm:line:fate:visibility` | `line.fate.visibility` | `not-detected` | available |
+| `palm:line:fate:curvature` | `line.fate.curvature` | null | missing |
+
+선 전체가 unreadable인 경우 visibility와 두 속성 모두 unreadable/null이다. 재촬영은 같은 ID에 새 관찰을 **최종 분석 전의 대기 상태에서** 교체한다. 두 시도 Evidence를 한 trace에 누적하지 않는다. 사용자가 편집한 관찰도 provider 관찰로 가장하지 않는다.
+
+## 5. InterpretationClaim 계약
+
+기존 타입을 바꾸지 않는다. `trait`는 기존 10개 `CoreTag`, `basis: 'symbolic'`, `target: 'palm.coreTags'`를 사용한다. **현재 승인된 Palm→CoreTag 매핑은 없다.** 곡선=창의적, 선이 길면 독립적 같은 규칙을 이번 설계에서 정답으로 만들지 않는다. 첫 구현 단계는 Evidence만 만들며 Claim은 0개다.
+
+추후 승인된 명시적 규칙은 `palm.<rule-name>@1`의 ruleId를 갖고 정확한 관찰 조건·필요 Evidence·출력 trait·상징적 해석 문구를 함께 검토한다. Claim ID는 `palm:claim:<rule-name>@1:<trait>`처럼 결정적으로 만든다. 같은 규칙이 여러 조건군을 가질 때만 고정 조건군 key를 추가한다. 임의 순번·model의 문자열을 ID나 ruleId로 받지 않는다.
+
+한 관찰 → 여러 trait은 제품 승인된 별도 Claim으로, 여러 관찰 → 한 trait은 하나의 Claim에 모든 evidenceIds를 연결한다. 현재 `supportedClaims()`는 **모든** Evidence가 available이어야 한다. OR 조건이면 근거가 다른 별도 Claim으로 표현한다. 동일 trait의 여러 Claim은 증거 풍부함이지 여러 표가 아니다.
+
+같은 속성에 모순되는 추출값이 있으면 validator가 실패 처리하거나 해당 속성을 unreadable로 처리하는 명시적 규칙이 필요하다(권장: 상충 응답 거부). 서로 다른 선에서 다른 상징적 trait이 나오면 둘 다 provenance와 함께 보존하고 평균내거나 하나를 삭제하지 않는다. 새 Conflict/Relationship Engine은 만들지 않고 기존 authored-pair가 표현할 수 있는 공존만 사용한다. 'not-detected' 및 readability 사유에는 v1 성격 Claim을 연결하지 않는다.
+
+## 6. Source counting과 합성 활성화의 원자적 변경
+
+현재 `supportedClaims()`는 available Evidence의 source를 조회하고 `sourcesOf()`에서 중복을 제거한다. 따라서 source가 모두 `palm`이면 독립적을 지지하는 관찰/Claim이 5개라도 **source 지지 1개**다. 다른 기존 source 하나가 같은 trait을 지지하면 2-source convergence가 된다. 같은 한 Claim이 Palm 관찰 여러 개를 참조해도 1개다. 이 부분의 알고리즘 수정은 필요 없다.
+
+그러나 현재 `CONVERGENCE_TARGETS`와 `IDENTITY_TARGETS`에 `palm.coreTags`는 없다. 최종 활성화 시 함께 승인할 최소 변경은 다음과 같다.
+
+1. 승인된 symbolic rules에서 `palmCoreTags`를 고정 규칙 순서로 중복 제거하여 파생한다. provider는 trait/coreTags를 반환하지 않는다.
+2. 두 allowlist에 `palm.coreTags`를 추가한다. 기존 항목과 순서는 유지한다.
+3. `calcCommonKeywords()`에 Palm 태그 배열을 **마지막 source 세트 하나**로 추가한다. 같은 Palm 태그를 Claim별 세트로 넘기지 않는다.
+4. 동일한 Palm Claim 결과를 trace에 넣고 기존 selector를 호출한다. 대표 keyword 최대 source 불변식을 유지한다.
+
+특히 2만 실행하면 keyword가 최대 지지가 아니게 되어 selector가 throw할 수 있다. 3만 실행하면 keyword에 맞는 trace 지지가 없어 같은 문제가 생긴다. 품질 가중치, 추가 난수, catalog 변경은 필요 없다.
+
+**출력 영향도 함께 정해야 한다.** `commonKeywords` 변경은 detailedReading, TarotFlow, Destiny Code, 공유·analytics 요약에도 전달된다. merged `coreTags`에 Palm을 넣으면 profile을 통해 compatibility도 바뀐다. 최종 활성화 권장은 Palm을 merged coreTags에도 마지막에 추가하여 소스 결과와 합성 결과 의미를 일치시키되, 궁합 입력 변화까지 제품 승인 범위에 포함하는 것이다. 궁합 불변이 요구되면 이 활성화는 보류하고 관찰 전용 상태를 유지한다. 별도 승인 없이 궁합 전용 태그 체계를 새로 만들지 않는다.
+
+`keywordStrengths`에 Palm을 추가하려면 기존 placement별 분모를 유지하면서 Palm 세트 하나만 추가하는 별도 명시적 변경이 필요하다. 그 백분율을 성격 확률/패턴 source 수라고 표시하지 않는다. 교차 신호 서술의 source label은 현재 하드코딩되어 있으므로 Palm 지지가 생기면 그 부분만 provenance와 맞추고 상징적 일치를 과학적 검증으로 표현하지 않도록 검토한다. 기존 conflict 규칙·선택 순위·catalog는 그대로 둔다. 이 전체 활성화 상세 승인 전에는 생산 결과가 바뀌지 않는다.
+
+## 7. 실패·부분 데이터·재시도 정책
+
+| 상황 | 처리 / 기존 분석 |
+| --- | --- |
+| 이미지 없음 / 동의 안 함 | 요청하지 않음. 기존 분석 그대로 |
+| 미지원 형식 / 용량·픽셀 초과 | provider 호출 전 거부. 재선택 또는 Palm 없이 계속 |
+| 전체 흐림 / 손바닥 아님 / 다중 손 식별 불가 | unusable, Claim 없음. 재촬영 안내 |
+| 부분 crop / 일부 선 unreadable | 읽힌 속성만 Evidence. 나머지는 unreadable, 임의 추정 금지 |
+| model/API 오류 / malformed JSON / schema 위반 | 정규화 오류, 생성된 일부 JSON을 정상 관찰로 구제하지 않음 |
+| timeout | 요청 중단 신호, 늦게 도착한 응답 무시. Palm 없이 계속 가능 |
+| 다른 이미지로 재시도 | 이전 요청 취소·세대 번호로 오래된 응답 차단. 최신 성공 bundle만 채택 |
+| Palm 없이 결과 확정 후 응답 도착 | 완성 snapshot 변경 금지. Palm 포함 재분석은 새 analysisId로 명시적 실행 |
+
+기본은 **자동 retry 0회**, 사용자가 재시도한다. 영구 실패나 unusable에 자동 API 재호출을 하지 않는다. 이후 필요가 증명되면 transient 오류만 전체 deadline·호출 상한 안에서 1회 허용하는 정책을 별도 검토한다. 새 이미지 시도 간 결과가 달라질 수 있으므로 '동일 이미지 AI 추출은 항상 동일'이라고 보장하지 않는다. 결정성은 확정된 구조화 bundle → Evidence/Claim/분석 경계에서 보장한다.
+
+## 8. 이미지 처리와 provider 경계
+
+현재 분석은 브라우저 동기 함수이고 이미지 분석 API는 없다. 설치된 Next `16.2.6`의 로컬 Route Handler 가이드(`node_modules/next/dist/docs/01-app/01-getting-started/15-route-handlers.md`, `03-api-reference/03-file-conventions/route.md`)를 확인했다. 권장 경계는 별도 POST Route Handler다.
+
+```text
+선택적 browser File / 취소 가능한 요청
+→ app/api/palm/analyze/route.ts (향후 신설)
+→ 서버 입력 제한·decode·EXIF 제거·정규화
+→ server-only PalmVisionProvider
+→ 엄격한 runtime schema + 의미적 일관성 검증
+→ PalmObservationBundle / 정규화 오류
+→ browser의 대기 관찰 상태
+→ 동기 analyzeDestiny(..., 선택적 bundle)
+→ 순수 Evidence adapter → 승인 시 Claim → 기존 패턴/Identity → snapshot
+```
+
+브라우저는 미리보기·전송을 위해 File을 일시적으로 다루지만 `analysis.ts`, trace, profile에 raw image를 넘기지 않는다. provider credentials는 서버 환경변수이며 `NEXT_PUBLIC_*`를 사용하지 않는다. 현재 Supabase의 공개 anon client를 provider client로 재사용하지 않는다. 서버 전용 모듈을 클라이언트 import graph에서 차단한다.
+
+최초 운영 정책 제안은 JPEG/PNG/정적 WebP 한 장, 원본 **8 MiB**, **20 megapixels**, 어느 변도 **8,000 px** 초과 금지, 정규화 결과 긴 변 **2,048 px**다. 이는 현 서비스의 확정 제한이나 provider 규격이 아니라 구현 단계에서 모바일 사진과 실제 hosting 메모리 제한에 맞춰 검토할 초기 상한이다. HEIC/GIF/SVG/PDF/URL 입력은 v1 미지원으로 명시한다. extension/Content-Type만 믿지 않고 signature와 실제 decoder 결과를 함께 확인한다. request 전체 크기 제한을 body buffering **전** hosting 또는 bounded stream 단계에서 적용한다. `request.formData()` 후 file.size 검사만으로 방어가 끝났다고 판단하지 않는다. 압축 byte 제한과 decode pixel/메모리·시간 제한은 별개다.
+
+EXIF orientation을 반영한 후 위치·기기·comment 등 metadata를 제거하여 다시 인코딩하고 provider에는 정규화 이미지 한 장만 보낸다. 원본 파일명은 전송하지 않는다. 원근 보정으로 없는 선을 생성하거나 generative enhancement를 하지 않는다. UI 재촬영 안내로 해결한다. 응답은 no-store, 공개 URL/정적 파일/이미지 cache를 만들지 않는다.
+
+### Provider-neutral 계약 제안
+
+```ts
+// 서버 내부 계약. SDK 타입은 이 경계를 넘지 않는다.
+export interface PalmVisionProvider {
+  extract(input: {
+    image: Uint8Array; // 검증·정규화 완료된 JPEG
+    mimeType: 'image/jpeg';
+    signal: AbortSignal;
+  }): Promise<unknown>; // provider JSON도 신뢰하지 않는다
+}
+
+export type PalmAnalysisErrorCode =
+  | 'unsupported-file' | 'too-large' | 'invalid-image'
+  | 'unusable-image' | 'invalid-response' | 'timeout'
+  | 'provider-unavailable' | 'rate-limited';
+
+export type PalmAnalysisResult =
+  | { ok: true; bundle: PalmObservationBundle }
+  | { ok: false; code: PalmAnalysisErrorCode };
+
+// provider 호출과 validation을 감싸는 서버 서비스
+// analyzePalmImage(validatedImage, provider, signal): Promise<PalmAnalysisResult>
+```
+
+provider별 adapter는 SDK 응답을 관찰 JSON 후보로 추출할 뿐, 성격 서술·CoreTag를 만들지 않는다. 중앙 validator는 unknown fields, enum, 배열 길이, 네 line key, 속성별 상태, quality 관계를 검사한다. 추출 버전 metadata는 model 답변을 믿지 않고 서버의 실제 설정에서 채운다. JSON schema/type casting만으로 대체하지 않는다. provider별 오류 메시지·request body·stack은 클라이언트에 노출하지 않는다.
+
+timeout은 예를 들어 서버 전체 30초 이내, provider 호출 25초 이내로 시작하되 hosting 제한보다 작게 설정한다. 취소가 provider의 이미 발생한 비용을 환불한다는 가정은 하지 않는다. provider가 없거나 설정이 없으면 Palm만 unavailable이다. vendor 선택·model/보관 조건·schema 준수율·실제 사진 추출 평가를 구현 전에 확인하고, 취향만으로 vendor를 선정하지 않는다.
+
+## 9. 개인정보·저장·삭제
+
+원본 이미지는 일시 처리 후 참조를 해제하고 서버 파일·object storage·DB·localStorage·IndexedDB에 저장하지 않는 것이 기본이다. preview object URL도 교체·취소·완료 시 해제한다. JavaScript 메모리의 즉시 물리적 삭제를 보장한다고 말하지 않는다. 파일 영구 보관, 이미지 hash 기반 신원 연결, 양손 원본 이력은 필요 없다.
+
+처리 전 이미지 외부 처리 여부·목적·선택성·보관 정책에 대한 명시적 동의를 받는다. 결과 저장 시 **구조화 관찰과 trace가 기기에 남는다는 점**을 알리고 현재 저장 동작을 사용한다. 서버 provider의 retention/training/로그 정책은 선정 시 확인하고 공개 안내와 설정을 맞춰야 한다. '우리 서버가 저장하지 않음'을 'provider도 즉시 삭제함'으로 표현하지 않는다. 법적 적합성을 판정한 문서가 아니다.
+
+권장 보관 대상은 새 snapshot의 작은 `palm?: PalmObservationBundle`과 기존 `trace`의 Palm Evidence/승인 Claim이다. 구조화 관찰도 개인정보 관점의 데이터로 취급한다. 단순 trace만 보관하면 unreadable 이유·전체 품질·추출 버전을 잃으므로 bundle이 필요하다. 저장하지 않은 분석은 현재 화면 메모리에만 둔다. localStorage는 암호화된 비밀 저장소가 아니므로 원본·좌표/픽셀·식별 정보는 추가하지 않는다.
+
+`storageEngine`의 결과 삭제로 해당 snapshot의 bundle/trace도 함께 제거되고 최대 10개 정책도 그대로 적용된다. profile은 별도 최대 30개 저장소이며 삭제가 연동되지 않는다. 따라서 Palm 관찰을 profile에 중복 복사하지 않는다. 분석 요약 analytics까지 삭제된다고 보장하지 않는다. 관찰·trace·이미지는 compact share, analytics row, Supabase 테이블에 추가하지 않는다. 합성 활성화 후 Identity/키워드 등 파생 요약은 기존 공유·자동 analytics 경로에 들어가므로 **그 파생 결과 전송까지** 처리 안내와 활성화 승인에서 확인해야 한다.
+
+현재 `page.tsx`는 profile 저장소를 console에 출력한다. 기존 로그 정리는 이번 범위가 아니지만 Palm 데이터를 profile이나 해당 로그에 확장해서 넣지 않는 것이 명확한 경계다. 새 API/APM에서는 request/response 본문·provider 원문·EXIF를 수집하지 않고, 오류 코드·처리 시간·용량 범주 같은 최소 운영 지표만 남긴다.
+
+## 10. Snapshot / version 정책
+
+- **지금은 engine `'3'`, schema `2`, trace `1` 모두 변경하지 않는다.**
+- 이후 관찰 전용 도입은 `AnalysisSnapshot`에 optional `palm` 추가 + 선택적 trace Evidence만 저장한다. 기존 해석이 같고 optional 추가를 기존 reader가 보존하므로 schema `2` 유지 권장, engine도 `'3'` 유지 가능하다. schema가 그대로여도 실제 직렬화 확장이므로 round-trip 검증은 필수다.
+- trace에 Evidence만 추가하고 claims 0인 단계는 Identity를 바꾸지 않는다. 전체 snapshot exact diff는 새 optional palm/trace Evidence 이외 불변이어야 한다.
+- 실제 Palm Claim 합성 참여 시 engineVersion을 다음 버전으로 증가시킨다(다른 변경이 없으면 `'4'`). catalog는 그대로이고 엔진별 catalog 범위에 해당 버전 11개를 명시한다. schema는 optional 호환 형태이면 `2` 유지한다.
+- observation/extraction/rule version은 각 형식과 추출·매핑 변경을 식별한다. 기존 snapshot을 새 provider나 새 rule로 재생성하지 않는다. 모델 재실행 재현성보다 **당시 관찰·trace·완성 결과의 재표시**가 역사 보존이다.
+- legacy 및 기존 v2 저장본에 palm/trace/quality 기본값을 주입하지 않는다. 저장본을 열거나 재저장할 때 네트워크 호출·backfill·새 engine stamp는 금지다. 저장 ID·중복 저장 의미를 유지한다.
+- 기존 v1/v2/v3 golden은 동결한다. 출력 변경 승인 단계에서 새 버전 baseline과 명시적 allowed diff를 별도로 검토한다. 현재 baseline 재생성은 없다.
+
+## 11. 최소 UI 흐름
+
+입력 화면의 선택적 Palm 영역 → 동의/파일 선택 → 취소 가능한 판독 → 읽힌 선 수와 미판독 이유 요약 → 카드 선택과 기존 분석으로 이어지는 작은 확장을 권장한다. Palm을 선택하지 않은 사용자는 기존 흐름 그대로다. 요청 중에도 **Palm 없이 계속**할 수 있고 그 선택 즉시 해당 요청 결과를 분석에서 제외한다.
+
+완료 전에는 읽힌 관찰을 바꿀 수 있지만 snapshot 완성 후에는 뒤늦은 수정이 없다. 재시도로 새로운 분석을 만들 때 기존 birth/MBTI/선택 카드 입력을 유지하여 Palm 차이와 Tarot 재추첨이 섞이지 않게 한다. 취소·대기·처리 오류는 UI 상태이며 성공 관찰 snapshot으로 위장하지 않는다.
+
+기본 표시: '두뇌선 후보의 곡률은 읽혔지만 연결 상태는 판독하기 어렵습니다.' 상세 펼침에서 관찰 범주와 한계를 보여준다. 성격 정확도 퍼센트, 손금으로 확정 진단, unreadable=특성 없음 표시는 사용하지 않는다. Claim 활성화 이전에는 '종합 결과에는 아직 반영되지 않은 관찰'임을 분명히 한다. 전체 결과 페이지·PDF·공유 레이아웃 재설계는 제외한다.
+
+## 12. 보안·남용 통제
+
+업로드 형식·signature·실제 decode·크기 제한을 함께 적용하고 parser 자체의 자원 소모를 제한한다. 파일을 공개 경로에 보관하지 않으며 클라이언트 MIME만 신뢰하지 않는다. 근거: [OWASP File Upload Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html).
+
+이미지 안 글자와 metadata의 지시는 신뢰할 수 없는 입력이다. 관찰 전용 prompt, 도구/URL 접근 없는 provider 호출, 출력 allowlist 검증을 함께 사용한다. '지시를 무시하라'는 prompt만으로 방어가 완성되지 않는다. 근거: [OWASP LLM Prompt Injection Prevention](https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html).
+
+이 저장소에 맞춘 최소 운영 통제 제안:
+
+| 위험 | 필수 경계 |
+| --- | --- |
+| huge upload / decompression bomb | 수신 byte, decode pixels, 실행 시간/메모리/동시 처리 상한을 각각 적용 |
+| MIME spoof / malformed file | 허용 codec만 decode·재인코딩. URL fetch 기능은 제공하지 않음 |
+| image prompt injection / 응답 조작 | 관찰 enum만 허용. 자유 서술·CoreTag·실행 명령 거부. 유효 enum의 잘못된 시각 판독까지 탐지한다고 주장하지 않음 |
+| 반복 요청 / 비용 | 서버 rate limit·동시 호출 상한·일일 비용 차단·1요청1이미지1호출. client disable만 의존하지 않음 |
+| 공개 endpoint 남용 | 기존 사용자 인증은 전제하지 않음. 실제 배포 ingress의 IP/세션 제한·Origin 검사와 비용 상한을 준비하고, Origin 검사만 인증으로 취급하지 않음 |
+| 다중 instance 제한 우회 | 단일 process 메모리 limiter만으로 전역 비용을 보장하지 않음. hosting 기능 또는 작은 공유 limiter를 배포 단계에서 선정 |
+| secret/log 유출 | server-only import, 비공개 env, 원문/본문/APM capture 금지, 고정 오류 enum |
+
+이 제어와 provider 보관 조건 확인 전에는 비용이 발생하는 공개 endpoint를 노출하지 않는다. 별도 microservice나 거대한 보안 플랫폼은 필요 없다.
+
+## 13. 저장소에서 도출한 최소 구현 순서
+
+여섯 층을 각각 배포하기보다 **관찰 계약 → 서버 추출 → 선택적 관찰 저장/UI → 승인된 합성** 네 단계로 나눈다. 아래는 다음 작업을 위한 제안이며 이 문서 작성으로 구현을 시작하거나 제품 결정을 승인한 것은 아니다.
+
+| 단계 | 목적 / 예상 파일 | 필요한 검증 | 버전 / 구현 전 검토 |
+| --- | --- | --- | --- |
+| P1-A 관찰 계약·순수 adapter | 신규 `app/lib/palmObservation.ts`, `app/lib/palmEvidence.ts`, `scripts/regression-palm-evidence.ts` | 상태/부분 판독/not-detected, deterministic ID·순서, 입력 불변, 중복 ID 없음, unusable·미제공 Evidence 0, scalar만 반환 | engine/schema 불변. 이 설계의 계약·범위 승인 후 구현, 완료 시 Codex 검수 |
+| P1-B 서버 관찰 추출 | 신규 `app/api/palm/analyze/route.ts`, `app/lib/server/palmAnalysis.ts`, `palmVisionProvider.ts`, 선택 vendor adapter, validation/normalize helper. 필요 시 package 파일 | fake provider로 schema·timeout·오류·취소·rate limit·size/MIME/pixel/EXIF 검사. 실제 비식별/동의 사진으로 가시성 평가 | engine/schema 불변. vendor·limits·retention·공개 노출 통제는 **구현 전 Codex 검토/제품 확인** |
+| P1-C 선택적 관찰 흐름·snapshot | `app/page.tsx`, 작은 Palm UI 컴포넌트, `analysis.ts` optional 인자/필드, `evidenceTrace.ts` Evidence append. 저장/active 파일은 동작 수정이 필요할 때만 | 무Palm exact regression, Palm observation-only에서 기존 출력 동일, late response/retry, 새 저장 round-trip/구 저장 무backfill, raw data 미유출 | engine3/schema2 권장. consent 문구와 UX 범위 **구현 전 검토**. Claim 0·합성 미참여 명시 |
+| P1-D 상징 규칙·합성 활성화 | 신규 `palmInterpretation.ts`, `analysis.ts`, `analysisPatterns.ts`; 필요한 keyword/source 설명 부분과 회귀·새 golden | 5관찰=1source, 대표 불변식, pair eligibility, missing/unreadable 차단, noPalm 기존 출력 동일, Palm 출력 allowed diff·궁합/공유/analytics 영향 검증 | **별도 규칙·출력 영향 승인 후** next engine/schema2. 구현 전 Codex 상세 설계 재검토 필수 |
+
+**첫 구현 범위는 P1-A의 세 파일과 해당 단계 보고 문서뿐**이다. provider 호출, API route, 업로드 UI, snapshot 타입 변경, `analysis.ts`/`evidenceTrace.ts` 통합, Claim 생성, target allowlist, keyword, catalog, 버전, golden 변경은 포함하지 않는다. 기존 CoreTag/Evidence 타입은 import type으로 참조만 한다. 별도 runtime schema 라이브러리 도입도 이 단계에 필요 없다. 그림/이미지 fixture 대신 명시적 구조화 fixture로 adapter 계약을 검증한다.
+
+P1-A 이후 각 단계는 현재 golden, saved-context, evidence-trace, analysis-patterns, identity-selection, identity-catalog-v3 회귀와 TypeScript/build/diff-check를 실행한다. P1-D는 기존 출력 변경 승인 단계이므로 기존 golden을 덮어써 통과시키지 않고 버전별 비교를 유지한다. 각 단계의 신규 검증은 의미적 경계에 집중하고 테스트 프레임워크를 새로 구축하지 않는다.
+
+## 14. 보류 범위와 이번 검증
+
+microservices, graph DB, generic plugin framework, 거대한 palmistry ontology, 확률 fusion, 통합 confidence, LLM agent orchestration, raw image archive, 사용자 피드백 자동 학습, 신규 CoreTag taxonomy는 만들지 않는다. Palm Shape/Finger Ratio/양손 비교도 v1에서 보류한다. Pattern/Relationship Engine 신규 개발과 Identity catalog 재최적화는 범위 밖이다.
+
+관찰 전용 단계에서 기존 CoreTag 매핑·순서, 사주 dominant/missing 보완과 3-tag 제한, MBTI 미입력 처리, zodiac/점성 경로, Tarot 선택/합성 제외, Identity 순위/catalog, conflict, keywordStrengths, narrative, compatibility, 공유/analytics, saved-result 의미를 유지해야 한다. 최종 합성 단계의 의도된 출력 변화는 별도 승인 범위로 위에서 분리했다.
+
+이번 검토는 실제 main 코드·API·localStorage·Supabase 요약 경로와 로컬 Next 문서를 읽은 설계 검토다. 새 provider 정확도·배포 플랫폼 제한을 실측한 검토는 아니다. production 코드/테스트/golden 변경은 0건이며 전체 회귀를 새로 실행했다고 주장하지 않는다. 문서 diff 검사와 이전 리뷰 본문 보존 여부를 확인한다. `PROJECT_CONTEXT.md`, `DECISIONS.md`, `CLAUDE_REPORT.md`는 수정하지 않는다. 다음 단계는 사용자 설계 확인 후 **P1-A만** Claude Code에 맡기는 것이다.
+
+---
+
+# 이전 검토 이력 (원문 보존)
+
 # Identity Catalog v3 — 최종 독립 검수 (2026-09-30)
 
 ## 최종 판정

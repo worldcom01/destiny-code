@@ -1,3 +1,31 @@
+# Palm Phase 1 — Architecture Design
+
+Status: PALM PHASE 1 — ARCHITECTURE DESIGN
+
+**설계 검토 완료 / 구현 미시작 / 구현 범위 승인 대기.**
+
+기준 production main `70bc9da`, engineVersion `'3'`, schemaVersion `2`. Identity Catalog v3는 완료·병합되었으며 최적화를 재개하지 않는다.
+
+## 현재 설계 결과
+
+- 판정 **A. EXISTING ARCHITECTURE CAN ACCEPT PALM WITH SMALL EXTENSIONS**.
+- 이미지 → 별도 품질/관찰 → 순수 Evidence adapter → 추후 승인된 symbolic Claim → 기존 패턴/Identity 순서를 유지한다.
+- 관찰 전용 도입과 실제 합성 활성화는 분리한다. `palm` source 추가만으로 합성되지 않으며 target allowlist와 commonKeywords를 함께 맞춰야 한다.
+- 원본 이미지는 일시 처리만 하고 저장하지 않는다. 새 snapshot에 optional 구조화 관찰/trace만 보존하며 과거 결과 backfill은 없다.
+- 기존 엔진·schema·catalog·golden은 이번 설계에서 변경하지 않았다.
+
+## 다음 단계
+
+상세 타입, source counting, 서버/provider 경계, 보안·저장 정책 및 단계별 검증은 `CODEX_REVIEW.md` 최상단에 있다.
+
+사용자 설계 확인 후 첫 구현은 **P1-A 관찰 계약·순수 Evidence adapter**만 제안한다. 예상 파일은 `app/lib/palmObservation.ts`, `app/lib/palmEvidence.ts`, `scripts/regression-palm-evidence.ts`와 단계 보고 문서다. API/provider/UI/snapshot 통합/Claim/합성/버전 변경은 이 첫 구현에 포함하지 않는다. 아직 구현을 시작하지 않았다.
+
+이후 순서는 서버 관찰 추출 → 선택적 관찰 UI·저장 → 별도 제품 승인된 상징 규칙·합성 활성화다. 마지막 단계 전에는 기존 분석 결과가 바뀌지 않아야 한다.
+
+---
+
+## 이전 단계 기록 (원문 보존)
+
 # Identity Catalog v3 — Implementation
 
 Status: IDENTITY CATALOG V3 — COMPLETED / MERGED
