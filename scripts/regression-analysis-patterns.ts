@@ -96,7 +96,33 @@ const SUN = 'western-astrology:sun-sign';
   ]);
   const ps = deriveAnalysisPatterns(t, [{ tags: ['체계적', '감성적'] }]);
   check('missing evidence does not fabricate convergence', convergence(ps).length === 0);
-  check('missing evidence does not fabricate pair support', pairs(ps).length === 0);
+}
+{
+  // authored-pair contrast: identical claims, only the MBTI evidence status differs
+  const PAIR = [{ tags: ['체계적', '감성적'] as [CoreTag, CoreTag] }];
+  const make = (mbtiStatus: EvidenceRecord['status'], withSaju: boolean) => trace(
+    [ev('mbti:type', 'mbti', mbtiStatus), ev('blood-type:type', 'blood-type'),
+      ...(withSaju ? [ev('saju:dominant-element', 'saju')] : [])],
+    [cl('mbti:type', '체계적', 'mbtiTraits.coreTags'), cl('mbti:type', '감성적', 'mbtiTraits.coreTags'),
+      cl('blood-type:type', '체계적', 'bloodType.coreTags'),
+      ...(withSaju ? [cl('saju:dominant-element', '감성적', 'saju.coreTags')] : [])],
+  );
+  const available = pairs(deriveAnalysisPatterns(make('available', false), PAIR));
+  check('pair contrast: available evidence → pair with MBTI support and shared source',
+    available.length === 1
+    && eq(available[0].support[0], { claimIds: ['mbti:type:체계적', 'blood-type:type:체계적'], sources: ['mbti', 'blood-type'] })
+    && eq(available[0].support[1], { claimIds: ['mbti:type:감성적'], sources: ['mbti'] })
+    && eq(available[0].sharedSources, ['mbti']), JSON.stringify(available));
+  const missing = pairs(deriveAnalysisPatterns(make('missing', false), PAIR));
+  check('pair contrast: same claims with missing evidence → no pair', missing.length === 0, JSON.stringify(missing));
+  // other side still supported by available evidence: only available paths appear
+  const mixed = pairs(deriveAnalysisPatterns(make('missing', true), PAIR));
+  check('pair with missing evidence: support lists only available claims and sources',
+    mixed.length === 1
+    && eq(mixed[0].support[0], { claimIds: ['blood-type:type:체계적'], sources: ['blood-type'] })
+    && eq(mixed[0].support[1], { claimIds: ['saju:dominant-element:감성적'], sources: ['saju'] }), JSON.stringify(mixed));
+  check('pair with missing evidence: no fabricated source or shared source',
+    mixed.length === 1 && eq(mixed[0].sharedSources, []) && !JSON.stringify(mixed[0]).includes('mbti'));
 }
 
 // ── authored-pair rules ──

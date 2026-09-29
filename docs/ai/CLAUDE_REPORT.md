@@ -1,15 +1,59 @@
 # Claude Implementation Report
 
-Status: PHASE 2B FOUNDATION IMPLEMENTED — AWAITING REVIEW (Identity change not approved)
+Status: PHASE 2B FOUNDATION — CODEX FINDINGS FIXED, AWAITING RE-REVIEW (Identity change not approved)
 
 Phase 2B foundation (observational only). Branch `refactor/pattern-foundation-phase2b` (from main `5758350`). Not merged, not pushed. 이전 Phase 2A 보고는 git history(`5758350`)에 있다.
+
+## Codex 지적 반영 (검수 대상 `38834e8` → 수정 커밋)
+
+Codex 판정은 **C. Revision required**(BLOCKER 0 / IMPORTANT 1 / MINOR 1)였다. 두 지적만 수정했다. 애플리케이션 코드(`app/`), 패턴 의미, Identity, golden은 변경하지 않았다. 검수된 `38834e8`은 amend하지 않고 새 커밋으로 수정했다.
+
+### IMPORTANT 1 — 진단 입력 생성기의 짧은 반복
+
+- **원인:** 기존 LCG의 `s * 1103515245`를 JavaScript Number 곱셈으로 계산해서, 정수 안전 범위를 넘으며 하위 비트가 손실됐다. 그 결과 상태가 짧게 순환했다. 20,000행 중 서로 다른 입력이 **1,409개**(Codex 측정, 전체 입력 기준)뿐이었다.
+- **새 생성기:** `mulberry32`다. `Math.imul` 기반 32-bit 정수 연산이고, 주기는 2^32, 출력은 [0, 1)이다. seed는 12345이며 `Math.random`은 쓰지 않는다.
+- **유효 입력 정의** (현재 엔진에서 측정 대상 출력에 영향을 주는 필드):
+  - 양력 생년월일
+  - 출생 시간: UI의 12개 시진 값 또는 미입력
+  - 출생지 좌표: 시간이 있을 때만(없으면 상승궁을 계산하지 않음)
+  - MBTI
+  - 혈액형
+- **고정한 필드:**
+  - 성별: 분석 결과 전체에 영향이 없음을 확인했다.
+  - 타로: 서술에만 영향이 있고 Identity·교집합에는 영향이 없다.
+  - 두 필드는 진단 안에서 300건으로 다시 확인하며, 영향을 주게 되면 무결성 오류가 난다.
+  - 음력 입력은 같은 양력 날짜 공간으로 변환되므로 따로 표본을 만들지 않는다. 만들면 중복만 늘어난다.
+- **입력 공간:**
+  - 날짜: 1950-01-01~2009-12-31의 실제 달력 일자. 예전에는 1–28일만 썼다.
+  - 시진·출생지: UI 옵션의 좌표 27개.
+  - 확률: 시간 70%, 시간이 있는 행의 출생지 85%, MBTI 85%, 혈액형 균등.
+- **고유성 보고와 무결성 검사:**
+  - 유효 입력 fingerprint로 생성 행 수·고유 수·중복 수·고유율을 출력한다.
+  - 중복률이 1%를 넘으면 degenerate stream으로 보고 무결성 오류를 낸다.
+  - 옛 LCG를 일시적으로 되돌리자 고유 입력 2,412개(12.06%)로 이 검사가 FAIL했다. 유효 입력 기준이라 Codex의 전체 입력 기준 수치(1,409)와는 다르다. 복구 후 PASS.
+- **결과:**
+  - 생성 20,000행, 고유 **19,983**, 중복 **17**, 고유율 **99.91%**다.
+  - 중복 17건은 시간 미입력 행의 입력 공간(약 150만)에서 생기는 확률적 충돌이며 순환이 아니다. 고유성을 부풀리지 않고 그대로 보고한다.
+  - 새 digest는 **`ca1e44df`**다. 이전 `5de12fdd`와 그 수치는 이전 생성기의 이력일 뿐이다.
+
+### MINOR 1 — missing Evidence의 authored-pair 검사
+
+기존 검사는 pair 한쪽 태그의 Claim이 처음부터 없었기 때문에 missing 조건을 실제로 시험하지 못했다. 그 assertion을 제거하고 **대조 fixture**로 교체했다. 네 검사 모두 PASS다.
+
+1. **available:** 같은 Claim에서 MBTI Evidence가 available이면 pair가 있다. 양쪽 support에 MBTI 경로가 있고 `sharedSources = ['mbti']`다.
+2. **missing:** 같은 Claim에서 MBTI Evidence만 missing이면 pair가 없다.
+3. **혼합:** 다른 쪽이 사주로 지지되는 경우 pair는 있다. support에는 available Claim·source만 있다(`blood-type`, `saju`).
+4. **혼합 (조작 여부):** `sharedSources = []`이고, 결과 어디에도 `mbti`가 없다.
+
+- 구현 버그는 발견되지 않았다. `supported` 필터를 일시적으로 제거하자 위 3개와 기존 convergence missing 검사가 FAIL했다. 복구 후 PASS.
+- 패턴 회귀의 개별 assertion은 **74개**다(기존 71 − 1 + 4).
 
 ## Implemented Scope
 
 사용자가 승인한 범위는 **사용자에게 보이지 않는 기반 작업** 두 가지다. Identity 선택은 변경하지 않았다.
 
 1. **다양성 측정 기준선**: `scripts/diagnostic-identity-diversity.ts`
-   - 결정적 LCG(seed 12345)로 합성 입력 20,000건을 만든다. `Math.random`은 쓰지 않는다.
+   - 결정적 `mulberry32`(seed 12345)로 UI 입력 공간에서 20,000행을 표본 추출한다. `Math.random`은 쓰지 않는다. 위 "Codex 지적 반영" 참조.
    - 측정 항목:
      - archetype 분포, 상위 1개·상위 4개 점유율
      - Identity 선택 경로(쌍 / 단일·fallback)
@@ -69,20 +113,23 @@ Phase 2B foundation (observational only). Branch `refactor/pattern-foundation-ph
 
 ## Validation
 
-- **다양성 기준선** (digest `5de12fdd`, 20,000건):
+- **다양성 기준선** (수정된 생성기 기준). 엔진의 구조적 특성을 기록한 것이며, 실제 사용자 분포 추정이 아니다.
 
-  | 항목 | 값 |
-  | --- | --- |
-  | 정의된 archetype / 관측된 archetype | 21 / 12 |
-  | 상위 1개 (외로운 연결주의자) | 47.6% |
-  | 상위 4개 | 91.6% |
-  | 쌍 경로 / 단일·fallback 경로 | 99.5% / 0.5% |
-  | 선택된 쌍이 `commonKeywords[0]` 포함 | 15.4% |
-  | 선택된 쌍이 `commonKeywords[0]` 미포함 | 84.6% |
-  | 중복 쌍 | #8(창의적+체계적) = #3 |
-  | 구조적 도달 불가 | 안전한 탐험가 |
+  | 항목 | 수정 후 (`ca1e44df`) | 이전 생성기 (`5de12fdd`, 이력) |
+  | --- | --- | --- |
+  | 생성 행 / 고유 유효 입력 / 중복 / 고유율 | 20,000 / 19,983 / 17 / 99.91% | 20,000 / 1,409(전체 입력 기준, Codex) / 18,591 / 7.0% |
+  | 정의된 archetype / 관측된 archetype | 21 / 13 | 21 / 12 |
+  | 상위 1개 (외로운 연결주의자) | 48.1% | 47.6% |
+  | 상위 4개 | 92.1% | 91.6% |
+  | 쌍 경로 / 단일·fallback 경로 | 99.4% / 0.6% | 99.5% / 0.5% |
+  | 선택된 쌍이 `commonKeywords[0]` 포함 (분모: 쌍 선택 건수) | 15.4% | 15.4% |
+  | 선택된 쌍이 `commonKeywords[0]` 미포함 | 84.6% | 84.6% |
+  | 중복 쌍 | #8(창의적+체계적) = #3 | 같음 |
+  | 구조적 도달 불가 | 안전한 탐험가 | 같음 |
 
-- **패턴 회귀** (`PASS: all analysis-pattern regression checks`, 개별 assertion 71개):
+  넓은 표본에서도 구조적 편향은 거의 같게 나타났다. 새로 관측된 archetype은 '전부 아니면 전무형'(6건)이다.
+
+- **패턴 회귀** (`PASS: all analysis-pattern regression checks`, 개별 assertion 74개 — Codex MINOR 1 대조 fixture 포함):
   - fixture:
     - 서로 다른 source → convergence, 단일 source → 없음
     - 사주 두 경로 → 없음, zodiac+태양(공유 Evidence) → 없음, 태양+달 → 없음
@@ -103,8 +150,8 @@ Phase 2B foundation (observational only). Branch `refactor/pattern-foundation-ph
 npx -y tsx scripts/golden-analysis.ts                # PASS: 7 golden cases match baseline
 npx -y tsx scripts/regression-saved-context.ts       # PASS
 npx -y tsx scripts/regression-evidence-trace.ts      # PASS
-npx -y tsx scripts/regression-analysis-patterns.ts   # PASS (71)
-npx -y tsx scripts/diagnostic-identity-diversity.ts  # OK (무결성 오류 0)
+npx -y tsx scripts/regression-analysis-patterns.ts   # PASS (74)
+npx -y tsx scripts/diagnostic-identity-diversity.ts  # OK (무결성 오류 0, digest ca1e44df)
 npx tsc --noEmit -p .                                # OK
 npm run build                                        # OK
 npm run lint                                         # 기존 9건과 동일 (신규 0)
@@ -124,7 +171,8 @@ git diff --check                                     # OK
 
 - 다양성 진단은 현재 편향을 **기록만** 한다. 상위 집중, 교집합과 Identity의 분리, 중복 쌍, 도달 불가 archetype은 그대로 남아 있다. 모두 향후 승인 사항이다.
 - 패턴은 아직 어떤 소비자도 쓰지 않는다. Identity 개선에 쓰려면 규칙 승인, `ANALYSIS_ENGINE_VERSION` 증가, golden 명시적 재설정이 필요하다.
-- 진단 실행에 약 11초가 걸린다(20,000건 × 2회 결정성 확인). 빠른 회귀 목록과는 분리해서 운용하는 것이 좋다.
+- 진단 실행에 약 12초가 걸린다(20,000건 × 2회 결정성 확인 + 고정 필드 확인 300건). 빠른 회귀 목록과는 분리해서 운용하는 것이 좋다.
+- 진단 표본은 UI 입력 공간의 균등 표본이다. 확률 설정(시간 70% 등)은 임의이며 실제 사용 비율이 아니다.
 
 ## Final Status
 

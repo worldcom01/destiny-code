@@ -1,3 +1,125 @@
+# Phase 2B foundation — Codex 최종 독립 검수
+
+상태: **수정 후 재검수 필요**. 아래 Phase 2B 예비 분석 및 Phase 2A 기록은 당시 이력으로 그대로 보존한다. 현재 판정은 이 절을 따른다.
+
+## 최종 판정
+
+**C. Revision required**
+
+대상: `refactor/pattern-foundation-phase2b`, `38834e8`. 비교: `main` `5758350`부터 `main...38834e8`. 예비 문서 커밋 `e8737a6` 포함. 검수 시작 시 working tree는 clean이었다. 애플리케이션·테스트·golden을 수정하지 않았으며 병합·push하지 않았다.
+
+문제 수: **BLOCKER 0 / IMPORTANT 1 / MINOR 1**. 패턴 파생과 현재 사용자 출력은 보존되지만, 향후 비교 기준으로 사용할 입력 생성기의 짧은 반복을 수정해야 한다. 아래 OBSERVATION은 병합 전 필수 수정 요구가 아니다.
+
+## IMPORTANT 1 — 진단 입력 20,000건 중 고유 입력은 1,409건뿐
+
+위치: `scripts/diagnostic-identity-diversity.ts:39–42`.
+
+LCG의 `s * 1103515245`를 JavaScript Number 일반 곱셈으로 수행한다. 이 곱은 정수 안전 범위를 넘으므로 하위 비트 정밀도를 잃고 의도한 정수 LCG와 다른 짧은 상태 순환을 만든다. 결정적이라는 사실만으로 균등한 합성 표본이 되는 것은 아니다.
+
+독립 확인은 원본 generator를 메모리에서 그대로 읽고 각 전체 입력(날짜·시간·MBTI·성별·혈액형·카드·위치·달력)을 JSON으로 비교했다. 소스 파일을 수정하지 않았다.
+
+- 실행 입력: 20,000행
+- 서로 다른 전체 입력: **1,409행**
+- 반복 행: **18,591행(92.955%)**
+- 첫 반복 발생: 0-based index **1,409**
+- 동일 입력 최대 출현: **23회**
+- LCG 상태 자체의 반복: 시작 5,938번째 상태 이후 주기 10,466
+
+따라서 보고 수치는 현재 반복 스트림에 대한 산술 결과로는 재현되지만, '20,000개 균등 생성 입력'을 넓게 관측한 결과로 사용할 수 없다. 나쁜 다양성 때문에 실패해야 한다는 뜻이 아니라 **입력 생성 무결성** 문제다. 실제 사용자 분포가 아니라는 안내만으로 이 문제는 해소되지 않는다.
+
+필수 수정:
+
+1. 정수 연산이 명확하고 충분한 주기를 갖는 결정적 생성기로 교체한다. 예를 들어 적절한 32-bit 연산을 사용하는 방식으로 처리하고 출력은 `[0, 1)`로 제한한다. 전역 Math.random은 사용하지 않는다.
+2. 전체 입력 fingerprint의 고유 개수·중복 개수를 출력하고, 고정 seed/건수에서 현재와 같은 짧은 반복을 탐지하는 집중 검사를 추가한다. Identity 비율이나 archetype 균등성을 성공 조건으로 만들지 않는다.
+3. 수정된 입력 스트림으로 진단 수치와 digest를 새로 기록한다. 이번 `5de12fdd`와 아래 수치는 이전 생성기의 결과라는 이력으로 보존하고, golden baseline은 변경하지 않는다.
+
+## MINOR 1 — missing Evidence의 pair 검사가 해당 조건을 실제로 시험하지 않음
+
+위치: `scripts/regression-analysis-patterns.ts:92–99`.
+
+fixture의 두 Claim은 모두 `체계적`이며 pair는 `체계적 + 감성적`이다. `감성적` Claim이 처음부터 없으므로, missing Evidence를 잘못 허용해도 pair가 생성되지 않아 assertion이 통과한다. 현재 공통 supported 필터의 구현 자체는 올바르며 convergence fixture는 같은 필터를 시험하지만, pair 전용 검사의 이름과 증명 범위는 일치하지 않는다.
+
+필수 수정: pair 양쪽 태그의 Claim을 실제로 제공하고 한쪽 Evidence만 missing으로 둔다. missing일 때 pair 없음, 같은 Evidence를 available로 바꾸면 pair 있음이라는 대조를 확인한다. 프레임워크나 알고리즘 변경은 필요 없다.
+
+## 진단 수치 독립 재현과 해석
+
+표준 진단을 실행하고 별도 집계로 확인했다.
+
+| 항목 | 재현 결과 |
+| --- | --- |
+| 정의 / 관측 archetype | 21 / 12 |
+| 상위 Identity | 외로운 연결주의자 9,526 / 20,000 = 47.63% |
+| 상위 4개 | 18,328 / 20,000 = 91.64% |
+| authored-pair 선택 | 19,907건 |
+| 단일/fallback 선택 | 93건 |
+| 대표 교집합 키워드 미포함 | 16,844 / 19,907 = 약 84.6% |
+| 중복 authored pair | 0-based #8 = #3, 창의적 + 체계적 |
+| 중복으로 구조적 도달 불가 | 안전한 탐험가 |
+| digest | 5de12fdd |
+
+84.6%의 분모는 전체 20,000건이 아니라 **pair 선택 건수**다. commonKeywords 전체와의 불일치가 아니라 첫 키워드의 포함 여부다. top1·top4·중복 쌍 계산은 정확하다. 도달 불가 탐지는 앞선 동일 태그 집합에 가려진 쌍을 증명하며, 모든 다른 archetype의 도달 가능성을 증명하는 도구는 아니다. 표본 미관측과 구조적 도달 불가를 구분해 출력한다.
+
+digest는 순서 있는 archetype와 commonKeywords 목록을 해시한다. ID·시각을 제외하므로 비교 재현성에는 적절하지만 전체 Narrative나 trace의 동일성을 보장하지 않는다. 진단 소스에는 Math.random 호출이 없으나 analyzeDestiny 내부의 기존 analysisId 난수는 실행된다. 그 값은 측정과 digest에 참여하지 않는다. 품질 임계값으로 실패시키는 로직은 없다.
+
+## convergence 의미 검수 — 현재 소스 단위 정의에 적합
+
+`AnalysisPattern`은 convergence와 authored-pair 두 종류만 포함한다. 점수·가중치·confidence·확률·의미 유사도·새 관계 분류가 없다. 단순 순수 함수와 출처 배열로 현재 목적에 충분하다.
+
+convergence는 available Evidence를 가진 Claim을 target 범위로 제한하고, Evidence의 source 문자열을 중복 제거하여 최소 2개일 때 생성한다.
+
+- zodiac/Sun은 동일 Evidence와 동일 source로 1개다.
+- Sun/Moon/Ascendant는 Evidence가 달라도 western-astrology source 1개다.
+- 사주 지배/보완 경로도 source 1개다.
+- 같은 Evidence를 여러 Claim이 참조해도 source 수는 늘지 않는다.
+- Tarot target은 제외된다.
+
+이는 현재 calcCommonKeywords의 western 합집합·MBTI·사주·혈액형 네 소스 단위와 맞는다. 예비 문서의 'Evidence 수로 세어야 한다'는 설명은 이 구현 기준으로 보완한다. Evidence ID dedupe만으로는 placement와 사주 내부 경로를 접을 수 없으므로 **source dedupe가 필요**하다.
+
+다만 이는 서로 다른 해석 체계라는 뜻이지 통계적 독립성이나 검증된 행동 증거라는 뜻은 아니다. 현재 zodiac/Sun 테이블이 같으므로 중복 경로를 포함해도 태그 지지 범위는 같다. 미래에 두 테이블이 달라지면 convergence와 calcCommonKeywords 일치를 다시 검토해야 한다.
+
+## authored-pair 출처와 Identity 불변식
+
+Identity target 범위는 saju·zodiac·bloodType·MBTI로 정확하다. Moon·Ascendant·Tarot와 Sun placement의 별도 경로는 제외한다. 양쪽 claimIds·sources와 sharedSources를 보존하며 pairIndex로 중복 쌍도 별개로 남긴다. 기존 목록 순서대로 생성한다.
+
+동일한 20,000행을 별도로 실행해 실제 Identity와 첫 authored-pair를 비교했다. pair가 존재한 19,907행의 불일치는 **0건**이었다. 93행은 pair가 없고 기존 single/fallback으로 선택되므로 '항상 첫 pattern이 Identity다'라는 무조건적 표현은 틀리다. 정확한 조건은 **현재 엔진이 생성한 정상 trace와 동일 정의 목록을 사용하고, authored-pair가 존재할 때**다. 누락·수정된 trace나 사용자 지정 pair 목록에 이 불변식을 적용하지 않는다.
+
+sharedSources가 비면 두 태그의 source 집합이 분리되어 있다. 비어 있지 않으면 한 source 안의 공존이 존재한다. 하지만 비어 있지 않아도 다른 source 간 지원이 동시에 있을 수 있다. 예: A는 MBTI, B는 MBTI+사주. 따라서 같은 source/다른 source를 상호 배타적인 제품 분류로 해석하면 안 된다. 현재 양쪽 sources가 남아 있으므로 데이터 손실은 없다.
+
+## OBSERVATION — 읽기 전용 export의 경계
+
+`analysis.ts:640–644`는 원본 배열·객체를 TypeScript readonly 타입으로 공개한다. 정의 내용·순서·선택 함수는 변경되지 않았고 현재 소비자는 읽기만 한다. 런타임 import 순환도 없다.
+
+Object.freeze는 아니며 원본과 같은 참조다. 독립 확인에서 배열·항목·tags 모두 런타임 frozen이 아니었다. 따라서 '어떤 런타임 소비자도 수정할 수 없다'고 보장할 수는 없다. 현재 정상적인 타입 검사 경로에서 수정은 막히고 실제 수정 소비자는 없어 이번 병합의 추가 필수 조건으로 삼지 않는다.
+
+## 기존 동작·범위 보존
+
+analysis.ts의 유일한 변경은 읽기 전용 정의 export 7줄이다. generateIdentity, 매핑, 목록, 버전은 그대로다. analysisPatterns는 애플리케이션 계산이나 UI에서 호출되지 않으며 스크립트에서만 사용된다. Snapshot에 patterns 필드가 추가되지 않았고 저장·legacy/v2·backfill 경로도 변경되지 않았다. CoreTag, keywordStrengths, conflicts, Identity, Narrative, UI, 공유, analytics, 궁합은 기존 경로를 유지한다.
+
+golden baseline의 main/HEAD git blob은 모두 `d79d1fa2a61558a741e640e02ce385a6f24d2958`로 동일하다. 재생성하지 않았다.
+
+## 독립 실행 검증
+
+| 검증 | 결과 |
+| --- | --- |
+| golden regression | 7개 사례 통과 |
+| saved-context regression | 전체 통과 |
+| evidence-trace regression | 전체 통과 |
+| pattern regression | 71개 개별 assertion 통과, MINOR 1의 한계 존재 |
+| diversity diagnostic | 실행 성공, 5de12fdd 재현; IMPORTANT 1 발견 |
+| TypeScript --noEmit --incremental false | 통과 |
+| npm run build | 통과 |
+| git diff --check main...HEAD | 통과 |
+
+npm/Google Fonts는 앞선 제한 환경 실패를 근거로 승인된 네트워크 접근에서 표준 명령을 실행했다. 기존 golden을 수정하지 않았다. 추가 고유 입력·LCG 주기·pair 불변식 검사는 메모리에서 수행했다. 통과 결과만으로 진단의 표본 품질을 승인하지 않는다.
+
+## Identity 재설계 진입 판단과 다음 단계
+
+출처별 수렴·pair 지원을 비교할 기술적 데이터는 갖춰졌다. 다만 **다양성 입력 생성기 수정과 기준선 재측정 후** 별도 승인된 Identity 선택 설계로 진행하는 것이 적절하다. 이번 기반에는 실제 긴장/충돌을 검증하는 새 근거가 없으며 authored-pair는 사람이 작성한 태그 공존 규칙이다. 이를 곧바로 경험적으로 검증된 긴장으로 승격하지 않는다.
+
+필수 작업은 IMPORTANT 1의 생성기·무결성 검사·기준선 보고 수정과 MINOR 1의 대조 fixture 보강뿐이다. 애플리케이션 Identity 변경·비율 인위적 균등화·golden 재생성은 요구하지 않는다. Claude 수정 후 Codex 재검수하며 현재 병합하지 않는다.
+
+---
+
 # Phase 2B Preliminary Architecture Analysis — Claude Code
 
 상태: **예비 설계 검토 (PRELIMINARY)** — 승인되지 않음, 구현 준비 아님
