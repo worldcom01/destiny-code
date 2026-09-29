@@ -1,6 +1,6 @@
 # Identity Catalog v3 — Implementation
 
-Status: IDENTITY CATALOG V3 — IMPLEMENTED / AWAITING CODEX FINAL REVIEW
+Status: IDENTITY CATALOG V3 — CODEX APPROVED / READY FOR MERGE
 
 사용자가 Identity Catalog Pair Revision(Option A)을 **제품 승인**했다. Claude Code가 브랜치 `refactor/identity-catalog-v3`(from main `74a039a`)에 구현했다. 병합·push·배포하지 않았다.
 
@@ -23,7 +23,15 @@ Status: IDENTITY CATALOG V3 — IMPLEMENTED / AWAITING CODEX FINAL REVIEW
 
 ## 다음 단계
 
-Codex가 `git diff main...refactor/identity-catalog-v3`와 `CLAUDE_REPORT.md`의 검증 명령으로 최종 검수한다. 병합은 검수와 사용자 승인 후에 한다. 다른 phase는 시작하지 않는다.
+Codex가 구현 `7258c7c` / 보고 `584f542`를 main `74a039a` 대비 최종 독립 검수했다. **A. READY FOR MERGE**, BLOCKER / IMPORTANT / MINOR / OBSERVATION 모두 **0**이다.
+
+- 승인 이름·문장 및 pairIndex 10 일치. 기존 0–9, v2 selector·pattern·trace 의미와 v1/v2 저장 결과 보존을 확인했다.
+- golden v2→v3 3/7 변경, 모두 고집스러운 실험가 선택이다. v1/v2 baseline blob은 그대로다.
+- 회귀 pattern 74 / Identity v2 97 / Identity v3 23, TypeScript·build·diff-check가 통과했다.
+- 고유 19,983건에서 변경 6,188, mismatch 3,512, v3 digest `25ab43b8` / `dab19aab`를 재현했다. 실제 main 엔진 대비 승인 밖 snapshot 차이는 0건이다.
+- 상세 검수와 이전 이력은 `CODEX_REVIEW.md` 최상단에 있다.
+
+검수 문서만 별도 커밋한다. feature branch는 미병합이며 main은 `74a039a`다. **다음 단계는 사용자 승인 후 별도 병합**이다. 이번 작업에서 코드 수정·main merge·push 및 다른 phase 시작은 하지 않는다.
 
 ---
 

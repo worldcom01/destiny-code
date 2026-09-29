@@ -1,3 +1,142 @@
+# Identity Catalog v3 — 최종 독립 검수 (2026-09-30)
+
+## 최종 판정
+
+**A. READY FOR MERGE**
+
+**BLOCKER 0 / IMPORTANT 0 / MINOR 0 / OBSERVATION 0.** 병합 전 필수 수정은 없다.
+
+대상 브랜치 `refactor/identity-catalog-v3`, 구현 `7258c7c`, 구현 보고 `584f542`, 기준 main `74a039a`를 검수했다. `46b4408`과 `f7c2153`의 분석/후보 비교 이력도 보존되어 있다. 실제 전체 diff, 주변 저장·공유·profile·analytics·compatibility 경로, 회귀 및 원래 main 엔진과의 차등 실행을 확인했다. 이번 검수는 문서만 기록·커밋하며 생산 코드를 수정하거나 main에 병합/push하지 않는다.
+
+## 1. 생산 diff와 승인 문구
+
+생산 변경은 **`app/lib/analysis.ts` 한 파일**이다. 변경을 전부 분류하면 다음과 같다.
+
+1. `ANALYSIS_ENGINE_VERSION`을 '2'에서 **'3'**으로 변경하고 설명 주석 추가.
+2. 기존 pair 배열 끝에 **창의적+독립적 → 고집스러운 실험가** 한 항목과 승인된 한 문장 추가.
+3. `IDENTITY_PAIR_COUNT_BY_ENGINE = { '1': 10, '2': 10, '3': 11 }` 추가.
+4. 진단/회귀용 `identityV1()` 내부가 v1 prefix 10개에서만 첫 pair를 찾도록 제한하고 주석 수정.
+
+추가된 문장은 정확히 다음과 같다.
+
+> 주어진 방식을 따르기보다 자기 방법을 새로 만들지만, 이미 잘 돌아가는 것까지 다시 손대는 사람입니다.
+
+승인되지 않은 **정답 밖의 설계자**는 app/ 및 scripts의 생산 출력/fixture에 없다. AD-006에는 승인된 이름·문장과 이전 제안의 미승인 사실이 명시되어 있다. 기존 창의적/독립적 본문과 상세 서술 템플릿은 변경되지 않았고, 새 한 문장을 기존 문단 대신 넣거나 긴 서사를 추가하지 않았다.
+
+다음 세 파일은 기준 main의 blob과 작업 파일 해시가 일치한다:
+
+| 파일 | 동일 blob |
+| --- | --- |
+| `app/lib/identitySelection.ts` | `d38dd083695ab1982bffc809adc5771ebcb991e6` |
+| `app/lib/analysisPatterns.ts` | `391b0c21a1d2b9e5c3e1ac1f4b483ccb0ade55c5` |
+| `app/lib/evidenceTrace.ts` | `2e49372bbf777ae201e14a1062ec62f84b120edc` |
+
+CoreTag·source mapping·Saju·MBTI·혈액형·점성·Tarot·conflict·UI·schema·저장 복원·compatibility 규칙에는 production diff가 없다. 기존 0–9 pair와 single 정의 전체를 실제 main 모듈과 deep comparison해 동일함을 확인했고 generic 문구도 그대로다.
+
+## 2. pairIndex와 Option B 증명
+
+신규 항목은 **pairIndex 10**, 기존 0–9는 같은 태그·이름·문장·순서다. 비교는 `(대표 태그 포함, min distinct-source, source union)` 사전식 내림차순이고, **세 항목이 전부 동률일 때만** pairIndex 오름차순이다. 명시적 비교 루프라 sort 안정성에 의존하지 않는다.
+
+새 항목은 가장 뒤에 있으므로 기존 후보와 완전 동률이면 반드시 기존 후보가 이긴다. 기존 pairIndex가 밀려서 결과가 바뀌는 경로는 없다. 실제 main의 v2 엔진과 고유 입력 전건을 비교해 다음을 추가 확인했다.
+
+- 변경 **6,188건 전부** #10 선택이다.
+- 기존 pair에서 전환된 **6,073건 모두** #10의 첫 세 순위 튜플이 기존 선택보다 엄격히 더 좋았다.
+- 나머지 **115건**은 기존 single에서 신규 pair 후보가 생겨 전환됐다.
+- no-convergence의 첫 authored 후보 규칙은 그대로다. 새 pair만 유효한 합성 fixture라면 #10이 선택될 수 있는데 이는 catalog 확장에 따른 결과이지 순위 변경이 아니다.
+
+메모리에서만 신규 pair를 맨 앞으로 옮긴 독립 변이 검사에서는 v3 회귀 **11개가 FAIL**했다. #10 위치·기존 순서 동률·prefix 보존·역사적 결과 대조 등이 실제로 변이를 검출했다. Claude 보고의 자체 변이 실패 건수를 그대로 인용한 것이 아니라 이번 실행 결과다. 파일은 수정하지 않았다. append-at-end가 승인 범위에서 최소 위험인 배치다.
+
+## 3. 엔진별 catalog와 역사적 결과
+
+prefix 표는 selector를 복제하지 않는다. v1은 기존 first-pair 함수에서 prefix 10개만 사용하고, v2 재현은 **같은 생산 selectIdentityV2**에 prefix 10개를 전달한다. 신규 v3 분석은 전체 11개를 전달한다. 이는 현재 append-only catalog와 일치한다.
+
+v1/v2 저장 결과는 prefix 표로 다시 분석하는 것이 아니라 **저장된 resultData 자체**를 복원한다. `handleViewSaved → activeFromSaved`에서 최신 selector 호출이 없고, `saveAnalysis`는 기존 savedId/analysisId 항목을 그대로 반환한다. schema 분류는 계속 `schemaVersion===2`이며 engineVersion을 schema discriminator로 쓰지 않는다. 새 분석은 **engineVersion '3' / schemaVersion 2 / selection rule identity.selection@2**다. schema migration이나 backfill은 없다.
+
+Destiny Code는 과거 result의 저장된 archetype 등을 입력으로 기존 함수가 복원한다. active share/re-save는 현재 form을 참조하지 않는다. profile·analytics는 전달된 archetype/identityStatement를 읽고 compatibility도 전달된 profile을 사용한다. 과거 입력으로 현재 Identity를 재선택하는 경로는 발견하지 못했다. 신규 archetype·코드·삽입 문구의 변화만 승인된 downstream 영향이다.
+
+prefix 길이만으로 과거 문구를 자동 동결할 수 있다는 주장은 하지 않는다. 현 구현은 기존 prefix 내용을 그대로 유지하고 그 해시도 검사하며, AD-006이 append 정책을 기록한다. 현재 call site에는 알 수 없는 버전의 암묵적 fallback이나 v3 prefix의 v1/v2 유입이 없다. 실제 코드로 뒷받침되는 신규 유지보수 결함은 발견되지 않았다.
+
+## 4. Golden 및 회귀 보호
+
+| 파일 | 확인 |
+| --- | --- |
+| `golden-baseline.v1.json` | main과 동일 blob **`d79d1fa2a61558a741e640e02ce385a6f24d2958`** |
+| `golden-baseline.v2.json` | main과 동일 blob **`96865c15477c4e15f50480ba191e28a86e91e14e`** |
+| `golden-baseline.v3.json` | 신규 파일, 현재 7건 exact match 및 반복 분석 결정성 PASS |
+
+v2→v3 검사는 Identity 두 필드·파생 Destiny Code·engineVersion·선택에 따라 달라지는 reason 필드만 허용한다. `representativeTrait`, reason `version`/`ruleId`, 그 외 분석 필드는 whitelist에 없다. 같은 trace에 v2 catalog를 전달한 reason을 과거 v2 baseline과 정확히 비교하며, Identity가 바뀌면 새 pair 선택인지도 검사한다. v3 exact baseline은 trace까지 포함한다. 역사적 v2 golden에는 trace가 없으므로 역사적 trace 불변은 파일 blob과 아래 전건 비교로 별도 확인했다.
+
+메모리에서 반환 CoreTags를 빈 배열로 바꾸자 **v1 52개·v2 52개·v3 52개 diff로 각각 FAIL**했다. 허용 범위 밖 변경을 숨기는 broad diff 제거는 없다. baseline을 재생성하지 않았다.
+
+v2 대비 golden **7건 중 3건 변경 / 4건 유지**:
+
+- solar/no time/no place: 군중 속의 고독자 → 고집스러운 실험가.
+- solar/no MBTI: 군중 속의 고독자 → 고집스러운 실험가.
+- lunar/regular month: 틀 안의 반항자 → 고집스러운 실험가.
+
+세 건 모두 #10이며 승인 문장과 일치한다. v1부터 현재 v3까지 누적 변화는 **6/7**로, v2→v3의 3/7과 구분한다.
+
+v2 회귀의 조정된 세 부분도 타당하다. 새 결과 버전 검사와 round-trip은 현재 engine 상수를 검사하고 v3 전용 검사가 literal '3'을 보장한다. 기존 catalog 해시는 전체 11개 대신 역사적 prefix 10개+single을 검사하되, v3 전용 검사에서 prefix 길이와 전체 11개를 명시한다. 대표/min/union/tie-break/missing/source dedup/Tarot fixture를 삭제하거나 약화하지 않았다. v1 저장 보존을 유지하고 v3 회귀에서 v2 저장 동결·코드·재저장을 추가 검사한다.
+
+## 5. 19,983건 독립 재현과 숨은 변경 검사
+
+실제 main `74a039a`의 app/lib를 /tmp로 읽어 별도 v2 모듈을 로드하고 현재 v3와 **20,000개 동일 생성 행, 고유 19,983건**을 직접 비교했다. 진단 생성기·분포·key 코드에는 변경이 없다.
+
+고유 입력에서 `analysisId`, `createdAt`, Identity 두 필드, engineVersion, identitySelection만 제외한 **snapshot 전체 deep comparison 차이는 0건**이다. source/태그/trace/commonKeywords/conflicts/keywordStrengths/모든 상세 서술/Tarot가 포함된다. 현재 selector에 v2 prefix를 전달한 reason도 실제 main의 reason과 전건 동일했고 identityV1 재현도 동일했다.
+
+| 지표 | 재현 결과 |
+| --- | --- |
+| 생성 / 고유 / 중복 | 20,000 / 19,983 / 17 |
+| v3 mismatch | **3,512 / 19,983 = 17.57%** |
+| 기존 지표의 대표 keyword 포함 | **16,471 / 19,983 = 82.43%** |
+| 고유 입력의 top1 | 고집스러운 실험가 **6,188 = 30.97%** |
+| top4 | **71.80%** |
+| v2→v3 Identity 변경 | **6,188 = 30.97%**, 모두 신규 pair |
+| single→pair / 신규 mismatch | **115 / 20** |
+| 관측 유형 | **10/22** |
+| v1 historical selection digest | **`94fe72c7`** |
+| v2 historical selection / full digest | **`ed598f84` / `93a95fcd`** |
+| v3 selection / full digest | **`25ab43b8` / `dab19aab`** |
+
+분모 해석: 요청의 82.43%는 기존 diagnostic 정의대로 **모든 pair 선택에서 commonKeywords[0] 포함**이며 no-convergence fallback도 포함한다. 실제 convergence가 있는 19,968건만 세면 **16,469/19,968=82.48%**다. 두 수치는 모순이 아니다. 진단의 역사적 관측 수 13/22는 출력 라벨대로 ‘current catalog’를 분모로 삼은 표시이며, 각 역사 버전의 catalog 기준으로는 13/21이다. 결과나 digest를 바꾼 것은 아니다.
+
+전환 분포도 재현했다:
+
+| 기존 v2 Identity | 신규 Identity로 전환 | 전환 6,188건 중 |
+| --- | ---: | ---: |
+| 틀 안의 반항자 | 1,689 | 27.29% |
+| 외로운 연결주의자 | 1,537 | 24.84% |
+| 군중 속의 고독자 | 1,185 | 19.15% |
+| 멈추는 추진력 | 581 | 9.39% |
+| 감정을 혼자 짊어진 사람 | 578 | 9.34% |
+| 의심하는 직관가 | 317 | 5.12% |
+| 기타 | 301 | 4.86% |
+
+10/22의 원인은 기존 관측 single인 **미완의 창조자 68, 자기 세계의 수호자 27, 고독한 직관가 14, 전부 아니면 전무형 6**의 합계 115건이 모두 새 pair로 흡수된 것이다. 기존 관측 13개에서 single 4개가 사라지고 신규 pair 1개가 들어와 10개가 된다. 기존 9개 고유 pair Identity는 계속 관측되고 duplicate #8은 그대로 shadow된다. 이는 승인된 변화이며 균등화나 재조정 사유가 아니다. 모든 비율은 합성 구조 진단이지 실제 사용자 빈도 추정이 아니다.
+
+## 6. 실행 검증 및 git 상태
+
+| 검사 | 결과 |
+| --- | --- |
+| v1 golden / v2 golden·strict migration / v3 exact | PASS, 7건 |
+| saved-context / evidence-trace | PASS |
+| pattern regression | **74** 개별 assertions PASS |
+| Identity v2 regression | **97** 개별 assertions PASS |
+| Identity v3 regression | **23** 개별 assertions PASS |
+| diversity diagnostic | PASS, 역사·현재 digest 재현 |
+| TypeScript (`tsc --noEmit --incremental false -p .`) | PASS |
+| `npm run build` | PASS |
+| `git diff --check 74a039a...HEAD` / working diff | PASS |
+| 전건 main v2 차등 비교 / 반례 변이 | 승인 밖 차이 0 / 기대한 FAIL 검출 |
+
+lint는 이번 검수에서 실행하지 않았다. 기존 9건·신규 0건은 이번 독립 실행 결과로 주장하지 않는다. 요청된 필수 검증은 모두 수행했다.
+
+검수 시작 시 working tree는 clean이었다. main은 `74a039a`이며 feature branch는 미병합 상태다. 기존 CODEX_REVIEW 이력은 추가만 되었고 현재 검수도 최상단에 덧붙인다. AD-006의 승인 제품 결정은 현재 사용자 지시와 일치한다. 검수 기록 커밋은 `CODEX_REVIEW.md`와 `CURRENT_PHASE.md` 두 파일만 포함한다. main merge/push와 코드 변경은 수행하지 않는다.
+
+**다음 단계: 사용자 승인에 따른 별도 병합 작업. 현재 브랜치는 병합 준비 완료다.**
+
+---
+
 # Identity Catalog Pair Revision — 설계 검토 (2026-09-30)
 
 ## 권장 결정
