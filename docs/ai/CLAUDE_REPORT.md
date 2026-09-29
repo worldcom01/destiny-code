@@ -1,3 +1,131 @@
+# Claude Implementation Report — Identity Catalog v3
+
+Status: IDENTITY CATALOG V3 — IMPLEMENTED / AWAITING CODEX FINAL REVIEW
+
+Branch `refactor/identity-catalog-v3` (from main `74a039a`). Not merged, not pushed. 아래의 이전 보고(22번째 후보 비교, Identity Selection v2)는 그대로 보존한다.
+
+## 승인 결정과 구현 범위
+
+- **추가:** 창의적 + 독립적 → **고집스러운 실험가**
+- **결과 문장(원문 그대로):** "주어진 방식을 따르기보다 자기 방법을 새로 만들지만, 이미 잘 돌아가는 것까지 다시 손대는 사람입니다."
+- 이전 제안 "정답 밖의 설계자"는 승인되지 않았으며 구현하지 않았다.
+- 제품 구조는 그대로다(이름 + 한 문장). 3문단 서사는 추가하지 않았다.
+
+| 항목 | 내용 |
+| --- | --- |
+| catalog 위치 | `CONFLICT_IDENTITY` **끝, pairIndex 10** |
+| 기존 pairIndex | 0–9 **변경 없음** |
+| 동률 영향 | Option B는 (대표 포함, min, union)이 완전 동률일 때만 pairIndex 오름차순을 쓴다. 새 항목은 가장 큰 index이므로 기존 항목과의 동률에서 이기지 않는다. 튜플이 더 좋을 때만 선택된다. 맨 앞에 삽입하는 변이로 시험하면 v3 회귀 8개와 golden(v1 6건, v2 58건 예상 밖 변경)이 FAIL한다. |
+| engineVersion / schemaVersion | `'3'` / `2` |
+| 엔진별 catalog | `IDENTITY_PAIR_COUNT_BY_ENGINE = { '1': 10, '2': 10, '3': 11 }`. `identityV1()`은 v1 범위만 사용한다(v1 재현 유지). |
+| 변경 없음 | `identitySelection.ts`, `analysisPatterns.ts`, `evidenceTrace.ts`(blob이 main과 동일). CoreTag·매핑·사주·타로·conflict·서술·UI·저장 분류·기존 21개 정의 |
+
+## Golden
+
+| 기준 | 상태 | 검사 |
+| --- | --- | --- |
+| `golden-baseline.v1.json` | blob `d79d1fa` 그대로 | 현재 엔진 대비 identityStatement/archetype/destinyCode 외 변경 0. v1→v3 Identity 변경 6/7. `identityV1()`이 v1 archetype 재현 |
+| `golden-baseline.v2.json` | blob `96865c1` 그대로 | **엄격한 v2→v3 허용 변경:** identityStatement/archetype/destinyCode/engineVersion과 identitySelection의 decision·pairIndex·selectedTraits·usedAuthoredOrder·support만 허용. representativeTrait 등 나머지 필드는 동일해야 한다. 현재 trace + v2 catalog로 운영 선택 함수를 돌리면 v2 선택을 정확히 재현한다. v2→v3 변경 3/7이며 모두 pair #10으로의 변경이다. |
+| `golden-baseline.v3.json` | 신규(`--capture-v3`, v1/v2 검사 실패 시 거부) | 정확 일치, trace 포함 |
+
+v2→v3 변경 케이스는 다음 세 건이다.
+- solar/no time: 군중 속의 고독자 → 고집스러운 실험가 (대표 창의적)
+- solar/no MBTI: 군중 속의 고독자 → 고집스러운 실험가 (대표 창의적)
+- lunar regular: 틀 안의 반항자 → 고집스러운 실험가 (대표 분석적 포함 후보 없음 → min/union)
+
+## 진단 — 고유 19,983건 (생성 20,000, 중복 17, 생성기 변경 없음)
+
+| 지표 | v1 | v2 | **v3** | 설계 기대 |
+| --- | --- | --- | --- | --- |
+| observed archetypes | 13/22 | 13/22 | **10/22** | ≈10/22 |
+| top 1 | 48.08% | 23.68% | **30.97%** (고집스러운 실험가) | — |
+| top 4 | 92.08% | 66.89% | **71.80%** | — |
+| intersection mismatch (pair 분모) | 84.60% | 34.72% | **17.57% (3,512/19,983)** | 17.57% |
+| representative 포함 (pair 분모) | 15.40% | 65.28% | **82.43% (16,471)** | — |
+| both-sides cross-source | 22.60% | 45.12% | **63.07% (12,604)** | — |
+| authored order used | 99.42% | 36.60% | **21.24% (4,245)** | — |
+| pair / single+generic | 19,868 / 115 | 19,868 / 115 | **19,983 / 0** | — |
+| selection digest | `94fe72c7` (재현) | `ed598f84` (재현) | **`25ab43b8`** | — |
+
+- v2→v3 Identity 변경은 **6,188건(30.97%)**이다(기대 6,188). single→pair는 **115건**(기대 115), 신규 불일치는 **20건**(기대 20)이다. 고집스러운 실험가 선택은 **6,188건**이다.
+- 전체 진단 digest(20,000행)는 `93a95fcd`(v2) → **`dab19aab`**(v3)다. 과거 digest는 문서에 이력으로 남긴다.
+- **무결성 검사(모두 0 오류):**
+  - v1/v2 과거 선택 digest가 재현된다.
+  - v2→v3 변경은 모두 새 catalog 쌍으로의 변경이다.
+  - v3 no-convergence 경로는 첫 후보를 고른다.
+  - 대표 태그 포함 후보가 있으면 반드시 그 쌍을 선택한다.
+  - v2 no-convergence 경로는 v1과 같다.
+
+**FROM → 고집스러운 실험가 (6,188):**
+
+| 현재(v2) Identity | 건수 | 비율 |
+| --- | ---: | ---: |
+| 틀 안의 반항자 | 1,689 | 27.29% |
+| 외로운 연결주의자 | 1,537 | 24.84% |
+| 군중 속의 고독자 | 1,185 | 19.15% |
+| 멈추는 추진력 | 581 | 9.39% |
+| 감정을 혼자 짊어진 사람 | 578 | 9.34% |
+| 의심하는 직관가 | 317 | 5.12% |
+| 감정을 분석하는 사람 | 148 | 2.39% |
+| 미완의 창조자 | 68 | 1.10% |
+| 소진되는 열정가 | 38 | 0.61% |
+| 자기 세계의 수호자 | 27 | 0.44% |
+| 고독한 직관가 | 14 | 0.23% |
+| 전부 아니면 전무형 | 6 | 0.10% |
+
+## 문구 충돌 점검 (실제 화면 구성)
+
+- 새 문장은 hero `identityStatement`에만 들어간다. "반복되는 내면 구조" 섹션의 창의적·독립적 문단은 그대로이고 복제·대체되지 않는다(회귀 15: 392건 격자에서 서술 섹션에 Identity 문장 포함 0건).
+- **창의적 문단**("완성된 것보다 시작된 것이 더 많다")과 함께 나올 때: 승인 문장에 완성 단언이 없고 "다시 손대는"이 이 문단과 이어진다. **모순 없음.**
+- **독립적 문단**("따르면 내 것이 아닌 삶… 스스로 정한 방향")과 함께 나올 때: "따르기보다"와 주제가 겹치지만 같은 문장은 아니다. **경미한 주제 반복이며 모순은 아님.**
+- **관찰(이번 변경과 무관):** 같은 섹션의 기존 공존 쌍 문장(`conflictMap`, 예: "혼자 있고 싶다는 생각과… 외롭지")은 기존 서술 로직대로 함께 나온다. 이번 범위에서 바꾸지 않았다.
+
+## 회귀
+
+- **Identity catalog v3** (신규 `scripts/regression-identity-catalog-v3.ts`): **23 PASS**. 요청 16개 항목 모두 포함.
+  - 1–2: 선택되고 정확한 문장이 나온다.
+  - 3–4: 선택·출처·패턴 파일 blob이 main과 동일하다.
+    - #3 vs #10 완전 동률이면 #3이 선택된다.
+    - 대표 태그를 포함한 쌍이 union이 더 큰 쌍보다 우선한다.
+    - min이 크면 #10이 선택된다.
+  - 5: no-convergence는 첫 후보다.
+  - 6–7: 기존 21개 digest가 불변이고, 중복 #8은 선택되지 않는다.
+  - 8–10: v1·v2 저장본이 동결되고, 과거 코드는 저장된 archetype 기준이며, 재저장해도 바이트 동일하다.
+  - 11: engine '3' / schema 2.
+  - 12–13: v1/v2 golden blob이 불변이다.
+  - 14·16: 결정성.
+  - 15: 392건 격자에서 v2→v3 변경 144건이 모두 #10이다.
+- **Identity v2 regression: 97 PASS 유지.** 버전 리터럴 assertion 3종만 의미를 유지한 채 조정했다(assertion 수 동일).
+  - `engineVersion === '2'` → `ANALYSIS_ENGINE_VERSION`
+  - 저장 round-trip의 엔진 버전
+  - catalog digest → v2 범위(앞 10개 쌍 + single) 비교
+- **Pattern regression: 74 PASS 유지**(변경 없음).
+- saved-context, evidence-trace: PASS.
+
+## Build / Test / Lint
+
+```
+npx -y tsx scripts/golden-analysis.ts                   # PASS: golden v1/v2/v3 checks (7 cases)
+npx -y tsx scripts/regression-saved-context.ts          # PASS
+npx -y tsx scripts/regression-evidence-trace.ts         # PASS
+npx -y tsx scripts/regression-analysis-patterns.ts      # PASS (74)
+npx -y tsx scripts/regression-identity-selection.ts     # PASS (97)
+npx -y tsx scripts/regression-identity-catalog-v3.ts    # PASS (23)
+npx -y tsx scripts/diagnostic-identity-diversity.ts     # OK (무결성 오류 0)
+npx tsc --noEmit -p .                                   # OK
+npm run build                                           # OK
+npm run lint                                            # 기존 9건 그대로, 신규 0
+git diff --check                                        # OK
+```
+
+## 남은 사항
+
+- **예상된 사용자 영향(승인 범위):** 새 분석의 약 31%가 고집스러운 실험가로 바뀐다. 그 결과 Destiny Code, 프로필·analytics의 archetype, 궁합 문구의 archetype 삽입 부분이 달라진다. 공유 문구에는 archetype이 없어 바뀌지 않는다.
+- **관측 유형 13 → 10:** 관측되던 single 4종(미완의 창조자, 자기 세계의 수호자, 고독한 직관가, 전부 아니면 전무형)이 모두 새 쌍으로 흡수된다. 설계에서 예상한 구조적 결과이며 선택기를 바꾸지 않았다.
+- **analytics 엔진 버전 태깅:** Supabase analytics에 engineVersion이 없어 운영 데이터에서 v2/v3를 구분할 수 없다. 기존 사항이며 범위 밖이다.
+
+---
+
 # 22번째 Identity 후보 "정답 밖의 설계자" — 콘텐츠 비교 분석 (Claude Code, 2026-09-30)
 
 상태: **분석만 수행. 승인·구현 아님.** 기준 `main` `74a039a`(engine `'2'`, schema 2)이다. 애플리케이션 코드·catalog·문서 상태는 변경하지 않았다. 측정은 저장소 밖 임시 스크립트에서 운영 `analyzeDestiny()`·`selectIdentityV2()`를 그대로 호출했다. 입력 생성은 `diagnostic-identity-diversity.ts`와 같은 mulberry32, seed 12345, 고유 19,983건이며, 현재 선택 digest `ed598f84`를 재현했다. 아래 의미 판단은 코드 문구에 대한 편집적 판단이며 심리학적 검증이 아니다.

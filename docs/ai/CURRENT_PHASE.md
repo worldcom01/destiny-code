@@ -1,3 +1,34 @@
+# Identity Catalog v3 — Implementation
+
+Status: IDENTITY CATALOG V3 — IMPLEMENTED / AWAITING CODEX FINAL REVIEW
+
+사용자가 Identity Catalog Pair Revision(Option A)을 **제품 승인**했다. Claude Code가 브랜치 `refactor/identity-catalog-v3`(from main `74a039a`)에 구현했다. 병합·push·배포하지 않았다.
+
+## 승인된 제품 결정
+
+- Pair: **창의적 + 독립적**
+- Identity 이름: **고집스러운 실험가**
+- 결과 문장(정확히): "주어진 방식을 따르기보다 자기 방법을 새로 만들지만, 이미 잘 돌아가는 것까지 다시 손대는 사람입니다."
+- 이전 제안 "정답 밖의 설계자"('납득할 수 있는 답' 중심 문장)는 **승인되지 않았다**.
+
+## 구현 요약
+
+- catalog 끝(pairIndex **10**)에 추가했다. 기존 pairIndex 0–9는 유지된다. Option B 선택 규칙·대표 convergence·provenance·패턴 로직은 변경하지 않았다(파일 blob이 main과 동일).
+- `ANALYSIS_ENGINE_VERSION = '3'`, `schemaVersion = 2`. 엔진별 catalog 범위는 `IDENTITY_PAIR_COUNT_BY_ENGINE`에 기록한다(v1 10, v2 10, v3 11).
+- 기존 v1·v2 저장 결과는 동결되어 있다. 재선택·backfill을 하지 않는다.
+- golden: v1·v2 기준 파일은 그대로(blob 동일), 신규 `golden-baseline.v3.json`을 추가했다.
+- 진단(고유 19,983): 불일치 34.72%→**17.57%**, v2→v3 Identity 변경 **6,188건(30.97%)**, 관측 유형 **10/22**, single→pair **115**, 신규 불일치 **20**. 설계 기대값과 정확히 일치한다.
+
+상세 결과는 `CLAUDE_REPORT.md` 상단에 있다.
+
+## 다음 단계
+
+Codex가 `git diff main...refactor/identity-catalog-v3`와 `CLAUDE_REPORT.md`의 검증 명령으로 최종 검수한다. 병합은 검수와 사용자 승인 후에 한다. 다른 phase는 시작하지 않는다.
+
+---
+
+## 이전 기록: Identity Catalog Pair Revision 설계 검토
+
 # Identity Catalog Pair Revision — Design Review
 
 Status: IDENTITY CATALOG PAIR REVISION — DESIGN REVIEW COMPLETE / AWAITING PRODUCT APPROVAL

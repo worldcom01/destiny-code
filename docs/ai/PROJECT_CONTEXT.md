@@ -108,16 +108,17 @@ Do not reopen Phase 1 unless a concrete regression/blocker is discovered.
 ## Validation commands
 
 ```
-npx -y tsx scripts/golden-analysis.ts                 # golden: v1 allowed-diff + exact v2 (must PASS)
-npx -y tsx scripts/regression-saved-context.ts        # saved-context regression (must PASS)
-npx -y tsx scripts/regression-evidence-trace.ts       # evidence trace (must PASS)
-npx -y tsx scripts/regression-analysis-patterns.ts    # derived patterns (must PASS)
-npx -y tsx scripts/regression-identity-selection.ts   # Identity Selection v2 (must PASS)
-npx -y tsx scripts/diagnostic-identity-diversity.ts   # characterization + v1/v2 comparison (fails only on integrity errors)
+npx -y tsx scripts/golden-analysis.ts                   # golden: v1 + v2 allowed-diff, exact v3 (must PASS)
+npx -y tsx scripts/regression-saved-context.ts          # saved-context regression (must PASS)
+npx -y tsx scripts/regression-evidence-trace.ts         # evidence trace (must PASS)
+npx -y tsx scripts/regression-analysis-patterns.ts      # derived patterns (must PASS)
+npx -y tsx scripts/regression-identity-selection.ts     # Identity Selection v2 rules (must PASS)
+npx -y tsx scripts/regression-identity-catalog-v3.ts    # Identity catalog v3 (must PASS)
+npx -y tsx scripts/diagnostic-identity-diversity.ts     # characterization + v1/v2/v3 comparison (fails only on integrity errors)
 npx tsc --noEmit -p .
 npm run build
-npm run lint                                           # 9 pre-existing findings; do not add new ones
+npm run lint                                             # 9 pre-existing findings; do not add new ones
 git diff --check
 ```
 
-Never regenerate a golden baseline to make a diff pass. `scripts/golden-baseline.v1.json` is the frozen engine v1 baseline and is never rewritten; `scripts/golden-baseline.v2.json` is the engine v2 baseline. An unexpected golden difference is a finding to report.
+Never regenerate a golden baseline to make a diff pass. `scripts/golden-baseline.v1.json` (engine v1) and `scripts/golden-baseline.v2.json` (engine v2) are frozen historical baselines and are never rewritten; `scripts/golden-baseline.v3.json` is the current engine v3 baseline. An unexpected golden difference is a finding to report.
