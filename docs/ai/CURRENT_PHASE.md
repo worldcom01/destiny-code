@@ -1,6 +1,6 @@
 # Phase 2A — Evidence Traceability
 
-Status: IMPLEMENTED — AWAITING CODEX REVIEW
+Status: REVIEW COMPLETE — READY TO MERGE
 
 ## Objective
 
@@ -40,6 +40,8 @@ Phase 2A must preserve the existing golden baseline.
 
 ## Current next action
 
-Claude Code가 Phase 2A를 브랜치 `refactor/evidence-trace-phase2a`에 구현·커밋했다(main 미병합, 미push). 구현 내용과 검증 결과는 `CLAUDE_REPORT.md`에 있다.
+Codex가 브랜치 `refactor/evidence-trace-phase2a`, 커밋 `6aae8ea`를 main과 비교해 최종 독립 검수를 완료했다. 판정은 **A. Ready to merge into main**이며 병합 전 필수 수정은 없다.
 
-이전 Codex 판정 C(구현 산출물 부재)의 재개 조건 1·2가 충족되었다. Codex는 `git diff main...refactor/evidence-trace-phase2a`와 `CLAUDE_REPORT.md`의 검증 명령으로 최종 검수를 수행하고 판정을 `CODEX_REVIEW.md`에 갱신한다. 검수 전 병합하지 않는다.
+기존 golden·saved-context·신규 evidence-trace·TypeScript·build·diff 검증을 통과했다. 이전 구현 부재 C 판정은 대체되었다. 상세 결과와 비차단 테스트 관찰 1건은 `CODEX_REVIEW.md` 상단에 기록되어 있다.
+
+다음 단계는 사용자 승인 후 검수 문서 갱신을 포함해 main 병합을 진행하는 것이다. 현재 병합·push는 수행하지 않았다. Phase 2A는 출처 기록만 추가하며 Palm 및 후속 분석 엔진 구현은 별도 범위다.

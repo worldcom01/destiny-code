@@ -17,7 +17,7 @@ Phase 2A — Evidence Traceability. Branch `refactor/evidence-trace-phase2a` (fr
    - `analyzeDestiny()`에서 conflicts·keywordStrengths·coreTags 계산 뒤, return 직전에 `buildAnalysisTrace()`를 한 번 호출한다. `ELEMENT_CORE_TAGS`는 복제하지 않고 참조로 전달한다.
    - 다른 결과는 trace를 읽지 않는다. `schemaVersion: 2`와 `ANALYSIS_ENGINE_VERSION`은 유지했다.
 3. **집중 회귀** `scripts/regression-evidence-trace.ts`
-   - 수용 기준 3–10을 219개 assertion으로 검사한다.
+   - 수용 기준 3–10을 218개 assertion으로 검사한다.
 
 소스별 규칙은 명세를 따른다.
 - **Saju:** 지배 오행 경로, 첫 부족 오행 경로. 최종 `saju.coreTags`에 남은 태그만 Claim으로 기록한다. 시간 맥락 Evidence는 Claim에 연결하지 않는다.
@@ -41,7 +41,7 @@ Phase 2A — Evidence Traceability. Branch `refactor/evidence-trace-phase2a` (fr
 
 - **Golden:** `PASS: 7 golden cases match baseline`. baseline은 재생성하지 않았다.
 - **Saved-context:** `PASS: all saved-context regression checks`. 기존 스크립트를 수정하지 않았다.
-- **Evidence-trace:** `PASS: all evidence-trace regression checks` (219 PASS). 검사 내용:
+- **Evidence-trace:** `PASS: all evidence-trace regression checks` (개별 assertion 218개 PASS + 최종 요약 PASS 1줄). 검사 내용:
   - 7개 golden 입력에서 다음을 확인한다.
     - ID 유일성, Claim이 참조하는 Evidence의 존재·available 상태
     - target별 trait를 중복 제거한 결과가 기존 태그와 일치

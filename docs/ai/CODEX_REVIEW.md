@@ -1,38 +1,75 @@
-# Phase 2A — 구현 명세 및 독립 설계 검토
+# Phase 2A — 최종 독립 구현 검수
 
-상태: 최종 검수 요청 확인 — 구현 산출물 부재로 검수 차단
+상태: 검수 완료 / 병합 준비 완료
 
-## 최종 독립 검수 결과 — 구현 대상 확인 실패
+## 최종 판정
 
-**최종 판정: C. Requires revision**
+**A. Ready to merge into main**
 
-이 판정은 구현 코드의 결함 판정이 아니라, 요청된 구현을 현재 저장소에서 확인할 수 없어 병합 승인을 할 수 없다는 의미다. 아래 승인된 설계와 Claude의 독립 확인 부록은 보존한다. 기존 문서의 미커밋 변경도 삭제하지 않는다.
+검수 대상은 `refactor/evidence-trace-phase2a`, 커밋 `6aae8ea` (`refactor: add evidence traceability`)이며 비교 기준은 `main...6aae8ea`이다. 브랜치·커밋 존재와 clean working tree를 직접 확인했다. 이전 C 판정은 구현 산출물 부재에 대한 당시 상태였으며 이번 판정으로 대체한다. 승인 설계와 Claude 독립 확인 부록은 아래에 보존한다.
 
-### BLOCKER — 검수할 Phase 2A 구현이 없음
+BLOCKER 0 / IMPORTANT 0 / MINOR 0 / NON-BLOCKING 1. 병합 전 필수 수정 없음. 코드·테스트·baseline을 수정하거나 커밋·병합·push하지 않았다. 이번 검수는 두 협업 문서만 갱신한다.
 
-- 실제 checkout은 `main`, HEAD는 `81b0c90`이다.
-- `git branch -a`, `git worktree list`, `git show-ref --verify refs/heads/refactor/evidence-trace-phase2a` 확인 결과, 기대한 구현 브랜치와 별도 worktree가 없다.
-- 원격을 읽기 전용으로 확인한 `git ls-remote --heads origin main refactor/evidence-trace-phase2a`에서도 구현 브랜치가 반환되지 않았다. 원격 main은 `89dcbd7563f7259c16d4748a8371aa038eb2f365`였다. fetch·checkout·merge·push는 수행하지 않았다.
-- `app/lib/evidenceTrace.ts`와 `scripts/regression-evidence-trace.ts`가 없다.
-- 현재 analysis.ts에는 Phase 2A trace 통합이 없다.
-- `docs/ai/CLAUDE_REPORT.md`는 구현 내용 없는 `PENDING` 템플릿이다.
-- 검수 시작 시 변경된 파일은 CODEX_REVIEW.md와 CURRENT_PHASE.md뿐이며 애플리케이션 구현 diff는 없었다.
+## 실제 diff 및 동작 보존
 
-문제 수: BLOCKER 1, IMPORTANT 0, MINOR 0, NON-BLOCKING 0. IMPORTANT 0은 구현 안전성을 확인했다는 뜻이 아니다.
+애플리케이션 변경은 `analysis.ts`의 11줄 추가와 신규 `evidenceTrace.ts`로 제한된다. 신규 회귀 스크립트 외의 기존 테스트는 변경되지 않았다. 세 핵심 타입은 승인된 계약과 일치하며 `AnalysisSnapshot.trace`는 선택적이다.
 
-### 검증 상태와 한계
+- builder 호출은 기존 conflicts·keywordStrengths·merged coreTags 계산 이후다. 기존 계산 결과가 trace를 읽는 경로는 없다.
+- CoreTag 테이블·순서, Identity, 충돌, 키워드 강도, Destiny Code, Narrative, 궁합, UI, 공유, 프로필, analytics, 저장 및 legacy 의미를 변경하는 diff가 없다.
+- 사주와 점성술 계산을 다시 수행하지 않는다. 타입 전용 역방향 import이며 런타임 순환 의존성이 없다.
+- Palm, Pattern/Relationship, NarrativePlan, LLM, confidence, trait 재설계, 플러그인 구조는 구현하지 않았다.
 
-기대 브랜치가 없어 `main...refactor/evidence-trace-phase2a` diff를 검토할 수 없다. 타입·결정적 ID·소스별 근거·사주 제한·누락 처리·난수·trace 저장 및 비소급·기존 출력 불변성은 모두 **미검증**이다.
+## 출처·결정성·저장 검수
 
-golden, saved-context, evidence-trace, TypeScript, build는 Phase 2A 구현에 대해 실행할 수 없으므로 이번 최종 검수에서는 실행하지 않았다. 현재 main의 통과 결과를 구현 브랜치의 검증 결과로 대신하지 않는다. golden baseline은 수정·재생성하지 않았다. 문서 변경의 `git diff --check`만 수행한다.
+1. **사주:** 실제 ELEMENT_CORE_TAGS 참조를 전달한다. 지배·첫 부족 오행의 Evidence와 규칙을 구분하고 최종 saju.coreTags에 남은 태그만 Claim으로 만든다. 두 경로의 중복 태그 근거는 보존하며 3개 제한에서 제외된 태그는 추가하지 않는다. 부족 오행이 없으면 보완 근거를 만들지 않는다. 시간 제공·정오 기본값은 별도 맥락으로 기록하고 Claim에 연결하지 않는다.
+2. **MBTI·혈액형:** MBTI의 빈 유형은 missing/null 및 Claim 없음이다. MBTI는 type-mapping, 혈액형은 self-report 관찰에서 symbolic Claim으로 연결된다. 기존 lookup/fallback은 유지한다.
+3. **점성술:** zodiac과 Sun placement는 동일 태양궁 Evidence를 공유하되 target과 ruleId가 구분된다. 달·상승궁 없음은 missing/null이고 Claim이 없다. isApproximate를 그대로 기록한다.
+4. **타로:** 실제 사용한 카드만 기록하고 다시 추출하지 않는다. 타로 Claim이 있어도 merged coreTags와 Identity의 직접 태그 합집합에 추가하지 않는다.
+5. **ID:** 문자열 기반의 결정적 ID이며 경로를 구분한다. 테스트 사례에서 모든 evidenceIds는 존재하는 available Evidence에 연결된다. 시간·난수·I/O가 builder에 없으며 원본 배열과 객체를 수정하지 않는다.
+6. **저장:** 새 analyzeDestiny 결과에만 trace가 생성된다. 저장 엔진은 기존 JSON 보관 동작 그대로다. trace 포함 결과의 JSON round-trip, 중복 저장 원본 보존, trace 없는 v2·legacy의 조회·재저장·삭제 후 재저장 비소급 검사를 통과했다.
 
-### 검수 재개 조건
+### 특별 항목 A — zodiac Claim ID
 
-1. Claude의 실제 구현 브랜치/커밋을 현재 저장소에서 접근 가능하게 하거나, 구현한 정확한 worktree 경로를 제공한다. 새로 구현하라는 요구가 아니다.
-2. 실제 구현과 검증 결과가 포함된 CLAUDE_REPORT.md를 제공한다.
-3. Codex가 해당 diff 및 요청된 전체 검증을 수행한 뒤 최종 판정을 다시 기록한다.
+`zodiac:sun-sign:<tag>`는 적절하다. Sun placement의 `western-astrology:sun-sign:<tag>`와 충돌하지 않으며 같은 입력에서 안정적이다. Evidence 공유와 Claim 경로 분리를 정확히 나타낸다. 미래 소비자는 ID 문자열에서 출처를 추측하기보다 evidenceIds·target·ruleId를 사용해야 한다. ID 유일성 범위는 기존 설계대로 Snapshot 내부다. 이름 변경 불필요.
 
-현재 병합 불가. 애플리케이션 코드·테스트 수정, 자동 수정, 병합 또는 push는 수행하지 않았다.
+### 명세 대비 세부 선택
+
+zodiacKey와 Sun signKey가 다를 때 별도 Evidence를 만드는 방어 분기는 현재 정상 엔진에서 실행되지 않는다. 실제 분석 사례는 동일한 태양궁을 공유하는지 검사하며 별도 fixture는 불일치가 잘못 병합되지 않음을 검사한다. 명세의 '불일치 보고'를 예외·로그 대신 별도 데이터로 표현한 선택으로 수용한다. 기존 출력에 영향을 주지 않는다. 같은 경로 내 중복 태그 제거도 현재 테이블의 동작을 바꾸지 않는다.
+
+## 독립 실행 검증
+
+| 검증 | 결과 |
+| --- | --- |
+| golden-analysis.ts | 7개 사례 통과 |
+| regression-saved-context.ts | 전체 통과 |
+| regression-evidence-trace.ts | 전체 통과, 218개 개별 assertion + 최종 PASS 출력 1개 |
+| tsc --noEmit --incremental false -p . | 통과 |
+| npm run build | 통과 |
+| git diff --check main...6aae8ea | 통과 |
+| 작업 문서 diff 검사 | 통과 |
+| npm run lint | 기존 9건(오류 8, 경고 1), 신규 대상 파일 지적 없음 |
+
+세 회귀 스크립트는 표준 `npx -y tsx` 명령으로 독립 실행했다. 보조적으로 로컬 TypeScript를 이용한 메모리 실행도 동일하게 통과했다. 최초 npm 접근 및 Google Fonts 다운로드는 제한 환경에서 실패했으나 네트워크 권한을 받아 표준 회귀 명령과 build를 재실행해 통과했다. 이는 구현 결함이 아니다.
+
+baseline의 main/6aae8ea git blob은 모두 `d79d1fa2a61558a741e640e02ce385a6f24d2958`로 동일하다. 재생성하지 않았다. lint 지적 파일은 이번 구현에서 변경되지 않았다.
+
+## 테스트의 의미와 한계
+
+출력 태그 일치만 검사하는 테스트는 아니다. 실제 관찰값, ruleId·basis, 존재하는 참조, 사주의 명시적 중복·제한·무부족 fixture와 저장 이력을 검사하므로 잘못된 보완 경로와 3개 제한 누락 등을 탐지할 근거가 있다. 다만 모든 가능한 잘못된 참조를 증명적으로 배제하는 전수 검사는 아니다. 예를 들어 같은 규칙을 쓰는 placement 간 참조 교환을 직접 고정 기대값으로 검사하는 부분은 제한적이며, 현재 구현의 해당 연결은 코드로 별도 확인했다. Claude가 보고한 일시적 mutation 실험은 이번에는 코드 변경 금지에 따라 재실행하지 않았다.
+
+### NON-BLOCKING 1 — 한 assertion의 이름과 실제 비교 범위 차이
+
+`scripts/regression-evidence-trace.ts:220`의 'trace equals analyzeDestiny trace for same sources'는 직접 builder 결과 t1과 통합 결과를 비교하지 않고 analyzeDestiny를 두 번 호출해 비교한다. 실제로는 통합 경로 결정성 검사다. builder 결정성과 target별 실제 태그 비교는 다른 검사로 수행되므로 현재 병합을 막지 않는다. 향후 이 검사를 손볼 때 비교 대상이나 이름을 맞추면 된다. 이번 병합 전 수정 요구는 아니다.
+
+## 특별 항목 B — Snapshot 크기
+
+독립 실행에서도 trace 최대 5,773 **문자**, Snapshot 최대 13,015 문자, 저장 10건 176,695 UTF-8 bytes가 측정되었다. 문자 수를 bytes로 단정하지 않는다. 출력의 44%는 두 최대값으로 계산한 최종 Snapshot 내 trace 비중이며, 기존 대비 44% 증가라는 뜻이 아니다.
+
+현재 10건 저장 규모에서 이 수치만으로 저장 구조를 바꿀 실질적 blocker는 없다. 브라우저별 localStorage 할당량·다른 키 사용량까지 보증하는 측정은 아니지만, 현재 코드나 검사에서 저장 실패는 확인되지 않았다. 새 인프라·압축·정규화는 요구하지 않는다.
+
+## 다음 단계
+
+사용자 승인 후 이 구현 브랜치를 main에 병합할 수 있다. 검수 문서 갱신은 아직 미커밋이며 필요하면 병합 전 문서 커밋으로 포함한다. 구현의 추가 수정은 필수가 아니다. 병합·push는 이번 작업에서 수행하지 않았다.
 
 ---
 
