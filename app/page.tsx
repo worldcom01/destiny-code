@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { ChangeEvent, ReactNode } from 'react';
-import { analyzeDestiny, type AnalysisOutput, type TarotResult, ELEMENT_META } from '@/app/lib/analysis';
+import { analyzeDestiny, isAnalysisSnapshot, type AnalysisOutput, type AnalysisSnapshot, type TarotResult, ELEMENT_META } from '@/app/lib/analysis';
 import { LOCATION_OPTION_GROUPS, findLocationByLabel } from '@/app/lib/regions';
 import {
   saveAnalysis,
@@ -13,8 +13,6 @@ import {
 } from '@/app/lib/storageEngine';
 import { generateShareText, shareResult, type ShareOutcome } from '@/app/lib/shareEngine';
 import { shuffleCards } from '@/app/lib/tarotEngine';
-import { detectConflicts, type ConflictPattern } from '@/app/lib/conflictEngine';
-import { computeKeywordStrengths, type KeywordStrength } from '@/app/lib/keywordEngine';
 import { generateDestinyCode } from '@/app/lib/destinyCode';
 import { saveProfile } from '@/app/lib/profileStore';
 import { saveAnalyticsResult } from '@/app/lib/analyticsEngine';
@@ -294,9 +292,8 @@ export default function Home() {
   const [appStep, setAppStep] = useState<AppStep>('form');
   const [loadingStep, setLoadingStep] = useState(0);
   const [shuffledCards, setShuffledCards] = useState<TarotResult[]>([]);
-  const [result, setResult] = useState<AnalysisOutput | null>(null);
-  const [conflicts, setConflicts] = useState<ConflictPattern[]>([]);
-  const [keywordStrengths, setKeywordStrengths] = useState<KeywordStrength[]>([]);
+  // 새 분석은 AnalysisSnapshot, 구버전 저장 결과는 AnalysisOutput
+  const [result, setResult] = useState<AnalysisSnapshot | AnalysisOutput | null>(null);
   const [savedList, setSavedList] = useState<SavedAnalysis[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
@@ -325,8 +322,6 @@ export default function Home() {
   const handleSubmit = (e: { preventDefault(): void }) => {
     e.preventDefault();
     setResult(null);
-    setConflicts([]);
-    setKeywordStrengths([]);
     setSaveStatus('idle');
     setDestinyCode('');
     setShuffledCards(shuffleCards(9));
@@ -363,19 +358,13 @@ export default function Home() {
     const code = generateDestinyCode(analysisResult);
     setDestinyCode(code);
     const wa = analysisResult.westernAstrology;
-    const allCoreTags = [...new Set([
-      ...analysisResult.saju.coreTags,
-      ...wa.coreTags,
-      ...(analysisResult.mbtiTraits.type ? analysisResult.mbtiTraits.coreTags : []),
-      ...analysisResult.bloodType.coreTags,
-    ])];
     saveProfile({
       code,
       nickname: form.name || undefined,
       archetype: analysisResult.archetype,
       identityStatement: analysisResult.identityStatement,
       commonKeywords: analysisResult.commonKeywords,
-      coreTags: allCoreTags,
+      coreTags: analysisResult.coreTags,
       mbti: analysisResult.mbtiTraits.type,
       bloodType: analysisResult.bloodType.type,
       tarotName: analysisResult.tarot.name,
@@ -390,20 +379,6 @@ export default function Home() {
     });
     console.log('[page] 생성된 운명 코드:', code, '/ localStorage 확인:', localStorage.getItem('destiny_profiles_v1'));
 
-    setConflicts(detectConflicts(
-      analysisResult.saju,
-      analysisResult.zodiac,
-      analysisResult.mbtiTraits,
-      analysisResult.bloodType,
-      analysisResult.westernAstrology,
-    ));
-    setKeywordStrengths(computeKeywordStrengths(
-      analysisResult.saju,
-      analysisResult.zodiac,
-      analysisResult.mbtiTraits,
-      analysisResult.bloodType,
-      analysisResult.westernAstrology,
-    ));
     setAppStep('result');
     saveAnalyticsResult(analysisResult, code); // 비동기 — 실패해도 UX에 영향 없음
     setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
@@ -419,8 +394,7 @@ export default function Home() {
       keywords: result.commonKeywords,
       tarotName: result.tarot.name,
       zodiacSign: result.zodiac.sign,
-      resultData: result,
-    });
+    }, result);
     setSaveStatus('saved');
     setSavedList(getSavedAnalyses());
     setTimeout(() => setSaveStatus('idle'), 2500);
@@ -436,8 +410,6 @@ export default function Home() {
 
   const handleViewSaved = (saved: SavedAnalysis) => {
     setResult(saved.resultData);
-    setConflicts([]);
-    setKeywordStrengths([]);
     setSaveStatus('idle');
     setShowHistory(false);
     setAppStep('result');
@@ -448,6 +420,11 @@ export default function Home() {
     deleteAnalysis(id);
     setSavedList(getSavedAnalyses());
   };
+
+  // 충돌·키워드 강도는 스냅샷에만 있다. 구버전 저장 결과는 재계산하지 않고 비워 둔다.
+  const snapshot = result && isAnalysisSnapshot(result) ? result : null;
+  const conflicts = snapshot?.conflicts ?? [];
+  const keywordStrengths = snapshot?.keywordStrengths ?? [];
 
   const birthdateComputed = form.year && form.month && form.day
     ? `${form.year}-${form.month.padStart(2, '0')}-${form.day.padStart(2, '0')}`
@@ -1063,6 +1040,14 @@ export default function Home() {
                 ))}
               </div>
             </ResultCard>
+
+            {/* 구버전 저장 결과 안내 */}
+            {!snapshot && (
+              <p className="text-slate-600 text-xs text-center px-4 opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
+                style={{ animationDelay: '530ms' }}>
+                이전 버전에서 저장된 결과입니다. 운명 코드 강도와 내면 갈등 패턴은 당시 저장되지 않았습니다.
+              </p>
+            )}
 
             {/* 운명 코드 강도 */}
             {keywordStrengths.length > 0 && (

@@ -1,5 +1,7 @@
 import { calculateSaju, lunarToSolar } from 'ssaju';
 import { calcWesternAstrology, calcSunSignKey, type WesternAstrologyResult } from './westernAstrology';
+import { detectConflicts, type ConflictPattern } from './conflictEngine';
+import { computeKeywordStrengths, type KeywordStrength } from './keywordEngine';
 
 // ── 타입 정의 ────────────────────────────────────────────────────────────────
 
@@ -92,6 +94,25 @@ export interface AnalysisOutput {
 }
 
 export type { WesternAstrologyResult };
+
+// 분석 규칙이 바뀌면 올린다 — 저장된 결과가 어떤 규칙으로 만들어졌는지 구분하는 용도
+export const ANALYSIS_ENGINE_VERSION = '1';
+
+// analyzeDestiny()가 조립하는 완성된 분석 결과. 저장 시 그대로 보관한다.
+export type AnalysisSnapshot = AnalysisOutput & {
+  schemaVersion: 2;
+  engineVersion: string;
+  analysisId: string;
+  createdAt: string; // ISO string
+
+  conflicts: ConflictPattern[];
+  keywordStrengths: KeywordStrength[];
+  coreTags: CoreTag[];
+};
+
+export function isAnalysisSnapshot(r: AnalysisOutput): r is AnalysisSnapshot {
+  return (r as Partial<AnalysisSnapshot>).schemaVersion === 2;
+}
 
 // ── 사주 — 오행 메타데이터 ───────────────────────────────────────────────────
 
@@ -754,7 +775,7 @@ export function analyzeDestiny(
   birthLon?: number,
   calendarType: 'solar' | 'lunar' = 'solar',
   isLeapMonth: boolean = false,
-): AnalysisOutput {
+): AnalysisSnapshot {
   // 별자리/서양 점성술은 항상 양력 기준 날짜가 필요하므로, 음력 입력이면 변환
   let solarBirthdate = birthdate;
   if (calendarType === 'lunar') {
@@ -782,5 +803,22 @@ export function analyzeDestiny(
   const { identityStatement, archetype } = generateIdentity(saju, zodiac, mbtiData, bloodTypeData, tarot, commonKeywords);
 
   const tarotFlow = generateTarotFlow(tarot, commonKeywords, saju);
-  return { saju, zodiac, westernAstrology, mbtiTraits: mbtiData, bloodType: bloodTypeData, tarot, commonKeywords, detailedReading, identityStatement, archetype, tarotFlow };
+
+  const conflicts = detectConflicts(saju, zodiac, mbtiData, bloodTypeData, westernAstrology);
+  const keywordStrengths = computeKeywordStrengths(saju, zodiac, mbtiData, bloodTypeData, westernAstrology);
+  const coreTags = [...new Set([
+    ...saju.coreTags,
+    ...westernAstrology.coreTags,
+    ...(mbtiData.type ? mbtiData.coreTags : []),
+    ...bloodTypeData.coreTags,
+  ])];
+
+  return {
+    schemaVersion: 2,
+    engineVersion: ANALYSIS_ENGINE_VERSION,
+    analysisId: Math.random().toString(36).slice(2) + Date.now().toString(36),
+    createdAt: new Date().toISOString(),
+    saju, zodiac, westernAstrology, mbtiTraits: mbtiData, bloodType: bloodTypeData, tarot, commonKeywords, detailedReading, identityStatement, archetype, tarotFlow,
+    conflicts, keywordStrengths, coreTags,
+  };
 }
