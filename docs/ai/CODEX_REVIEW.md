@@ -1,3 +1,249 @@
+# Phase 2B Preliminary Architecture Analysis — Claude Code
+
+상태: **예비 설계 검토 (PRELIMINARY)** — 승인되지 않음, 구현 준비 아님
+
+작성: Claude Code (Codex 일시 부재로 대행). 기준: `main` `5758350`, working tree clean. 이 절은 분석만 담는다. 애플리케이션 코드·테스트·baseline은 변경하지 않았다. Codex의 독립 검토로 대체·보완되어야 한다.
+
+근거 표기: 코드 위치는 `app/lib/analysis.ts` 기준 행 번호. 수치는 저장소 밖 임시 스크립트로 `analyzeDestiny()`를 20,000개 입력에 실행해 측정했다.
+
+- **측정 입력:**
+  - 생년월일: 1950–2009년, 일자 1–28일
+  - 시간: 70%만 입력, 30분 단위
+  - 출생지: 시간이 있으면 80%(서울 좌표)
+  - MBTI: 85%만 입력(16유형 균등)
+  - 혈액형: 4종 균등
+  - 타로·성별: 무작위
+- **재현성과 대표성:** 입력은 고정 seed LCG로 생성했다. 분석 로직은 수정하지 않았다. 실제 사용자 분포가 아닌 균등 표본이므로, **절대 비율이 아니라 구조적 편향의 근거**로만 사용한다.
+
+## 1. 실제 파이프라인
+
+```text
+소스 계산
+  saju.coreTags        = dedupe(ELEMENT_CORE_TAGS[dominant] + ELEMENT_CORE_TAGS[missing[0] ?? dominant]).slice(0,3)   (L321–324)
+  zodiac.coreTags      = ZODIAC_DATA[태양궁] 3개                                                                        (L179–192)
+  westernAstrology.coreTags = dedupe(태양 + 달 + 상승궁 태그)  — 최대 9개                                                (westernAstrology.ts L369)
+  mbtiTraits.coreTags  = MBTI_DATA 3개 (미입력이면 [])
+  bloodType.coreTags   = BLOOD_TYPE_DATA 3개
+  tarot.coreTags       = TAROT_DATA 3개
+        │
+        ├─ commonKeywords  = calcCommonKeywords([western, mbti, saju, blood])                 (L353, L799)
+        ├─ detailedReading = generateDetailedReading(saju, zodiac, mbti, blood, tarot, commonKeywords)
+        ├─ identity/archetype = generateIdentity(saju, zodiac, mbti, blood, tarot, commonKeywords)
+        ├─ tarotFlow       = generateTarotFlow(tarot, commonKeywords, saju)
+        ├─ conflicts       = detectConflicts(...)          (conflictEngine.ts — 표시 전용)
+        ├─ keywordStrengths = computeKeywordStrengths(...) (keywordEngine.ts — 표시 전용)
+        ├─ coreTags (merged) = dedupe(saju + western + mbti + blood)  (프로필·궁합용)
+        └─ trace (Phase 2A)  = 위 태그들의 출처 기록 (아무것도 구동하지 않음)
+```
+
+**단계별로 쓰는 태그 집합이 서로 다르다 (CONFIRMED).**
+
+| 단계 | 사용하는 소스 | 서양 점성술 표현 | 타로 |
+| --- | --- | --- | --- |
+| commonKeywords(교집합) | western, MBTI, 사주, 혈액형 | `westernAstrology.coreTags`(태양+달+상승 합집합, 1세트) | 제외 |
+| Identity | 사주, zodiac, 혈액형, MBTI | `zodiac.coreTags`(태양만) | 제외 (인자로 받지만 미사용) |
+| 상세 해석 allTags | 사주, zodiac, 혈액형, MBTI, 타로 | 태양만 | 포함 |
+| keywordStrengths | 사주, 태양궁, MBTI, 혈액형, 달궁, 상승궁 | 3개 placement를 각각 1세트 | 제외 |
+| merged coreTags | 사주, western, MBTI, 혈액형 | 합집합 | 제외 |
+
+같은 사용자의 "교집합", "정체성", "강도"가 서로 다른 소스 집합과 서로 다른 가중치로 계산된다.
+
+## 2. 분석 질문별 결과
+
+### Q1. 동일 CoreTag 반복 처리
+
+- `calcCommonKeywords`는 소스 세트별로 `new Set`을 적용한 뒤, 태그가 몇 개 세트에 나타나는지 센다(L358–363). 같은 소스 안의 반복은 1로 접힌다.
+- 서양 점성술은 태양·달·상승궁이 먼저 합집합(1세트)으로 접힌다. 그래서 세 placement가 모두 같은 태그를 가져도 1표다. **CONFIRMED.**
+- Identity와 상세 해석은 전 소스 합집합(`new Set`)만 사용한다. 몇 개 소스가 지지하는지는 버려진다. **CONFIRMED.**
+- 반대로 keywordStrengths는 placement를 따로 세므로, 같은 태양궁·달궁 태그가 2표가 될 수 있다. 단계마다 처리 방식이 다르다. **CONFIRMED.**
+
+### Q2. 관련 있지만 다른 특성의 인식
+
+- 오직 CoreTag 문자열 동등성만 사용한다. 태그 간 유사·관련 관계를 나타내는 데이터 구조가 없다. **CONFIRMED.**
+- 유일한 "관계"는 사람이 작성한 쌍 목록이다. `CONFLICT_IDENTITY`(10쌍, L613), 상세 해석의 `conflictMap`(9쌍, L425), 궁합 엔진의 조건 목록이 있다. 모두 "두 태그가 모두 존재하는가" 검사다.
+
+### Q3. 충돌/긴장 감지 방식
+
+"충돌"이라는 이름의 서로 무관한 메커니즘이 세 개 있다. **CONFIRMED.**
+
+1. **`conflictEngine.detectConflicts`:** 원천 속성 조건 규칙이다(MBTI 글자, zodiac 원소, 사주 지배·부족 오행, 혈액형×MBTI 그룹, 태양·달 원소). 최대 3개이며, 태그를 쓰지 않는다.
+2. **`CONFLICT_IDENTITY`:** 합집합 안에 두 태그가 공존하면 "충돌"로 본다. Identity를 결정한다.
+3. **상세 해석 `conflictMap`:** 2와 같은 방식이다(타로 포함 합집합). 첫 섹션에 문장 하나를 추가한다.
+
+2와 3은 긴장이 아니라 **공존(co-presence)** 이다. 측정 결과 Identity 쌍이 한 소스 안에서 함께 나오는 경우는 5.2%, 서로 다른 소스에서 나오는 경우는 94.8%다. 이는 공존이 대부분 소스 간 합집합의 결과라는 뜻이다. 두 소스가 실제로 서로 반대되는 주장을 한다는 뜻은 아니다.
+
+### Q4. 충돌이 Identity에 미치는 영향
+
+- `conflictEngine` 결과는 Identity·상세 해석·Destiny Code 어디에도 쓰이지 않는다. snapshot에 저장되어 화면에 표시될 뿐이다. **CONFIRMED.**
+- Identity를 결정하는 것은 태그 공존 목록(`CONFLICT_IDENTITY`)이다. 측정에서 99.8%가 이 경로로 결정된다.
+
+### Q5. 소스별 실제 영향 범위
+
+| 소스 | merged coreTags | 교집합 | Identity | 서술 |
+| --- | --- | --- | --- | --- |
+| 사주 | O | O | O | O (지배 오행 문장 다수 + fallback primaryTag) |
+| 태양궁(zodiac) | — | (western 합집합의 일부로) O | O | O (원소별 관계 문장) |
+| 달·상승궁 | O | O | **X** | X (상세 해석은 zodiac만 사용) |
+| MBTI | O | O | O | O (I/F/J 글자 문장) |
+| 혈액형 | O | O | O | O (혈액형별 관계 문장) |
+| 타로 | X | X | X | O (allTags, tarotFlow, 교차 신호 출처 표기) |
+
+달·상승궁은 교집합에는 영향을 주지만 Identity에는 영향을 주지 않는다. 측정 결과 `commonKeywords[0]`가 달·상승궁을 통해서만 서양 점성술 표를 얻는 경우가 21.5%다. **CONFIRMED.**
+
+### Q6. 소스 순서의 영향 — 있음 (CONFIRMED)
+
+- **`commonKeywords` 순서:** `tagCounts` Map의 삽입 순서(western → MBTI → 사주 → 혈액형 순의 최초 등장)를 따른다. `commonKeywords[0]`는 `primaryTag`, 상세 해석 첫 섹션, SINGLE_IDENTITY fallback, tarotFlow, Destiny Code seed를 결정한다. 따라서 동률일 때 **서양 점성술의 첫 태그(태양궁 테이블 순서)** 가 우선한다.
+- **Identity:** `CONFLICT_IDENTITY.find`이므로 **목록 순서**가 결정한다.
+- **상세 해석:** `allTags.find`는 사주 → zodiac → 혈액형 → MBTI → 타로 순이고, `conflictMap.find`는 목록 순서다.
+
+### Q7. 영향력 불균형 — 있음
+
+- **서양 점성술 합집합 (CONFIRMED):** 최대 9개 태그로, 10개 어휘 중 대부분을 덮는다(측정: full 데이터에서 6–8개가 일반적). 교집합 k를 세는 1세트이면서 다른 모든 세트와 겹칠 확률이 높다. 그래서 거의 항상 교집합에 "동의"하는 소스가 된다. 측정 결과 `commonKeywords[0]`의 95%가 서양 점성술 세트에 포함된다.
+- **사주 보완 경로 (CONFIRMED):** 측정 결과 사주 태그의 약 25%가 **부족한 오행**의 태그(`missing-element-compensation`)에서만 온다(부족 오행이 있는 분석은 67%). 그런데 이것이 지배 오행 태그와 같은 무게의 "특성"으로 합쳐진다. 부족을 나타내는 태그가 보유 특성으로 취급되는 셈이다. 의도된 해석인지는 제품 결정이다.
+- **시간 입력 여부 (PLAUSIBLE RISK):** 시간·출생지가 있으면 western 세트가 커져서 교집합 참여도가 올라간다. 입력 완성도가 성향 결과를 바꾸는 구조다.
+
+### Q8. Identity/archetype 선택 방식 (L639–670)
+
+1. `allTags = dedupe(사주 + zodiac + 혈액형 + (MBTI 4글자면) MBTI)`를 만든다. 측정 결과 크기 중앙값은 **7/10**이다. 타로와 달·상승궁은 제외된다.
+2. `CONFLICT_IDENTITY`를 **순서대로** 보며, 두 태그가 모두 `allTags`에 있는 **첫 쌍**을 반환한다.
+3. 없으면 `commonKeywords[0]`(또는 `saju.coreTags[0]`)로 `SINGLE_IDENTITY`를 조회한다.
+4. 그것도 없으면 고정 문장을 쓴다.
+
+교집합(`commonKeywords`)은 3단계에서만 쓰인다. 측정 결과 3단계 도달은 0.2%다. **선택된 Identity 쌍이 `commonKeywords[0]`를 포함하지 않는 경우는 84.7%다.** 즉 Identity는 사실상 교집합과 분리되어 있다. **CONFIRMED.**
+
+### Q9. 서로 다른 입력이 같은 Identity로 수렴하는가 — 강하게 그렇다 (CONFIRMED)
+
+측정 결과 archetype 분포는 다음과 같다(20,000개 입력).
+
+| archetype | 비율 |
+| --- | --- |
+| 외로운 연결주의자 (1번 쌍 독립적+포용적) | 46.9% |
+| 군중 속의 고독자 (2번 쌍) | 16.1% |
+| 틀 안의 반항자 (4번 쌍) | 15.0% |
+| 감정을 분석하는 사람 (3번 쌍) | 13.5% |
+| 나머지 8종 | 8.5% |
+
+- 상위 4종이 91.5%를 차지한다. 이론상 최대 21종(쌍 10 + 단일 10 + fallback)이지만, 관측된 것은 12종이다.
+- `CONFLICT_IDENTITY`의 9번째 쌍 `['창의적','체계적']`은 4번째 쌍 `['체계적','창의적']`과 같은 집합이다. 따라서 **'안전한 탐험가'에는 도달할 수 없다(측정 0건).** 상세 해석 `conflictMap`에도 같은 중복이 있다.
+- `archetype | commonKeywords[0]` 조합은 69종에 그친다.
+
+### Q10. 서술 중 교집합 구조가 결정하는 비중
+
+상세 해석 5개 섹션(L453–603)은 모두 **고정 문장 조회**다. 문장을 고르는 키는 다음과 같다.
+
+| 섹션 | 조회 키 |
+| --- | --- |
+| 1 반복되는 내면 구조 | `commonKeywords` 앞 3개 라벨, `primaryTag`(= `commonKeywords[0]`), 첫 공존 쌍, 지배 오행 |
+| 2 감정 처리 | 사주 태그 첫 일치, 사주+zodiac 첫 일치, 지배 오행, MBTI F/T, 수(水) 부재 |
+| 3 관계 구조 | allTags 첫 일치 ×2, zodiac 원소, MBTI I/E, 혈액형 |
+| 4 현재 흐름 | 지배 오행, 부족 오행 목록, MBTI J/P |
+| 5 교차 신호 | `commonKeywords` 각각의 출처 나열 + 고정 결론 문장 |
+
+- 교집합 구조가 직접 반영되는 것은 섹션 1의 첫 문장과 섹션 5다. 나머지는 **개별 소스 속성**(오행, 원소, MBTI 글자, 혈액형)으로 고른 고정 문장이다. 측정 결과 섹션 1 전체 문장의 조합은 687종이다.
+- **섹션 5의 불일치 (CONFIRMED):** 교집합은 western 합집합으로 계산했지만, 출처 표기는 zodiac(태양)만 보고 타로를 포함한다. 그 결과 "독립적으로 반복 확인" 문장의 출처 목록이 실제 교집합 계산과 다를 수 있다.
+- **원칙과의 충돌 (CONFIRMED, 코드 문구):** 섹션 5는 "서로 독립적인 체계들이 동시에 가리키는 교차점", "단순한 성격 유형이 아니라 반복적으로 활성화되는 내면 패턴임을 의미"라고 단정한다. 상징 체계의 일치를 검증처럼 표현하므로 AD-004 및 PROJECT_CONTEXT 원칙과 긴장 관계다. 문구 변경은 제품 결정이다.
+
+## 3. 결과 유사성 원인 분류
+
+| # | 원인 | 판정 | 근거 |
+| --- | --- | --- | --- |
+| R1 | Identity가 **고정 목록의 첫 공존 쌍**으로 결정됨 | **CONFIRMED (최대 원인)** | L653. 1번 쌍 하나가 46.9%, 상위 4쌍이 91.5% |
+| R2 | Identity 합집합이 어휘 대부분을 덮음 (중앙값 7/10) | **CONFIRMED** | 쌍 존재 확률이 높아 목록 앞쪽 쌍이 거의 항상 성립 |
+| R3 | 교집합·충돌(conflictEngine)이 Identity에 반영되지 않음 | **CONFIRMED** | 84.7%가 `commonKeywords[0]` 미포함, conflictEngine 미사용 |
+| R4 | 작은 CoreTag 어휘 (10개)와 소스당 3개 태그 | **CONFIRMED (상한 요인)** | Identity 이론 최대 21종 |
+| R5 | 중복 쌍으로 인한 도달 불가 archetype | **CONFIRMED** | '안전한 탐험가' 0건 |
+| R6 | 조기 dedupe로 지지 소스 수·경로 소실 | **CONFIRMED** | Identity·서술은 합집합만 사용 |
+| R7 | 첫 태그 우선 (`commonKeywords[0]`, `.find`) | **CONFIRMED** | 삽입·목록 순서 의존 |
+| R8 | 서양 점성술 합집합의 과대 영향 | **CONFIRMED** | `commonKeywords[0]`의 95%가 western 포함 |
+| R9 | 고정 템플릿 서술 | **CONFIRMED (부분)** | 섹션 2–4는 소스 속성 조회. 섹션 1 조합 687종으로 Identity보다는 다양 |
+| R10 | top-N 절단 | **PLAUSIBLE RISK (작음)** | 사주 3개 제한, `kwLabel` 앞 3개, conflicts 3개, keywordStrengths 5개. Identity에는 영향 없음 |
+| R11 | 서로 다른 소스 조합이 같은 merged 태그로 수렴 | **PLAUSIBLE RISK** | merged coreTags는 합집합이라 가능성 높음. 이번에 직접 측정하지 않음 |
+| R12 | provenance 무시 | **CONFIRMED (Phase 2A 전까지)** | 2A trace는 기록만 하고 아직 아무것도 구동하지 않음 |
+| R13 | 타로가 Identity를 바꿔 다양성을 줄임 | **NOT SUPPORTED** | 타로는 Identity에 불참(매개변수는 받지만 미사용) |
+| R14 | 무작위성이 유사성의 원인 | **NOT SUPPORTED** | 타로 무작위 외 결정적. 타로는 Identity에 불참 |
+
+## 4. Phase 2A trace로 새로 구분 가능한 것
+
+trace는 **기록**이지 판단이 아니다. 아래는 "구분할 수 있게 되었다"는 뜻이며 "더 참이다"라는 뜻이 아니다.
+
+1. **소스 간 수렴(cross-source convergence):** 같은 CoreTag를 지지하는 Claim의 **서로 다른 소스 수**를 셀 수 있다. 단, 태양궁은 `zodiac` 경로와 `sun` placement 경로가 같은 Evidence(`western-astrology:sun-sign`)를 공유한다. 수렴을 셀 때는 Claim 수가 아니라 **서로 다른 Evidence 수**로 세야 이중 계산을 피한다.
+2. **소스 내부 공존과 소스 간 공존:** Identity 쌍이 한 소스(예: MBTI 하나) 안에서 함께 나온 것인지, 서로 다른 소스에서 나온 것인지 구분할 수 있다.
+3. **사주 지배 경로와 보완 경로:** `saju.dominant-element-tags@1`과 `saju.missing-element-compensation@1`로, "보유 기운의 태그"와 "부족 기운의 태그"를 구분할 수 있다.
+4. **입력 유형:** MBTI는 `type-mapping`(자기보고 유형의 매핑), 나머지는 `symbolic`으로 구분된다. 달·상승궁·MBTI의 **누락**을 명시적으로 알 수 있다.
+5. **단계별 소스 범위 불일치의 진단:** 교집합(western 합집합)과 Identity(zodiac)가 다른 Evidence 집합을 쓴다는 것을 데이터로 보일 수 있다.
+
+**구분해야 할 것:** 여러 상징 체계가 같은 태그로 매핑되었다는 것(수렴)은 **매핑 테이블들이 겹친다**는 사실이다. 그 사람의 성향이 경험적으로 확인되었다는 증거가 아니다. 특히 사주·별자리·혈액형·타로는 모두 `symbolic`이고, 매핑 테이블 자체가 같은 10개 어휘를 공유하도록 설계되어 있다. 따라서 수렴 수치를 신뢰도·정확도·"검증"으로 표현하거나 저장하지 않는다(AD-004).
+
+## 5. Phase 2B 최소 추상화 평가
+
+### 제안된 관계 범주 평가
+
+| 범주 | 판정 | 이유 |
+| --- | --- | --- |
+| agreement (같은 태그, 여러 소스) | **채택 — `convergence`로** | 현재 교집합의 실제 의미이고, trace로 정확히 계산 가능. 즉시 필요(R3, R6, R8) |
+| tension (두 태그의 긴장) | **조건부 채택 — `authored-pair`로** | 현재 코드에 존재하는 "긴장"은 사람이 작성한 쌍 목록뿐이다. 새로운 긴장 판단 규칙을 만들지 않고, 기존 목록 중 성립한 쌍과 그 출처(소스 내부 공존/소스 간 공존)만 기록한다 |
+| complement | **기각** | 현재 데이터·목록 어디에도 "보완" 관계 정의가 없다. 사주 "보완 오행" 경로는 태그 관계가 아니라 소스 내부 규칙이며, trace ruleId로 이미 구분된다 |
+| context-difference | **기각 (현재)** | 맥락(시기·관계·상황)별 Evidence가 없다. 타로 "현재 흐름"이 유일한 후보이지만 Identity에 불참한다 |
+| unknown | **기각** | 기록할 필요가 없는 부재 상태. 누락은 이미 Evidence `status: missing`으로 표현된다 |
+| conflictEngine 규칙 | **제외** | 태그 관계가 아니라 원천 속성 규칙이다. 현재 표시 전용이며, 2B에서 Identity와 연결하는 것은 별도 제품 결정 |
+
+### PatternRecord 권장 여부
+
+**범용 PatternRecord는 시기상조다.** 관계 종류를 늘리는 프레임워크나 관계 추론 규칙은 만들지 않는다.
+
+다만 **Identity 선택을 개선하려면**, 그 전에 "현재 교집합과 공존을 출처와 함께 설명하는" 최소 기록이 필요하다. 이 기록은 두 가지 종류로 제한한다.
+
+```ts
+// 예비안 — 승인 전. trace에서 결정적으로 파생하며, 기존 결과를 구동하지 않는 단계부터 시작한다.
+export type PatternRecord =
+  | {
+      kind: 'convergence';
+      trait: CoreTag;
+      claimIds: string[];        // 이 태그를 지지하는 Claim
+      evidenceIds: string[];     // 서로 다른 Evidence (태양궁 이중 계산 제거 기준)
+      sources: string[];         // 서로 다른 source
+    }
+  | {
+      kind: 'authored-pair';
+      traits: [CoreTag, CoreTag];
+      ruleId: string;            // 예: 'identity.conflict-pair@1' — 기존 목록 식별
+      claimIds: [string[], string[]];
+      crossSource: boolean;      // 두 태그가 한 소스 안에서만 공존하는지 여부
+    };
+```
+
+- 점수·가중치·confidence 필드를 두지 않는다. 수렴 강도는 `sources.length`로 **서술**만 한다.
+- 새 태그 관계를 추가하지 않는다. `authored-pair`는 기존 `CONFLICT_IDENTITY` 목록을 그대로 참조한다.
+- **저장:** 2B 첫 단계에서는 저장하지 않고 필요할 때 trace에서 계산하는 방안을 권장한다. 저장된 trace + 버전이 있는 ruleId에서 결정적으로 재계산할 수 있기 때문이다. 과거 결과에는 trace가 없으므로 소급하지 않는다.
+
+## 6. 변경하지 말아야 할 것
+
+- Phase 2B 첫 단계에서는 CoreTag 매핑·순서, Identity 선택 결과, 상세 해석 문장, 충돌 규칙, keywordStrengths, Destiny Code, 궁합, UI, 저장·legacy 의미, golden baseline을 변경하지 않는다.
+- 사주 보완 경로 태그를 "보유 특성"으로 취급하는 현행 의미는, 제품 결정 전까지 유지한다.
+- 섹션 5의 "검증처럼 들리는" 문구 변경은 제품 결정 사항이다. 2B 구현 범위에 섞지 않는다.
+- 향후 Identity 선택 변경은 **의도된 출력 변경**이다. 이는 `ANALYSIS_ENGINE_VERSION`을 올리고 사용자 승인을 받은 golden 재설정으로만 한다. 조용한 재생성은 금지한다. 과거 저장 결과는 재해석하지 않는다(AD-002).
+
+## 7. 최종 질문 답변
+
+1. **실제 교집합의 정의:** 서양 점성술(태양+달+상승 합집합), MBTI, 사주, 혈액형 네 세트 중에서, **가장 많은 세트(k, 최소 2)에 동시에 나타나는 CoreTag들**이다. 문자열이 같은 태그만 인정한다. 순서는 최초 등장 순이다. 타로와 zodiac 단독 경로는 제외된다. 2세트 일치도 없으면 각 세트의 첫 태그를 쓴다.
+2. **CoreTag 병합에서 잃는 것:** 태그별 지지 소스 수와 소스 이름, 사주 지배 경로와 보완 경로의 차이, placement별 차이(달·상승궁), 한 소스 안의 공존인지 여러 소스 간 공존인지, 소스의 세부 뉘앙스(원소·오행 강도·MBTI 개별 글자)다. 이 중 일부만 서술 단계에서 별도 조회로 되살아난다.
+3. **충돌의 사용:** `conflictEngine` 결과는 표시 전용이다. Identity를 결정하는 "충돌"은 실제로는 태그 공존 목록이다. 상세 해석의 충돌 문장도 같은 공존 방식이다.
+4. **Identity를 실제로 결정하는 것:** 사주·태양궁·혈액형·MBTI 합집합에서, 고정 목록 `CONFLICT_IDENTITY`의 **첫 번째로 성립하는 쌍**이다. 교집합은 0.2%의 fallback에서만 쓰인다.
+5. **확인된 최대 구조적 원인:** 어휘의 대부분을 덮는 합집합에 대해 고정 순서 목록의 첫 일치를 고르는 Identity 규칙(R1+R2)이다. 1번 쌍 하나가 46.9%, 상위 4개가 91.5%다.
+6. **Phase 2A trace로 가능해진 것:** 태그별 서로 다른 소스·Evidence 수 기반의 수렴 계산, 공존 쌍의 소스 내부/소스 간 구분, 사주 지배와 보완 경로의 구분, 누락 소스의 명시적 식별이다. 단 이것은 **매핑 일치의 서술**이지 성향의 검증이 아니다.
+7. **최소 Phase 2B 추상화:** trace에서 파생하는 `convergence`와 `authored-pair` 두 종류의 기록이다. 기존 결과를 구동하지 않는 진단 단계부터 시작한다.
+8. **PatternRecord 도입 여부:** 범용 PatternRecord는 도입하지 않는다. 위의 **두 종류로 제한한 판별 유니온**은 Identity 개선의 전제로서 도입할 가치가 있다. 다만 승인은 Codex 검토와 사용자 결정 이후다.
+9. **변경하지 말아야 할 것:** 6절 참조. 특히 2B 첫 단계에서는 사용자에게 보이는 출력을 바꾸지 않는다.
+10. **다양성을 가장 개선할 가능성이 높은 변경:** Identity 선택을 "목록 순서의 첫 공존 쌍"에서 "**교집합·수렴 근거를 반영한 쌍/단일 선택**"으로 바꾸는 것이다. 예: 수렴 소스 수가 큰 태그를 포함하는 쌍을 우선하고, 같은 소스 안에서만 공존하는 쌍은 후순위로 둔다. 이는 의도된 출력 변경이므로 제품 승인, 엔진 버전 증가, golden 재설정 절차가 필요하다. 그다음이 도달 불가 archetype(중복 쌍) 정리와 Identity 문장 풀 확장이다.
+
+## 8. 구현이 정당화될 경우의 단계 (최대 3단계, 현재 미승인)
+
+1. **다양성 측정 도구 (출력 변경 없음):** 이번 분석에 쓴 분포 측정을 `scripts/`의 결정적 스크립트로 추가한다. archetype 분포, 상위 집중도, 교집합과 Identity의 연결률을 기준값으로 기록한다. 이후 모든 변경의 "개선 여부" 판단 기준이 된다.
+2. **`PatternRecord` 파생 (출력 변경 없음):** trace에서 `convergence`와 `authored-pair`를 계산하는 순수 함수를 추가하고 회귀 검사를 붙인다. Identity는 아직 바꾸지 않는다. 1단계 도구로 "새 규칙이었다면 어떤 분포가 나왔을지"를 오프라인으로 비교한다.
+3. **Identity 선택 변경 (의도된 출력 변경, 별도 승인 필요):** 승인된 선택 규칙으로 교체한다. `ANALYSIS_ENGINE_VERSION`을 올리고, golden을 명시적으로 재설정하면서 변경 diff를 검토한다. 과거 저장 결과는 그대로 둔다.
+
+---
+
 # Phase 2A — 최종 독립 구현 검수
 
 상태: 검수 완료 / 병합 준비 완료

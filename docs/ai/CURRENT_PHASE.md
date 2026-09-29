@@ -1,47 +1,40 @@
-# Phase 2A — Evidence Traceability
+# Phase 2B — PRELIMINARY DESIGN REVIEW
 
-Status: REVIEW COMPLETE — READY TO MERGE
+Status: PRELIMINARY DESIGN REVIEW — NOT APPROVED, NOT READY TO IMPLEMENT
+
+Previous phase: Phase 2A — Evidence Traceability is complete and merged (`main` `5758350`).
 
 ## Objective
 
-Introduce the minimum architecture necessary to trace:
+Understand what the current engine actually means by "intersection", identify the structural causes of results that feel too similar, and determine the smallest useful abstraction on top of the Phase 2A trace.
 
-> "Which input or calculated observation produced this interpretation?"
-
-without changing user-visible analysis results.
-
-Conceptual addition:
-
-```
-EvidenceRecord
-→ InterpretationClaim
-→ existing CoreTag / analysis behavior
-```
-
-Phase 2A is NOT a new interpretation engine. Existing analysis remains authoritative.
+This phase is analysis/design only until approved.
 
 ## Out of scope
 
-- Pattern Engine
-- Relationship Engine
-- Palm implementation
-- LLM narrative generation
-- UI redesign
-- broad trait ontology redesign
-- probabilistic fusion
-- generic confidence score
-- microservices
-- graph databases
-- plugin frameworks
+- Pattern Engine / Relationship Engine
+- Palm
+- LLM interpretation, embeddings, vector DB, graph DB
+- probabilistic scoring, new confidence model
+- new trait ontology
+- user feedback learning
+- UI changes
+- any change to user-visible analysis output without explicit approval
 
 ## Constraints
 
-Phase 2A must preserve the existing golden baseline.
+- Existing golden baseline stays unchanged unless an approved phase intentionally changes output (then: engine version bump + explicit baseline reset with reviewed diff).
+- Saved historical results are never reinterpreted (AD-002).
+- Cross-source convergence of symbolic mappings is not empirical validation (AD-004).
 
 ## Current next action
 
-Codex가 브랜치 `refactor/evidence-trace-phase2a`, 커밋 `6aae8ea`를 main과 비교해 최종 독립 검수를 완료했다. 판정은 **A. Ready to merge into main**이며 병합 전 필수 수정은 없다.
+Claude Code가 Codex 일시 부재로 **예비** 아키텍처 분석을 `CODEX_REVIEW.md` 상단 "Phase 2B Preliminary Architecture Analysis — Claude Code"에 기록했다. 승인된 설계가 아니다.
 
-기존 golden·saved-context·신규 evidence-trace·TypeScript·build·diff 검증을 통과했다. 이전 구현 부재 C 판정은 대체되었다. 상세 결과와 비차단 테스트 관찰 1건은 `CODEX_REVIEW.md` 상단에 기록되어 있다.
+다음 단계:
 
-다음 단계는 사용자 승인 후 검수 문서 갱신을 포함해 main 병합을 진행하는 것이다. 현재 병합·push는 수행하지 않았다. Phase 2A는 출처 기록만 추가하며 Palm 및 후속 분석 엔진 구현은 별도 범위다.
+1. Codex가 예비 분석을 독립 검토한다. 특히 측정 수치, 결과 유사성 원인 분류, `PatternRecord` 최소안(`convergence` / `authored-pair`)의 필요성을 확인한다.
+2. 사용자가 제품 결정을 내린다. 결정할 것은 두 가지다.
+   - Identity 선택 규칙을 바꿀지(의도된 출력 변경)
+   - 사주 보완 오행 태그의 의미, 그리고 "교차 신호" 섹션의 검증처럼 들리는 문구를 어떻게 다룰지
+3. 승인 후에만 구현 명세를 확정한다. 예비안의 첫 두 단계는 사용자에게 보이는 출력을 바꾸지 않는다.
