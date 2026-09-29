@@ -2,6 +2,7 @@ import { calculateSaju, lunarToSolar } from 'ssaju';
 import { calcWesternAstrology, calcSunSignKey, type WesternAstrologyResult } from './westernAstrology';
 import { detectConflicts, type ConflictPattern } from './conflictEngine';
 import { computeKeywordStrengths, type KeywordStrength } from './keywordEngine';
+import { buildAnalysisTrace, type AnalysisTrace } from './evidenceTrace';
 
 // ── 타입 정의 ────────────────────────────────────────────────────────────────
 
@@ -108,6 +109,9 @@ export type AnalysisSnapshot = AnalysisOutput & {
   conflicts: ConflictPattern[];
   keywordStrengths: KeywordStrength[];
   coreTags: CoreTag[];
+
+  // Phase 2A: 기존 CoreTag의 출처 기록. 새 분석에만 있고, 기존 저장 결과에는 소급하지 않는다.
+  trace?: AnalysisTrace;
 };
 
 export function isAnalysisSnapshot(r: AnalysisOutput): r is AnalysisSnapshot {
@@ -813,6 +817,12 @@ export function analyzeDestiny(
     ...bloodTypeData.coreTags,
   ])];
 
+  // 설명용 기록일 뿐 — 위의 어떤 결과도 trace에 의존하지 않는다
+  const trace = buildAnalysisTrace({
+    saju, zodiacKey, zodiac, westernAstrology, mbti: mbtiData, bloodType: bloodTypeData, tarot,
+    elementCoreTags: ELEMENT_CORE_TAGS,
+  });
+
   return {
     schemaVersion: 2,
     engineVersion: ANALYSIS_ENGINE_VERSION,
@@ -820,5 +830,6 @@ export function analyzeDestiny(
     createdAt: new Date().toISOString(),
     saju, zodiac, westernAstrology, mbtiTraits: mbtiData, bloodType: bloodTypeData, tarot, commonKeywords, detailedReading, identityStatement, archetype, tarotFlow,
     conflicts, keywordStrengths, coreTags,
+    trace,
   };
 }
