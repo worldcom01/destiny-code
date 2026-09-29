@@ -1,3 +1,70 @@
+# Phase 2B foundation 재검수 — 2026-09-30
+
+## 최종 판정
+
+**A. Ready for merge**
+
+- BLOCKER: **0** / IMPORTANT: **0** / MINOR: **0** / OBSERVATION: **1**
+- 검수 대상: `refactor/pattern-foundation-phase2b`, 수정 커밋 `106ea99`. 이전 구현 `38834e8` 및 main `5758350` 대비 실제 diff를 모두 확인했다.
+- 이전 IMPORTANT 1과 MINOR 1은 해소됐다. 병합 전 필수 수정은 없다. 이번 작업은 문서 기록만 수행했으며 merge/push하지 않았다.
+
+## 이전 지적 해소 확인
+
+### IMPORTANT 1 — 입력 생성기: 해결
+
+`mulberry32`는 정수 상태 갱신·비트 연산·`Math.imul`을 사용한다. 기존 부정확한 Number 곱셈에 의한 상태 붕괴 경로가 제거됐으며 `Math.random()`을 사용하지 않는다. 동일 seed의 입력 스트림 일치 및 20만 난수의 `[0, 1)` 범위를 별도로 확인했다. 홀수 증분의 32비트 상태 순환과 현재 표본의 고유성은 종전 짧은 반복이 제거됐다는 근거이며, 난수 출력값 자체가 모두 고유하다는 의미는 아니다.
+
+독립 실행 결과:
+
+| 지표 | 결과 |
+| --- | --- |
+| 생성 행 / 유효 입력 고유 수 / 중복 | 20,000 / **19,983** / **17** |
+| 고유 비율 / digest | **99.91% / `ca1e44df`** |
+| 최빈 Identity | 외로운 연결주의자 9,614건, **48.1%** |
+| 상위 4개 합계 | 18,417건, **92.1%** |
+| 대표 교집합 불일치 | pair 경로 기준 **84.6%** |
+| 관측 archetype | **13 / 21** |
+
+17개 중복은 모두 출생시간 미입력 사례였고, 같은 입력의 최대 출현 횟수는 2였다. 날짜·MBTI·혈액형만 남는 작은 부분 공간에서 충돌이 생기는 것은 자연스럽다. 현재 표집 확률로 이 부분 공간의 예상 충돌 쌍은 대략 14개 수준이다. 17개를 또 다른 짧은 순환의 증거로 볼 근거는 없다. 중복률 1% 초과 실패는 현재 표본 수·분포에서 생성기 붕괴를 포착하는 보수적인 무결성 검사로 적절하다. 통계적 품질 인증이나 향후 모든 표집 설정에 통용되는 기준은 아니다.
+
+유효 입력 key는 분석에 전달되는 양력 날짜, UI의 12개 시간 슬롯, 시간이 있을 때만 좌표, MBTI, 혈액형으로 구성된다. ID·순번 등 무관한 메타데이터로 고유성을 늘리지 않는다. 날짜는 사주·별자리 계산, 시간은 사주·서양 점성 계산, 좌표는 시간이 있는 Ascendant 계산, MBTI·혈액형은 기존 태그 매핑 경로에 연결된다. 좌표 목록은 중복 제거된 UI 좌표다. 이는 서로 다른 분석 입력 설정 수이지, 서로 다른 결과 수를 뜻하지 않는다.
+
+성별은 현재 사용하는 사주 반환 필드에 영향을 주지 않고 Tarot는 현재 Identity/commonKeywords의 집계 대상이 아니다. 별도 300건 대조에서 성별만 바꾼 snapshot은 `analysisId`·`createdAt`을 제외하고 동일했고, Tarot만 바꾼 경우 측정 대상 Identity/commonKeywords가 동일했다. Tarot의 다른 서사·trace까지 불변이라는 의미는 아니다. 음력은 기존 `lunarToSolar` 경로를 거쳐 같은 양력 날짜로 해석된다. 유효한 음력 날짜에서 양력으로 변환한 300쌍의 Identity/commonKeywords 일치를 추가 확인했다. 이 진단이 모든 달력 경계값을 검증하는 것은 아니며 달력 구현 변경도 범위 밖이다.
+
+### MINOR 1 — missing Evidence 대조 fixture: 해결
+
+새 fixture는 MBTI의 `체계적`·`감성적`과 blood의 `체계적` claim을 사용한다. available MBTI에서 실제 pair와 양쪽 claim ID/source 및 sharedSources를 확인하고, 같은 claims에서 MBTI만 missing으로 바꾸면 pair가 사라짐을 확인한다. 이어 available Saju의 `감성적` 지지를 추가하면 blood/Saju의 실제 지지만 남고 MBTI claim/source 및 sharedSources가 생기지 않는지 검사한다. 이전의 한쪽 trait 자체가 없던 자명한 검사가 아니다. 기존 1개를 4개로 대체했으며 개별 assertion **74개**를 독립 계수했다.
+
+## 범위 및 기존 동작 보존
+
+- `38834e8..106ea99`는 진단·패턴 회귀 스크립트와 문서만 변경한다. `app/` 변경은 없다.
+- main 대비 애플리케이션 변경은 이전 검수 대상인 readonly 정의 export와 독립 `analysisPatterns.ts`뿐이다. production 분석·UI·저장 경로에서 패턴을 소비하도록 연결하지 않았다.
+- Identity 알고리즘·정의·pair 순서, convergence/authored-pair 의미, conflicts, Saju, snapshot schema, engineVersion, narrative, UI에 수정 커밋으로 인한 변화가 없다. 기존 사용자 출력·저장 의미 보존에 대한 이전 검수 결론을 유지한다.
+- golden baseline은 변경하지 않았으며 재생성하지 않았다. Identity Selection v2, Palm, Pattern Engine, Relationship Engine 구현을 추가하지 않았다.
+
+## 독립 검증
+
+| 검사 | 결과 |
+| --- | --- |
+| `npx -y tsx scripts/golden-analysis.ts` | PASS, 7건 |
+| `npx -y tsx scripts/regression-saved-context.ts` | PASS |
+| `npx -y tsx scripts/regression-evidence-trace.ts` | PASS |
+| `npx -y tsx scripts/regression-analysis-patterns.ts` | PASS, 개별 74 assertions |
+| `npx -y tsx scripts/diagnostic-identity-diversity.ts` | PASS, 두 실행 digest 일치 |
+| `node node_modules/typescript/bin/tsc --noEmit --incremental false -p .` | PASS |
+| `npm run build` | PASS |
+| `git diff --check main...HEAD` / `git diff --check` | PASS |
+
+## OBSERVATION 1 — 수치의 적용 범위
+
+스크립트는 합성 입력에 대한 구조 진단이며 실제 사용자 모집단 추정이나 다양성 합격 기준이 아니라고 명시한다. 다만 “uniformly”는 전체 UI 입력 조합에 대한 균등 분포로 읽으면 정확하지 않다. 날짜 범위는 1950–2009이고 시간·좌표·MBTI의 유무에 지정 확률이 있는 혼합 표집이다. 기존 진단 대비 시간·날짜·좌표 표집 방식과 digest 대상도 달라졌으므로 새 수치를 생성기 수정만의 효과로 해석하지 않는다. 향후 비교는 이번 표집 설정과 key/digest 정의를 고정해 수행한다. 병합 필수 수정은 아니다.
+
+## 다음 단계
+
+Phase 2B foundation은 병합 준비가 됐다. 별도 승인하에 병합한 뒤 **Identity Selection v2 설계 단계**로 진입할 수 있다. 목표는 실제 cross-source intersection/provenance의 대표성을 높이는 것이며 archetype 빈도를 인위적으로 균등화하는 것이 아니다. 이번 검수는 해당 설계나 출력 변경을 승인·구현하지 않는다.
+
+---
+
 # Phase 2B foundation — Codex 최종 독립 검수
 
 상태: **수정 후 재검수 필요**. 아래 Phase 2B 예비 분석 및 Phase 2A 기록은 당시 이력으로 그대로 보존한다. 현재 판정은 이 절을 따른다.

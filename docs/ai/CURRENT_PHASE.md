@@ -1,6 +1,6 @@
 # Phase 2B — Foundation (observational)
 
-Status: PHASE 2B FOUNDATION — CODEX FINDINGS FIXED, AWAITING RE-REVIEW
+Status: PHASE 2B FOUNDATION — CODEX RE-REVIEW PASSED, READY FOR MERGE
 
 Previous phase: Phase 2A — Evidence Traceability is complete and merged (`main` `5758350`).
 
@@ -29,20 +29,11 @@ Only the observational foundation (diversity baseline + derived patterns) is app
 
 ## Current next action
 
-Codex가 `refactor/pattern-foundation-phase2b`의 `38834e8`을 main `5758350`과 비교해 독립 검수했다. 판정은 **C. Revision required**다. 상세 검수는 `CODEX_REVIEW.md` 최상단에 있으며 과거 예비 분석·Phase 2A 기록은 보존했다.
+Codex가 `refactor/pattern-foundation-phase2b`의 수정 커밋 `106ea99`를 이전 구현 `38834e8` 및 main `5758350` 대비 독립 재검수했다. 최종 판정은 **A. Ready for merge**다.
 
-- IMPORTANT 1: 다양성 진단 20,000행에서 고유 입력은 1,409개다. LCG의 Number 곱셈 정밀도에 따른 짧은 반복을 수정하고 입력 고유성 검증 및 진단 수치·digest를 갱신한다. golden baseline은 변경하지 않는다.
-- MINOR 1: missing Evidence의 authored-pair fixture가 실제로 한쪽 지지 누락을 시험하도록 available 대조를 추가한다.
-- 기존 사용자 출력·저장 의미는 보존되고 golden·saved-context·evidence-trace·pattern·TypeScript·build는 통과했다. convergence의 source dedupe와 authored-pair 출처 구조는 현재 정의에 적합하다.
+- 이전 IMPORTANT 1(생성기 반복)과 MINOR 1(missing Evidence fixture)이 모두 해소됐다. BLOCKER 0 / IMPORTANT 0 / MINOR 0 / OBSERVATION 1이다.
+- 20,000행 중 고유 유효 입력 **19,983개**, 중복 17개, digest **`ca1e44df`**를 재현했다. 합성 표집 수치는 실제 사용자 모집단의 빈도 추정이 아니다.
+- golden·saved-context·evidence-trace·pattern(개별 74 assertions)·diversity diagnostic·TypeScript·build·diff-check가 통과했다. golden baseline과 기존 사용자 출력·저장 의미는 보존됐다.
+- 상세 재검수와 이전 C 판정 이력은 `CODEX_REVIEW.md`에 보존했다.
 
-다음 단계는 Claude의 위 두 범위 수정 후 Codex 재검수다. 현재 병합·push하지 않는다. Identity 선택 변경은 여전히 별도 승인 사항이며, 진단 기준선 보완 후 제품 규칙을 논의한다. archetype 비율의 인위적 균등화는 목표가 아니다.
-
-### 수정 반영 (Claude Code)
-
-Claude가 같은 브랜치에 두 지적을 새 커밋으로 수정했다. `38834e8`은 amend하지 않았다. 상세 내용은 `CLAUDE_REPORT.md` 상단의 "Codex 지적 반영"에 있다.
-
-- **IMPORTANT 1:** 생성기를 `mulberry32`로 교체하고 유효 입력 기준의 고유성을 보고하도록 했다. 결과는 20,000행, 고유 19,983개, 중복 17개(99.91%)다. 중복률이 1%를 넘으면 무결성 오류가 난다. 새 digest는 `ca1e44df`이며, 이전 수치는 이력으로 남겼다.
-- **MINOR 1:** available/missing 대조 fixture로 authored-pair provenance를 검사한다. 버그는 없었고, 패턴 회귀 개별 assertion은 74개다.
-- 애플리케이션 코드, Identity, 패턴 의미, Snapshot, golden은 변경하지 않았다.
-
-다음 단계는 Codex 재검수다. 병합·push하지 않는다. Identity 선택 변경은 여전히 별도 승인 사항이다.
+다음 단계는 사용자 승인에 따른 foundation 병합이다. 이번 재검수에서는 merge/push하지 않았다. 이후 별도 Identity Selection v2 설계에 진입할 준비가 됐다. 실제 Identity 선택·사용자 출력 변경은 여전히 별도 승인 사항이며 이번 검수에서 설계하거나 구현하지 않았다. 목표는 cross-source intersection/provenance의 대표성 개선이며 archetype 빈도의 인위적 균등화가 아니다.
