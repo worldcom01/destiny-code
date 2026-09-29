@@ -11,8 +11,11 @@ import { analyzeDestiny, TAROT_DATA, IDENTITY_PAIR_DEFINITIONS, ANALYSIS_ENGINE_
 import type { EvidenceRecord } from '../app/lib/evidenceTrace';
 import { deriveAnalysisPatterns, traitSupportInConvergenceScope } from '../app/lib/analysisPatterns';
 import * as palmEvidenceModule from '../app/lib/palmEvidence';
-import { buildPalmEvidence, PalmObservationContractError } from '../app/lib/palmEvidence';
-import type { PalmLineKey, PalmLineObservation, PalmObservationBundle, PalmImageQuality } from '../app/lib/palmObservation';
+import { buildPalmEvidence } from '../app/lib/palmEvidence';
+import {
+  parsePalmObservationBundle, PalmObservationContractError,
+  type PalmLineKey, type PalmLineObservation, type PalmObservationBundle, type PalmImageQuality,
+} from '../app/lib/palmObservation';
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = '') {
@@ -94,7 +97,11 @@ const COMPLETE = bundle({
 
 // 3. fully unusable observation → no Palm evidence at all
 {
-  check('3 unusable quality → 0 records (even with observed-looking lines)', buildPalmEvidence(bundle(COMPLETE.observation.lines, QUALITY('unusable', ['not-a-palm']))).length === 0);
+  const allUnreadable = { life: UNREADABLE, head: UNREADABLE, heart: UNREADABLE, fate: UNREADABLE };
+  check('3 unusable quality → 0 records', buildPalmEvidence(bundle(allUnreadable, QUALITY('unusable', ['not-a-palm']))).length === 0);
+  let err: unknown = null;
+  try { buildPalmEvidence(bundle(COMPLETE.observation.lines, QUALITY('unusable', ['not-a-palm']))); } catch (e) { err = e; }
+  check('3 unusable quality with observed lines is a contradiction → rejected (design §3)', err instanceof PalmObservationContractError);
 }
 
 // 4. one readable line + three unreadable lines
@@ -164,8 +171,7 @@ const COMPLETE = bundle({
   const ev = buildPalmEvidence(COMPLETE);
   check('13 adapter output contains no claim fields (trait / ruleId / evidenceIds)',
     ev.every((e) => !('trait' in e) && !('ruleId' in e) && !('evidenceIds' in e)));
-  check('13/14 palmEvidence exports only the adapter and its contract error',
-    eq(Object.keys(palmEvidenceModule).sort(), ['PalmObservationContractError', 'buildPalmEvidence']));
+  check('13/14 palmEvidence exports only the adapter', eq(Object.keys(palmEvidenceModule), ['buildPalmEvidence']));
   const CORE_TAGS = ['창의적', '분석적', '감성적', '실용적', '사교적', '독립적', '직관적', '체계적', '열정적', '포용적'];
   // code only — the modules' comments state that they create no CoreTag / claim
   const sources = ['app/lib/palmObservation.ts', 'app/lib/palmEvidence.ts']
@@ -219,6 +225,94 @@ const COMPLETE = bundle({
     try { out = buildPalmEvidence(input as PalmObservationBundle); } catch (e) { err = e; }
     check(`18 malformed (${name}) → PalmObservationContractError, no output`, err instanceof PalmObservationContractError && out === undefined);
   }
+}
+
+
+// ── Codex Phase 1A IMPORTANT: one shared runtime validation boundary ──
+const VALID_UNKNOWN: unknown = JSON.parse(JSON.stringify(bundle({
+  life: visible('curved', null), head: NOT_DETECTED, heart: UNREADABLE, fate: visible('straight', 'continuous'),
+}, QUALITY('partial', ['cropped-palm']))));
+const withLine = (key: PalmLineKey, line: unknown): unknown => {
+  const b = JSON.parse(JSON.stringify(VALID_UNKNOWN));
+  b.observation.lines[key] = line;
+  return b;
+};
+const OBS = { status: 'observed', value: 'curved' };
+const OBS_CONT = { status: 'observed', value: 'continuous' };
+const ADVERSARIAL: Array<[string, unknown]> = [
+  ['1 unreadable reading + observed value', withLine('life', { status: 'visible', curvature: { status: 'unreadable', reason: 'blur', value: 'curved' }, continuity: OBS_CONT })],
+  ['2 observed reading + unreadable reason', withLine('life', { status: 'visible', curvature: { status: 'observed', value: 'curved', reason: 'blur' }, continuity: OBS_CONT })],
+  ['3 unreadable line + observed curvature', withLine('heart', { status: 'unreadable', reason: 'blur', curvature: OBS })],
+  ['4 unreadable line + observed continuity', withLine('heart', { status: 'unreadable', reason: 'blur', continuity: OBS_CONT })],
+  ['5 not-detected line + observed curvature', withLine('head', { status: 'not-detected', curvature: OBS })],
+  ['6 not-detected line + observed continuity', withLine('head', { status: 'not-detected', continuity: OBS_CONT })],
+  ['7 visible line missing a required reading', withLine('fate', { status: 'visible', curvature: OBS })],
+  ['8 unsupported curvature value', withLine('fate', { status: 'visible', curvature: { status: 'observed', value: 'wavy' }, continuity: OBS_CONT })],
+  ['9 unsupported continuity value', withLine('fate', { status: 'visible', curvature: OBS, continuity: { status: 'observed', value: 'broken-ish' } })],
+  ['10 unsupported unreadable reason', withLine('heart', { status: 'unreadable', reason: 'model-unsure' })],
+  ['11 malformed quality usability', (() => { const b = JSON.parse(JSON.stringify(VALID_UNKNOWN)); b.quality.usability = 'good'; return b; })()],
+  ['12 malformed nested line structure', withLine('life', ['visible', 'curved'])],
+  ['visible line + unreadable-line reason', withLine('life', { status: 'visible', reason: 'blur', curvature: OBS, continuity: OBS_CONT })],
+  ['not-detected line + reason', withLine('head', { status: 'not-detected', reason: 'blur' })],
+  ['reading without status', withLine('life', { status: 'visible', curvature: { value: 'curved' }, continuity: OBS_CONT })],
+  ['observed reading without value', withLine('life', { status: 'visible', curvature: { status: 'observed' }, continuity: OBS_CONT })],
+  ['unreadable line without reason', withLine('heart', { status: 'unreadable' })],
+  ['quality palmCoverage invalid', (() => { const b = JSON.parse(JSON.stringify(VALID_UNKNOWN)); b.quality.palmCoverage = 'most'; return b; })()],
+  ['quality issue invalid', (() => { const b = JSON.parse(JSON.stringify(VALID_UNKNOWN)); b.quality.issues = ['cosmic-rays']; return b; })()],
+  ['quality issues duplicated', (() => { const b = JSON.parse(JSON.stringify(VALID_UNKNOWN)); b.quality.issues = ['blur', 'blur']; return b; })()],
+  ['quality extra field (numeric confidence)', (() => { const b = JSON.parse(JSON.stringify(VALID_UNKNOWN)); b.quality.confidence = 0.82; return b; })()],
+  ['no palm coverage but usable', (() => { const b = JSON.parse(JSON.stringify(VALID_UNKNOWN)); b.quality.palmCoverage = 'none'; return b; })()],
+  ['extraction version empty', (() => { const b = JSON.parse(JSON.stringify(VALID_UNKNOWN)); b.extraction.modelRevision = ''; return b; })()],
+  ['bundle extra field', (() => { const b = JSON.parse(JSON.stringify(VALID_UNKNOWN)); b.coreTags = ['창의적']; return b; })()],
+];
+for (const [name, input] of ADVERSARIAL) {
+  const before = JSON.stringify(input);
+  let direct: unknown = null, viaAdapter: unknown = null;
+  let out: unknown = undefined;
+  try { parsePalmObservationBundle(input); } catch (e) { direct = e; }
+  try { out = buildPalmEvidence(input as PalmObservationBundle); } catch (e) { viaAdapter = e; }
+  check(`adversarial ${name}: validator and adapter both reject, 0 evidence, input untouched`,
+    direct instanceof PalmObservationContractError && viaAdapter instanceof PalmObservationContractError
+    && out === undefined && JSON.stringify(input) === before);
+}
+
+// atomic rejection: valid life/head/heart + malformed fate → no rows at all
+{
+  const input = withLine('fate', { status: 'unreadable', reason: 'blur', continuity: OBS_CONT });
+  let rows: EvidenceRecord[] | undefined;
+  let err: unknown = null;
+  try { rows = buildPalmEvidence(input as PalmObservationBundle); } catch (e) { err = e; }
+  check('atomic: one malformed line (fate) → error and zero rows from the valid lines', err instanceof PalmObservationContractError && rows === undefined);
+}
+
+// public validator: valid input, non-mutation, fresh output, determinism
+{
+  const frozen = deepFreeze(JSON.parse(JSON.stringify(VALID_UNKNOWN)));
+  const before = JSON.stringify(frozen);
+  const a = parsePalmObservationBundle(frozen);
+  const b = parsePalmObservationBundle(frozen);
+  check('validator accepts a valid unknown bundle and returns an equal value', eq(a, frozen));
+  check('validator does not mutate (deep-frozen input) and returns a fresh object', JSON.stringify(frozen) === before && a !== frozen && a.observation !== (frozen as PalmObservationBundle).observation);
+  check('validator is deterministic', eq(a, b));
+  check('validated bundle converts to the same evidence as the original', eq(buildPalmEvidence(a), buildPalmEvidence(frozen as PalmObservationBundle)));
+}
+
+// future Phase 1B boundary shape: untrusted provider output → validator → adapter
+{
+  const providerOutput: unknown = JSON.parse(JSON.stringify(VALID_UNKNOWN));
+  const validated = parsePalmObservationBundle(providerOutput);
+  const ev = buildPalmEvidence(validated);
+  check('provider-style unknown → parsePalmObservationBundle → buildPalmEvidence (12 rows)',
+    ev.length === 12 && ev.every((e) => e.source === 'palm' && e.kind === 'image-observation'));
+  const malformed: unknown = withLine('heart', { status: 'unreadable', reason: 'blur', curvature: OBS });
+  let err: unknown = null;
+  let reachedAdapter = false;
+  try {
+    const v = parsePalmObservationBundle(malformed);
+    reachedAdapter = true;
+    buildPalmEvidence(v);
+  } catch (e) { err = e; }
+  check('malformed provider output is rejected before any adapter output exists', err instanceof PalmObservationContractError && !reachedAdapter);
 }
 
 if (failures) {

@@ -71,3 +71,126 @@ export type PalmObservationBundle = {
     promptVersion: string;
   };
 };
+
+// ── 런타임 검증 경계 ────────────────────────────────────────────────────────
+// 신뢰할 수 없는 입력(향후 provider의 구조화 응답 등) → 검증된 PalmObservationBundle.
+// Palm 관찰의 유효성 정의는 여기 한 곳뿐이다. Evidence adapter도 이 함수를 거친다.
+// 모든 단계에서 정확한 key 집합을 요구하고, 판별 상태와 모순되는 필드는 무시하지 않고 거부한다.
+// 없는 값을 채우거나 모순 필드를 버리는 정규화는 하지 않는다. 입력은 변경하지 않으며 새 객체를 반환한다.
+
+export class PalmObservationContractError extends Error {
+  constructor(message: string) {
+    super(`palm observation contract: ${message}`);
+    this.name = 'PalmObservationContractError';
+  }
+}
+
+const fail = (message: string): never => {
+  throw new PalmObservationContractError(message);
+};
+
+function record(input: unknown, path: string, keys: readonly string[]): Record<string, unknown> {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) fail(`${path} must be an object`);
+  const obj = input as Record<string, unknown>;
+  const actual = Object.keys(obj).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((k, i) => k !== expected[i])) {
+    fail(`${path} must have exactly the fields [${expected.join(', ')}], got [${actual.join(', ')}]`);
+  }
+  return obj;
+}
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[], path: string): T {
+  if (!allowed.includes(value as T)) fail(`${path} has invalid value ${JSON.stringify(value)}`);
+  return value as T;
+}
+
+function status(input: unknown, path: string): unknown {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) fail(`${path} must be an object`);
+  return (input as Record<string, unknown>).status;
+}
+
+function parseReading<T extends string>(input: unknown, allowed: readonly T[], path: string): PalmReading<T> {
+  const s = status(input, path);
+  if (s === 'observed') {
+    const r = record(input, path, ['status', 'value']);
+    return { status: 'observed', value: oneOf(r.value, allowed, `${path}.value`) };
+  }
+  if (s === 'unreadable') {
+    const r = record(input, path, ['status', 'reason']);
+    return { status: 'unreadable', reason: oneOf(r.reason, PALM_READABILITY_REASONS, `${path}.reason`) };
+  }
+  return fail(`${path}.status has invalid value ${JSON.stringify(s)}`);
+}
+
+function parseLine(input: unknown, path: string): PalmLineObservation {
+  const s = status(input, path);
+  if (s === 'visible') {
+    const r = record(input, path, ['status', 'curvature', 'continuity']);
+    return {
+      status: 'visible',
+      curvature: parseReading(r.curvature, PALM_CURVATURES, `${path}.curvature`),
+      continuity: parseReading(r.continuity, PALM_CONTINUITIES, `${path}.continuity`),
+    };
+  }
+  if (s === 'not-detected') {
+    record(input, path, ['status']);
+    return { status: 'not-detected' };
+  }
+  if (s === 'unreadable') {
+    const r = record(input, path, ['status', 'reason']);
+    return { status: 'unreadable', reason: oneOf(r.reason, PALM_READABILITY_REASONS, `${path}.reason`) };
+  }
+  return fail(`${path}.status has invalid value ${JSON.stringify(s)}`);
+}
+
+function parseQuality(input: unknown): PalmImageQuality {
+  const r = record(input, 'quality', ['version', 'usability', 'palmCoverage', 'issues']);
+  if (r.version !== 1) fail('quality.version must be 1');
+  if (!Array.isArray(r.issues)) fail('quality.issues must be an array');
+  const issues = (r.issues as unknown[]).map((v, i) => oneOf(v, PALM_IMAGE_ISSUES, `quality.issues[${i}]`));
+  if (new Set(issues).size !== issues.length) fail('quality.issues has duplicates');
+  return {
+    version: 1,
+    usability: oneOf(r.usability, ['usable', 'partial', 'unusable'] as const, 'quality.usability'),
+    palmCoverage: oneOf(r.palmCoverage, ['full', 'partial', 'none'] as const, 'quality.palmCoverage'),
+    issues,
+  };
+}
+
+function nonEmptyString(value: unknown, path: string): string {
+  if (typeof value !== 'string' || value.length === 0) fail(`${path} must be a non-empty string`);
+  return value as string;
+}
+
+export function parsePalmObservationBundle(input: unknown): PalmObservationBundle {
+  const b = record(input, 'bundle', ['version', 'observation', 'quality', 'extraction']);
+  if (b.version !== 1) fail('bundle.version must be 1');
+
+  const o = record(b.observation, 'observation', ['version', 'lines']);
+  if (o.version !== 1) fail('observation.version must be 1');
+  const rawLines = record(o.lines, 'observation.lines', PALM_LINE_KEYS);
+  const lines = {} as Record<PalmLineKey, PalmLineObservation>;
+  for (const key of PALM_LINE_KEYS) lines[key] = parseLine(rawLines[key], `lines.${key}`);
+
+  const quality = parseQuality(b.quality);
+  // 품질과 관찰의 명백한 모순 (설계 §3): 손바닥이 없거나 사용할 수 없는 이미지에서 관찰된 선은 없다
+  if (quality.palmCoverage === 'none' && quality.usability !== 'unusable') fail('quality with no palm coverage must be unusable');
+  if (quality.usability === 'unusable') {
+    for (const key of PALM_LINE_KEYS) {
+      if (lines[key].status !== 'unreadable') fail(`unusable image cannot have a ${lines[key].status} line (${key})`);
+    }
+  }
+
+  const e = record(b.extraction, 'extraction', ['adapterVersion', 'modelRevision', 'promptVersion']);
+  return {
+    version: 1,
+    observation: { version: 1, lines },
+    quality,
+    extraction: {
+      adapterVersion: nonEmptyString(e.adapterVersion, 'extraction.adapterVersion'),
+      modelRevision: nonEmptyString(e.modelRevision, 'extraction.modelRevision'),
+      promptVersion: nonEmptyString(e.promptVersion, 'extraction.promptVersion'),
+    },
+  };
+}
