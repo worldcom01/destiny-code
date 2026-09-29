@@ -1,6 +1,8 @@
 # Phase 2B — Foundation (observational)
 
-Status: PHASE 2B FOUNDATION — CODEX RE-REVIEW PASSED, READY FOR MERGE
+Status: PHASE 2B FOUNDATION — COMPLETED / MERGED
+
+Identity Selection v2 is NOT implemented. Next phase: **Identity Selection v2 DESIGN** (not started).
 
 Previous phase: Phase 2A — Evidence Traceability is complete and merged (`main` `5758350`).
 
@@ -37,3 +39,15 @@ Codex가 `refactor/pattern-foundation-phase2b`의 수정 커밋 `106ea99`를 이
 - 상세 재검수와 이전 C 판정 이력은 `CODEX_REVIEW.md`에 보존했다.
 
 다음 단계는 사용자 승인에 따른 foundation 병합이다. 이번 재검수에서는 merge/push하지 않았다. 이후 별도 Identity Selection v2 설계에 진입할 준비가 됐다. 실제 Identity 선택·사용자 출력 변경은 여전히 별도 승인 사항이며 이번 검수에서 설계하거나 구현하지 않았다. 목표는 cross-source intersection/provenance의 대표성 개선이며 archetype 빈도의 인위적 균등화가 아니다.
+
+### 완료 (병합)
+
+Codex 재검수(A) 후 `refactor/pattern-foundation-phase2b`를 `main`에 fast-forward로 병합했다. 병합 전후 검증 결과는 다음과 같다.
+
+- golden, saved-context, evidence-trace, pattern(74 assertions): 모두 PASS
+- diversity diagnostic: 20,000 / 고유 19,983 / digest `ca1e44df`
+- TypeScript, build, diff-check: 통과
+
+Phase 2B **foundation**만 완료되었다. 완료된 것은 관찰용 패턴 파생과 다양성 기준선이다. Identity 선택 알고리즘, 사용자 출력, `ANALYSIS_ENGINE_VERSION`, golden baseline, AnalysisSnapshot 구조는 변경되지 않았다.
+
+다음 단계는 **Identity Selection v2 DESIGN**이다. 설계는 아직 시작하지 않았다. 실제 Identity 변경은 설계 검토와 사용자 승인 뒤, 엔진 버전 증가와 golden 명시적 재설정을 거쳐서만 진행한다.
