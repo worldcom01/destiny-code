@@ -2,16 +2,23 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { ChangeEvent, ReactNode } from 'react';
-import { analyzeDestiny, isAnalysisSnapshot, type AnalysisOutput, type AnalysisSnapshot, type TarotResult, ELEMENT_META } from '@/app/lib/analysis';
+import { analyzeDestiny, isAnalysisSnapshot, type TarotResult, ELEMENT_META } from '@/app/lib/analysis';
 import { LOCATION_OPTION_GROUPS, findLocationByLabel } from '@/app/lib/regions';
 import {
-  saveAnalysis,
   getSavedAnalyses,
   deleteAnalysis,
   formatSavedDate,
   type SavedAnalysis,
 } from '@/app/lib/storageEngine';
-import { generateShareText, shareResult, type ShareOutcome } from '@/app/lib/shareEngine';
+import { shareResult, type ShareOutcome } from '@/app/lib/shareEngine';
+import {
+  activeFromNewAnalysis,
+  activeFromSaved,
+  activeDestinyCode,
+  activeShareText,
+  saveActive,
+  type ActiveAnalysis,
+} from '@/app/lib/activeAnalysis';
 import { shuffleCards } from '@/app/lib/tarotEngine';
 import { generateDestinyCode } from '@/app/lib/destinyCode';
 import { saveProfile } from '@/app/lib/profileStore';
@@ -292,14 +299,13 @@ export default function Home() {
   const [appStep, setAppStep] = useState<AppStep>('form');
   const [loadingStep, setLoadingStep] = useState(0);
   const [shuffledCards, setShuffledCards] = useState<TarotResult[]>([]);
-  // 새 분석은 AnalysisSnapshot, 구버전 저장 결과는 AnalysisOutput
-  const [result, setResult] = useState<AnalysisSnapshot | AnalysisOutput | null>(null);
+  // 표시 중인 결과와 그 메타데이터. 새 분석은 AnalysisSnapshot, 구버전 저장 결과는 AnalysisOutput
+  const [active, setActive] = useState<ActiveAnalysis | null>(null);
   const [savedList, setSavedList] = useState<SavedAnalysis[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
   const [shareStatus, setShareStatus] = useState<ShareOutcome | 'idle'>('idle');
   const resultRef = useRef<HTMLDivElement>(null);
-  const [destinyCode, setDestinyCode] = useState('');
   const [codeCopyStatus, setCodeCopyStatus] = useState<'idle' | 'copied'>('idle');
 
   useEffect(() => {
@@ -321,9 +327,8 @@ export default function Home() {
 
   const handleSubmit = (e: { preventDefault(): void }) => {
     e.preventDefault();
-    setResult(null);
+    setActive(null);
     setSaveStatus('idle');
-    setDestinyCode('');
     setShuffledCards(shuffleCards(9));
     setAppStep('picking');
   };
@@ -353,10 +358,14 @@ export default function Home() {
       form.solarType,
       form.isLeapMonth,
     );
-    setResult(analysisResult);
+    setActive(activeFromNewAnalysis(analysisResult, {
+      nickname: form.name,
+      birthdate,
+      mbti: form.mbti,
+      bloodtype: form.bloodtype,
+    }));
 
     const code = generateDestinyCode(analysisResult);
-    setDestinyCode(code);
     const wa = analysisResult.westernAstrology;
     saveProfile({
       code,
@@ -385,31 +394,23 @@ export default function Home() {
   };
 
   const handleSave = () => {
-    if (!result) return;
-    saveAnalysis({
-      nickname: form.name,
-      birthdate: `${form.year}-${form.month.padStart(2, '0')}-${form.day.padStart(2, '0')}`,
-      mbti: form.mbti,
-      bloodtype: form.bloodtype,
-      keywords: result.commonKeywords,
-      tarotName: result.tarot.name,
-      zodiacSign: result.zodiac.sign,
-    }, result);
+    if (!active) return;
+    saveActive(active);
     setSaveStatus('saved');
     setSavedList(getSavedAnalyses());
     setTimeout(() => setSaveStatus('idle'), 2500);
   };
 
   const handleShare = async () => {
-    if (!result) return;
-    const text = generateShareText(result, form.name);
+    if (!active) return;
+    const text = activeShareText(active);
     const outcome = await shareResult(text);
     setShareStatus(outcome);
     if (outcome !== 'failed') setTimeout(() => setShareStatus('idle'), 2500);
   };
 
   const handleViewSaved = (saved: SavedAnalysis) => {
-    setResult(saved.resultData);
+    setActive(activeFromSaved(saved));
     setSaveStatus('idle');
     setShowHistory(false);
     setAppStep('result');
@@ -421,6 +422,8 @@ export default function Home() {
     setSavedList(getSavedAnalyses());
   };
 
+  const result = active?.result ?? null;
+  const destinyCode = active ? activeDestinyCode(active) : '';
   // 충돌·키워드 강도는 스냅샷에만 있다. 구버전 저장 결과는 재계산하지 않고 비워 둔다.
   const snapshot = result && isAnalysisSnapshot(result) ? result : null;
   const conflicts = snapshot?.conflicts ?? [];

@@ -1,6 +1,6 @@
 import { isAnalysisSnapshot, type AnalysisOutput, type AnalysisSnapshot } from './analysis';
 
-interface SavedAnalysisMeta {
+export interface SavedAnalysisMeta {
   nickname: string;
   birthdate: string;
   mbti: string;
@@ -52,21 +52,23 @@ export function getSavedAnalyses(): SavedAnalysis[] {
   return readStored().map(toSavedAnalysis);
 }
 
+// savedId: 저장 목록에서 연 결과를 다시 저장할 때 원래 항목 ID (legacy 항목 중복 방지용)
 export function saveAnalysis(
   meta: SavedAnalysisMeta,
   resultData: AnalysisSnapshot | AnalysisOutput,
+  savedId?: string,
 ): SavedAnalysis {
   const list = readStored();
   // 스냅샷은 분석 ID를 그대로 저장 ID로 쓴다 — 같은 분석을 다시 저장해도 중복되지 않는다.
-  if (isAnalysisSnapshot(resultData)) {
-    const existing = list.find((a) => a.id === resultData.analysisId);
-    if (existing) return toSavedAnalysis(existing);
-  }
+  const id = savedId
+    ?? (isAnalysisSnapshot(resultData)
+      ? resultData.analysisId
+      : Math.random().toString(36).slice(2) + Date.now().toString(36));
+  const existing = list.find((a) => a.id === id);
+  if (existing) return toSavedAnalysis(existing);
   const item: StoredAnalysis = {
     ...meta,
-    id: isAnalysisSnapshot(resultData)
-      ? resultData.analysisId
-      : Math.random().toString(36).slice(2) + Date.now().toString(36),
+    id,
     createdAt: new Date().toISOString(),
     resultData,
   };
