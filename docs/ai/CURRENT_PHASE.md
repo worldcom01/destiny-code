@@ -1,3 +1,18 @@
+# Palm Phase 1C — Production Readiness 검수 완료 / 수정 대기
+
+Status: **C. BLOCKED — SECURITY / DATA ISOLATION / COST CONTROL ISSUE** / public OFF 유지
+
+- 독립 검수 HEAD `4e7924d`, 브랜치 `feature/palm-supplement-phase1c`. CRITICAL 0 / IMPORTANT 2 / MINOR 3 / NOTE 1.
+- 차단: I-1 실제 ingress의 신뢰 IP overwrite/우회 차단 계약 미확정; I-2 완료 후 finalize/analytics RPC에 시간 제한이 없어 관찰 응답을 막을 수 있음.
+- MINOR: events bounded body/deadline, 활성 결과 삭제 시 Palm attempt/fresh/pending 무효화, 기본 저장 실패 안내. 구체 위치·재현·최소 수정은 CODEX_REVIEW 최상단.
+- Identity/base/정상 A-B 격리/관찰·해석 경계는 적절하다. supplement 104/public 93 및 기존 회귀·golden PASS, digest selection 25ab43b8/full dab19aab 일치. TypeScript/build/변경 Palm lint/diff-check PASS. 전체 lint는 기존 8 errors + 1 warning.
+- 다음 단계: Claude가 지정 항목 수정·회귀 보완 → 한정 재검수 → 승인 시 SQL/cleanup/ingress 구성 → 실제 다중 연결 DB-only smoke → 실기기 mock → 별도 승인 live 1회 → 배포 검수.
+- 실제 DB migration/OpenAI 호출/merge/push 없음. production 공개 승인 아님. CV 실험 이력·기존 engine '3'/schema 2/baseline 불변.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm Phase 1C — Production Supplementary Analysis
 
 Status: **PHASE 1C IMPLEMENTATION COMPLETE — AWAITING CODEX REVIEW / LIVE SMOKE** / 배포 아님 · `PALM_PUBLIC_ENABLED=false` 기본

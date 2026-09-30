@@ -1,3 +1,128 @@
+# Palm Phase 1C — Production Readiness 한정 검수 (2026-10-01)
+
+**C. BLOCKED — SECURITY / DATA ISOLATION / COST CONTROL ISSUE**
+
+**CRITICAL 0 / IMPORTANT 2 / MINOR 3 / NOTE 1.** 구현 전반을 재설계할 필요는 없다. I-1 신뢰 IP 경계와 I-2 완료 응답의 무기한 DB 대기를 해결한 뒤 운영 준비 판정을 다시 받는다. 이 판정은 production 공개 승인이 아니다. 이번에는 migration/configuration 변경, live 호출, merge/push를 실행하지 않았다.
+
+## 검수 범위와 독립 증거
+
+- 브랜치 `feature/palm-supplement-phase1c`, HEAD `4e7924d`. 설계 `62589d9`를 가져온 `57bb8f2` 이후 `fe54e7f`, `db200a9`, `6182771`, `4e7924d`의 실제 diff를 읽었다. PROJECT_CONTEXT/CURRENT_PHASE/CODEX_REVIEW/CLAUDE_REPORT/DECISIONS, production 코드·SQL·회귀·운영 문서를 대조했다. CV 실험으로 범위를 확장하지 않았다.
+- 신규 회귀 직접 실행: supplement **104 PASS**, public **93 PASS**. public은 일회용 로컬 PGlite와 fake provider만 사용한다. 실제 Supabase나 OpenAI는 호출하지 않았다.
+- 기존 직접 실행: palm-extraction 146, palm-evidence 76, patterns 74, identity-selection 97, catalog-v3 23, saved-context 14, evidence-trace 218 및 golden v1/v2/v3 7 cases 전부 PASS. diagnostic selection **25ab43b8**, full **dab19aab** 일치.
+- `tsc --noEmit` PASS. build는 최초 sandbox 실행에서 Google Fonts 다운로드 제한으로 실패했지만 동일 명령을 네트워크 허용 환경에서 재실행해 PASS. 이때도 OpenAI 호출 없음.
+- 신규/변경 Palm 파일과 신규 회귀의 lint PASS. 전체 lint는 기존 8 errors + 1 warning으로 실패하며 아래 검증 범위 기록에 명시한다. baseline이나 unrelated lint를 고치지 않았다. diff-check PASS.
+- 브라우저 `.next/static` JS 15개 검사: OPENAI_API_KEY/PALM_EXTRACTION_SECRET/SUPABASE_SERVICE_ROLE_KEY/PALM_SESSION_SECRET 식별자 0건. 로컬에서 검사 가능한 실제 서버 secret 값 1개도 일치 0건. 다른 미설정 secret 값을 검사한 것으로 주장하지 않는다. secret 값은 출력하지 않았다.
+- 추가 `/tmp` probe는 가짜 세션·가짜 IP·합성 사진·fake provider로만 실행했다. I-1/I-2/M-1의 재현 결과는 아래와 같다. 앱 코드와 repository tests는 수정하지 않았다.
+
+## 차단 항목
+
+### I-1 — IMPORTANT: 'trusted single IP header'의 신뢰 경계가 아직 정해지지 않음
+
+**위치:** `app/lib/server/palmPublicAccess.ts:70`, `:172`; `app/lib/server/palmPublicSession.ts:48`; `app/lib/server/palmPublicAnalyze.ts:61`; `docs/palm-phase1c-operations.md:19`.
+
+설정은 임의의 `PALM_TRUSTED_IP_HEADER` 이름을 허용하고 함수는 값을 읽어 쉼표/문자 형태만 검사한다. 단일 값이라는 사실은 proxy가 덮어쓴 값이라는 증거가 아니다. 운영 문서에는 실제 배포 ingress, 선택할 정확한 헤더, 외부 전달값을 제거/덮어쓰는 보장, ingress 우회 차단 또는 spoof 검증 절차가 없다. 저장소의 Next config에도 이런 경계가 정의돼 있지 않다.
+
+로컬 probe: `PALM_TRUSTED_IP_HEADER=x-client-ip` 설정은 enabled가 됐다. 클라이언트가 넣은 두 단일 IPv4 값 모두 통과하고 서로 다른 IP quota key가 됐다. 실제 IP가 아닌 `...`도 통과했다. 이것은 **실제 운영 ingress가 취약하다는 실증이 아니라, 현재 코드/설정 계약만으로는 신뢰를 보장할 수 없다는 실증**이다. 순수 함수 테스트에서 XFF 목록을 거부한 것만으로 spoof 방어 PASS로 보고할 수 없다.
+
+외부에서 그 헤더를 선택할 수 있는 배포라면 IP당 세션 발급/일 호출 한도를 우회해 전체 예산을 소진할 수 있다. session/Origin/CSRF는 익명 클라이언트가 정상 발급받을 수 있어 이 위협을 대신 막지 않는다. 전체 일 cap 자체가 무제한이 된다고 주장하지는 않는다.
+
+**필수 최소 조치:** 실제 배포 ingress와 헤더를 하나로 명시하고, 외부 헤더 overwrite 및 direct-origin 우회 차단을 확인할 수 있는 설정/검증 절차를 기록한다. 지원하지 않는 배포/미확인 헤더는 public enable을 거부하거나 공개 OFF로 둔다. 실제 IP parser로 형식을 검증한다. 알려진 안전한 플랫폼 경로로 제한하거나 신뢰 proxy 구성을 제공하는 두 방법 중 하나면 충분하다. 임의 단일 문자열을 신뢰한다고 문구만 바꾸는 것은 해결이 아니다. 공개 OFF 상태의 비유료 ingress probe로 공격자 제공 값/목록이 quota identity를 바꾸지 않는지 검증하고 raw IP를 로그에 남기지 않는다.
+
+### I-2 — IMPORTANT: provider 완료 후 DB/analytics가 전체 요청 시간을 무기한 연장
+
+**위치:** `app/lib/server/palmPublicAnalyze.ts:119`, `:120` (오류 경로 `:105`, `:111`, `:125`, `:126`도 동일); `app/lib/server/palmPublicGate.ts:141`; operator의 `app/lib/server/palmExtraction.ts` finalize 대기.
+
+`.catch(() => undefined)`는 reject만 처리한다. `finalize()`와 `event()`를 await하면서 RPC에 deadline/abort가 없어 응답이 멈춘 DB 호출은 영원히 기다린다. `requestTimeoutMs`는 upload/provider timeout 계산에 쓰이며 이 구간에는 적용되지 않는다. 따라서 'analytics 실패는 응답을 막지 않는다'는 주석이 실제 대기 동작과 다르다.
+
+로컬 probe에서 provider가 정상 bundle을 반환하고 finalize도 완료한 뒤 `recordEvent`만 pending으로 만들었다. 요청 전체 제한 100ms / provider 50ms인데 **300ms 후에도 handler 응답 없음**, fake provider 1회 / finalized true였다. 실제 배포에서는 route 종료까지 유료 결과를 전달하지 못하고, completed ledger 때문에 같은 이미지 재시도도 차단될 수 있다. provider 이전 DB 예외는 올바르게 fail closed이지만, 이것이 완료 후 응답 보장을 의미하지 않는다.
+
+**필수 최소 조치:** 공유 DB 호출에 abort 가능한 명시적 시간 한도를 두고 요청 deadline을 초과하지 않게 한다. 완료 후 finalize는 제한된 시도 후 실패/불확실 상태를 보수적으로 남기되 provider를 다시 호출하거나 예산을 환불하지 않는다(lease 복구 활용). analytics는 짧은 독립 timeout 또는 플랫폼이 지원하는 종료 후 작업으로 처리해 관찰 응답을 막지 않게 한다. 단순 무대기 Promise만 던져 실행을 보장한다고 하지 않는다. 성공 응답 보존, hanging finalize/event, provider 이전 hanging reserve/markStarted 호출 0회, 늦은 완료에서 예산 환불 없음 회귀를 추가한다.
+
+## 작은 수정 항목
+
+### M-1 — MINOR: events 본문 512 제한이 실제 읽기 제한이 아님
+
+**위치:** `app/lib/server/palmPublicSession.ts:82`.
+
+`req.text()`가 전부 읽은 뒤 JS 문자열 길이를 비교한다. 로컬 chunked body probe는 **16,384 bytes를 모두 소비한 뒤 413**을 반환했다. 저속 body에 대한 deadline도 없다. 유료 추론/민감정보 저장 우회는 아니지만 공개 endpoint의 불필요한 메모리·연결 점유를 허용한다.
+
+최소 수정은 이미 있는 bounded reader 방식으로 실제 byte 상한과 짧은 읽기 deadline을 적용하고 초과 시 취소하는 것이다. Content-Length 검사만으로 대체하지 않는다. 현재 600자 rejection 테스트에 chunked 초과/느린 body 취소 검사를 추가한다. live smoke 전 수정 또는 명시적 운영 수용 필요.
+
+### M-2 — MINOR: 활성 결과를 삭제해도 진행 중 Palm 응답/메모리 상태가 무효화되지 않음
+
+**위치:** `app/page.tsx:445`; `app/components/PalmSupplementPanel.tsx:68`, `:125`, `:195`.
+
+A→B 이동은 key remount로 올바르게 격리된다. 그러나 현재 표시 중인 A를 저장 목록에서 삭제하는 동작은 storage와 storeVersion만 바꾸고 active/pendingPalm/Panel key는 유지한다. A의 진행 중 응답은 같은 attemptId/baseRef로 통과하고 fresh 결과도 남는다. 이후 다시 저장하면 지운 base와 보조 결과를 다시 만들 수 있다. 다른 B에 붙는 버그는 아니므로 A/B 핵심 격리와 구분한다.
+
+최소 수정: 삭제 대상이 활성 baseRef와 같을 때 Palm attempt 취소/세대 갱신 및 fresh/pending/preview 제거를 연결한다. 기본 결과 화면 유지 여부는 기존 UX를 유지해도 되지만 삭제 전 요청은 적용하지 않는다. 지금 테스트는 store prune와 '삭제 함수 호출 문자열'만 확인한다. 실제 delete-during-request/late response/재저장 경로 회귀가 필요하다.
+
+### M-3 — MINOR: 기본 저장 실패가 새 Palm 저장 UI에서 처리되지 않음
+
+**위치:** `app/components/PalmSupplementPanel.tsx:172` (`saveActive(active)`); `app/page.tsx:411`.
+
+supplement-key 저장 실패는 처리하지만 base의 localStorage 쓰기가 quota/security 오류를 내면 `saveActive()` 예외가 그대로 탈출한다. 새 Palm 저장 버튼은 안내 없이 실패하고 아래 saveMessage에 도달하지 않는다. 기존 결과를 지우거나 B와 혼동하는 문제는 아니므로 작은 실패 UX 수정으로 분류한다.
+
+최소 수정: base 저장 예외를 잡아 “기본 결과를 저장하지 못했습니다”를 안내하고 supplement 저장을 중단한다. 이미 저장된 base 반환과 base 성공/supplement 실패는 지금처럼 구분한다. 두 key 각각의 실패와 기존 저장 항목 보존을 검사한다. 저장 엔진 전체 재설계는 필요 없다.
+
+## NOTE 및 15개 점검 결론
+
+**N-1 — NOTE: 실제 다중 연결 Postgres smoke는 migration 후, live OpenAI 전 필수.** PGlite 회귀는 실제 SQL 분기·상태·권한 거부를 검증하지만 한 연결로 직렬 실행돼 advisory lock의 별도 transaction 경합을 실증하지 않는다. 이것만으로 설계 결함이라고 보지는 않는다. SQL은 공통 xact advisory lock 하에 검사/INSERT가 이어지고, PK(session_key, request_id), terminal 상태 불변, lease expiry·일 예산 비환불을 갖춘다. 검토상 즉각적인 check-then-insert race는 찾지 못했다. 별도 연결에서 결과를 확인해야 한다.
+
+| 요청 점검 | 결과 | 판단 범위 |
+| --- | --- | --- |
+| 1 Identity/base isolation | PASS | 보호 파일 diff 없음. deepFreeze 후 whole snapshot JSON 불변 및 별도 생성 base fingerprint의 Identity/coreTags/conflicts/keywordStrengths/trace/convergence/patterns/Destiny Code equality를 실제 검사. engine '3'/schema 2, Palm 별도 version 유지 |
+| 2 A/B result isolation | PASS | snapshot analysisId / legacy savedId 및 kind 분리, 양방향 저장 순서·재열기·나중 추가·pending-other-result 거부 검증. navigation unmount/attempt guard 적절. 삭제 시 무효화만 M-2 |
+| 3 public endpoint security | BLOCKER | Origin 엄격 일치·서명/만료·세션-bound CSRF·UUIDv4·안내 버전·body 전 access 검사·안전 cookie 확인. ingress 신뢰는 I-1 미해결 |
+| 4 DB rate/cost gate | BLOCKER | 예약 SQL/거부 fail-closed 자체는 적절. I-1의 IP identity와 I-2의 DB deadline이 전체 운영 gate에 남음 |
+| 5 duplicate/retry semantics | PASS | 같은 ID status-only, 다른 payload 409, session-bound prepared-image HMAC·10분 중복, 실패/uncertain 10분 창 1회 retry, cooldown/일 cap, 자동 retry 없음. provider exactly-once 보장은 하지 않음 |
+| 6 raw image lifecycle | PASS | 사진 FS/DB/storage/analytics/log 저장 경로 없음. 정상 성공/unusable/교체/unmount의 URL revoke 확인. 오류 시 파일은 명시적 retry를 위해 메모리에만 유지. 활성 삭제 정리는 M-2 |
+| 7 OpenAI boundary | PASS | 기존 pinned GPT-4.1/고정 관찰 prompt/strict schema/store:false/maxRetries:0/parser 불변. 성격 자유 생성 없음. 외부 처리 안내가 무보관을 약속하지 않음 |
+| 8 deterministic interpretation | PASS | 승인 8개 규칙·문장·두 tension 쌍 그대로. available/visible만 해석. 동시 MATCH+TENSION은 “함께 있을 수 있습니다”와 별도 섹션으로 설명되어 현재 추가 지적 없음 |
+| 9 legacy/storage compatibility | PASS | snapshot 필드 추가 없음, legacy 비교 unavailable, unknown/corrupt supplement는 base와 분리. 자동 재해석 없음. base write 실패 안내만 M-3 |
+| 10 UI failure isolation | PASS | base와 Palm state 분리, 실패 시 이전 성공 유지, retry에서 analyzeDestiny 호출 없음, OFF/session failure 안전, HEIC/카메라 안내 존재. M-2/M-3 제외 주요 흐름 적절 |
+| 11 analytics privacy | PASS | events는 event/id/version/bucket/error-code만; session key quota는 별도. 이미지/digest/trait/baseId/닉네임/provider 원문 없음. 대기/읽기 한도는 I-2/M-1 |
+| 12 SQL deployment safety | REQUIRES DEPLOYMENT STEP | 테이블 IF NOT EXISTS/함수 OR REPLACE, RLS·REVOKE·service_role GRANT 확인. 기존 analytics 무변경. cleanup 스케줄은 SQL 자체가 설치하지 않음 |
+| 13 test quality | PASS | 실제 계약/상태/불변 검증 있음. UI 일부는 regex·SSR이며 브라우저 상호작용을 증명하지 않음. findings 회귀 보완과 N-1 smoke 필요 |
+| 14 secret/build inspection | PASS | 신규 모듈 server-only, browser source/최종 static chunks 검사, build PASS. 실제 배포 APM body capture는 설정 단계에서 확인 필요 |
+| 15 feature flag safe default | PASS | 두 env가 정확히 'true'일 때만 후보, 누락/false/다른 문자열 OFF. 필수 설정 누락도 OFF. 서버는 OFF 때 유료 호출 없음, 저장 Palm은 계속 표시 |
+
+추가 경계 설명:
+
+- 운영자 헤더를 보내면 operator branch로 들어갈 수는 있지만 올바른 비공개 secret 없이는 body 읽기/추론을 못 한다. 브라우저에 해당 secret을 넘기는 코드 없음. public이 enabled일 때 operator도 같은 전역 reserve를 거친다. public OFF/설정 불완전이면 기존 Phase 1B operator 경로만 남는 현재 분기 조건을 운영 시 구분한다.
+- 안내 버전 헤더는 현재 처리 계약을 사용하는지 검사하며 사용자가 실제 문장을 읽었다는 암호학적 증거는 아니다. UI는 체크 전 전송을 막고 서버는 누락/오버전 거부한다. 이를 봇 인증이나 연구용 보관 동의로 사용하지 않는다.
+- body는 public access 검사 후 읽지만 paid reserve는 이미지 준비 후에 수행한다. 이미지 내용은 quota ledger에 넣지 않는다. `events` 입력도 허용 키 외 내용은 저장하지 않는다.
+- id 충돌은 kind 경계로 분리하고 정상 새 분석은 서로 다른 analysisId를 쓴다. 같은 analysisId로 수동 변조된 두 snapshot을 별개 결과로 구분하는 보호까지 구현됐다는 의미는 아니다. 보조 저장은 기존 base identity 계약을 따른다.
+- 전체 lint baseline 비교 결과와 실행상의 한계는 아래 최종 확인에 기록한다.
+
+## 수정 후 운영 순서 — 이번에는 실행하지 않음
+
+현재는 I-1/I-2 수정·재검수 전 운영 준비 승인 보류다. 해결 후 다음 순서로 진행한다.
+
+1. **migration:** 공개 OFF 상태에서 `supabase/palm-public.sql` 전체를 transaction으로 적용한다. 기존 테이블이 이미 있다면 IF NOT EXISTS가 schema drift를 고쳐주지 않으므로 예상 컬럼/constraints를 먼저 확인한다. SQL Editor 실행 role과 실제 service_role의 table/RPC 권한 및 BYPASSRLS 동작을 확인하고 anon/authenticated 직접 호출 거부를 확인한다. rollback은 먼저 flag OFF; ledger 삭제/초기화로 소비 예산을 지우지 않는다.
+2. **cleanup:** Supabase Cron/pg_cron을 활성화한 DB에서 `select public.palm_cleanup();` job을 예약하거나 동등한 인증된 외부 scheduler를 둔다. migration의 PL/pgSQL/advisory lock 자체에는 pg_cron이 필요 없고, 예약 실행에만 필요하다. 예: 5분 주기로 `select cron.schedule('palm-cleanup', '*/5 * * * *', 'select public.palm_cleanup();');` (기존 같은 이름 job 확인). 24시간/30일은 만료 cutoff이고 실제 삭제는 다음 실행 시점이다. 현재 운영 문서의 매일 실행이면 최대 약 48시간/31일까지 물리 보관될 수 있으므로 안내를 실제 주기에 맞춘다. job role 권한·성공 기록 점검.
+3. **env:** OPENAI_API_KEY, PALM_EXTRACTION_ENABLED, PALM_PUBLIC_ENABLED(아직 false), PALM_SESSION_SECRET(운영자 secret과 분리), PALM_PUBLIC_ORIGIN, Supabase URL/service role key, 확인된 IP 설정, PALM_LIMIT_* 운영 상한. operator 사용 시 PALM_EXTRACTION_SECRET도 서버에만. secret 값 출력 금지. APM body/header capture OFF 확인.
+4. **ingress:** I-1에서 확정한 ingress/헤더 overwrite와 직접 접근 차단을 비유료 probe로 확인한다. 헤더 값을 브라우저가 제공하는 방법을 운영 구성으로 쓰지 않는다.
+5. **DB-only concurrency smoke (필수):** 서로 다른 실제 DB 연결로 같은 ID 동시 reserve, 같은 session+다른 이미지, 다른 session의 globalConcurrent 경합, IP/global daily 직전 경합, 실패 retry/lease expiry/finalize 경합을 검사한다. reserve 성공 수가 한도를 넘지 않고 소비 예산이 환불되지 않는지 확인한다. service_role allow 및 anon/authenticated deny도 검사한다. OpenAI provider는 연결하지 않는다. 테스트 row는 구분하고 정상 운영 요청이 없는 테스트 구간에 실행한다.
+6. **실기기 mock:** 격리된 preview/로컬 mock harness에서 iPhone/Android 촬영·HEIC·대형 파일·실패·A/B·삭제/늦은 응답·quota·저장·공유를 검사한다. 현재 production route는 실제 provider를 사용하므로 public ON을 mock 모드라고 생각하지 않는다. UI route interception/fake provider를 쓰고 production에 우회 경로를 넣지 않는다. OFF만 확인해서 전체 mock smoke 완료라고 하지 않는다.
+7. **단일 live smoke:** 별도 승인·동의 사진·제한된 접근의 preview/staging 환경에서 1회만. fake provider를 제거했는지, 호출 수/ledger/관찰 계약/UI/비저장 확인. 현재 작업은 이를 승인하거나 실행하지 않았다.
+8. **최종 배포 검수:** unresolved findings, DB/ingress/cleanup 증거, 기기 smoke와 1회 live 결과를 확인한 뒤 public launch 여부를 별도 결정한다. merge/push도 별도 지시에 따른다.
+
+이번 검수의 문서 변경은 CODEX_REVIEW/CURRENT_PHASE만이며, 구현 수정은 Claude 후속 작업으로 남긴다. 최종 판정 **C**, 실제 OpenAI 호출 **0회**.
+
+
+
+## 최종 검증 범위 기록
+
+전체 lint 8 errors/1 warning은 baseline `57bb8f2`와 파일별 rule/severity/오류 지점의 기존 코드가 같다. admin 3 errors, compatibility 3 errors, page의 기존 effect 2 errors 및 form.day dependency 1 warning이다. page의 line number와 코드 인용만 이동했다. 변경 Palm 경로/new tests lint에는 새 오류가 없다.
+
+supplement 회귀는 일반 React SSR을 쓰므로 `--conditions=react-server` 없이 실행해야 한다. 최초 일괄 실행 때 이 옵션을 잘못 적용해 render 단계에서 실패했으며, 파일에 명시된 실행 조건으로 다시 실행해 104개 전부 통과했다. public/extraction은 server-only 모듈 때문에 해당 조건을 사용한다. 이 실행 옵션 차이를 구현 결함으로 세지 않았다.
+
+테스트·build 결과는 기능적 정확도/운영 secret 설정/실기기 상호작용/실제 Supabase 경합까지 증명하지 않는다. PGlite와 mock 검증 한계를 유지하며 실제 사진·provider 호출 없이 검수를 마쳤다.
+
+---
+
+## 이전 설계·검수 기록 (원문 보존)
+
 # Palm Phase 1C — Production Supplementary Analysis 설계 (2026-09-30)
 
 **A. PHASE 1C ARCHITECTURE READY — CLAUDE MAY IMPLEMENT**
