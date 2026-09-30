@@ -1,11 +1,13 @@
 # Palm Phase 1B — Vision Extraction Boundary
 
-Status: PALM PHASE 1B — IMPLEMENTED / AWAITING CODEX REVIEW
+Status: PALM PHASE 1B — CODEX REVIEW C / REVISION REQUIRED
+
+최종 독립 검수(2026-09-30, HEAD `ad68239`): **C. NOT READY — IMPORTANT ISSUE**. BLOCKER 0 / IMPORTANT 1 / MINOR 1 / OBSERVATION 0. 업로드 timeout 후 reader가 계속 살아 있고 gate가 해제되는 I-1은 병합 전 필수 수정이다. 수동 smoke의 저장소 내부 상대경로 차단 M-1은 보완 권고다. 상세 재현·수정 조건은 `CODEX_REVIEW.md` 최상단을 따른다. 코드·테스트 수정, 유료 호출, commit/merge/push 없이 검수 문서만 기록했다. 승인·live 평가·Phase 1C 진행은 보류한다.
 
 Codex 설계(판정 A, 커밋 `d57b9a7`)대로 브랜치 `feat/palm-vision-phase1b`에 구현했다. 병합·push하지 않았다.
 
 - 운영자 전용 `POST /api/palm/analyze`: 이미지 한 장 → 서버 검증·준비(sharp) → OpenAI `gpt-4.1-2025-04-14`(Responses API, strict schema, store false, retry 0) → `parsePalmObservationBundle()` → 검증된 bundle
-- 기본 비활성이며, env 3개와 운영자 secret이 있어야 한다. 원본 이미지·응답은 저장하지 않는다. 로그에는 오류 code만 남긴다.
+- 기본 비활성이며, env 3개와 운영자 secret이 있어야 한다. 원본 이미지·응답은 저장하지 않는다. 기본 오류 로그에는 code만 남긴다. SDK debug 설정에서는 부가 로그가 생기지만 이번 mock 검사에서 이미지·응답 원문 노출은 재현되지 않았다.
 - Evidence·Claim·CoreTag·Identity·분석·저장·UI는 연결하지 않았다. engine `'3'` / schema `2`.
 - mock 회귀 105 PASS(유료 호출 0). 기존 회귀·golden·digest는 불변이다.
 - **live 호출은 하지 않았다. 실제 손금 판독 정확도는 아직 검증되지 않았다**(수동 8~12장 평가 필요).

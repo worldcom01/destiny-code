@@ -1,3 +1,91 @@
+# Palm Phase 1B — 최종 독립 구현 검수 (2026-09-30)
+
+**C. NOT READY — IMPORTANT ISSUE**
+
+- 검수 브랜치: `feat/palm-vision-phase1b`, HEAD `ad68239` (구현 `c611e05`). 설계 기준 `d57b9a7`, 기존 운영 기준 `0c21092`.
+- 전체 구현 diff와 주변 코드, 설치된 SDK/native decoder, 비유료 회귀를 직접 확인했다. Claude 보고서의 PASS만으로 승인하지 않았다.
+- **BLOCKER 0 / IMPORTANT 1 / MINOR 1 / OBSERVATION 0.** 현재 병합·live 평가 승인 없음. Phase 1C 미착수.
+- 이번 검수는 이 문서와 CURRENT_PHASE 상태만 수정했다. 애플리케이션·테스트·golden baseline 변경, 유료 호출, commit/merge/push 없음. 검수 문서 commit hash 없음.
+
+## 병합 전 필수 수정
+
+### I-1 — IMPORTANT: 업로드 deadline 이후 본문 읽기가 종료되지 않는다
+
+- 위치: `app/lib/server/palmExtraction.ts:124`, `handlePalmAnalyze()`의 uploadDeadline/Promise.race 및 finally gate.release; `app/lib/server/palmImage.ts:34`, `readBoundedBody()`.
+- 실제 재현: 첫 byte를 전달하고 닫지 않는 ReadableStream으로 인증된 요청을 만들고, 동일 경로의 requestTimeoutMs만 20ms로 낮췄다. 400 응답 뒤 `streamCancelled=false`, `streamStillLocked=true`였다. 응답 후 chunk를 추가하자 reader가 계속 소비했고, 동시에 다음 `gate.acquire()`는 성공했다. 합성 byte/mock만 사용했으며 provider 호출은 0회다.
+- 영향: 4MB 누적 상한 자체는 유효하지만 deadline이 reader와 이미 받은 이미지 chunk의 수명을 끝내지 않는다. 이전 읽기가 남아 있는 상태에서 동시 1건 gate가 해제된다. Request.signal도 업로드 reader에는 전달되지 않는다. 플랫폼의 invocation 종료에 의존하므로 애플리케이션의 30초 자원 경계와 동시 처리 보장이 일치하지 않는다. 운영자 인증과 instance당 분당 2건 제한 때문에 익명·무제한 공격으로 과장하지 않는다.
+- 필수 조치: 업로드 읽기에 요청 취소와 deadline을 연결하고, timeout/abort 시 소유한 reader를 취소하며 읽기 루프·lock·누적 chunk 참조를 정리한다. 응답만 먼저 반환하는 Promise.race로 종료를 대신하지 않는다. cleanup이 끝나기 전에 gate가 다음 작업을 허용하지 않도록 한다. 기존 오류 계약은 필요한 범위에서 유지한다.
+- 필수 회귀: 닫히지 않는 stream의 deadline, 업로드 중 req.signal abort, deadline 뒤 추가 chunk 미소비, reader 정리, provider 미호출, gate 재사용을 검증한다. 현재 105개 검사는 provider timeout은 검증하지만 업로드 timeout의 실제 cleanup은 검증하지 않는다.
+
+## 경미한 수정 권고
+
+### M-1 — MINOR: 수동 사진 경로의 저장소 내부 차단이 상대경로에서 우회된다
+
+- 위치: `scripts/smoke-palm-openai.ts:32`, `main()`의 `path.startsWith(process.cwd())`.
+- 입증: 저장소 cwd에서 `public/probe.jpg`는 현재 검사 결과 false(허용)이지만 resolve된 경로는 저장소 내부다. 실제 사진이나 유료 호출 없이 경로 판정만 실행했다. symlink와 저장소 밖 cwd도 이 문자열 비교로는 경계를 보장하지 못한다.
+- 영향: 사용자가 명시적으로 --live와 키를 설정해야 하므로 자동 실행·무단 과금 문제는 아니다. 다만 문서의 '저장소 내부 사진 거부'를 구현이 보장하지 못한다.
+- 권고: 스크립트 위치 기준 repository root와 입력 파일을 realpath로 정규화한 뒤 경로 구성요소 기준 포함 여부를 검사한다. 상대경로/../symlink/저장소 밖 파일 허용을 유료 호출 없이 검사한다. 사용자 동의 여부까지 코드가 확인했다고 주장하지 않는다.
+
+## 계약·범위 검증
+
+- Phase 1B 운영 경로는 raw image → 준비 → provider unknown → 서버 소유 extraction metadata → `parsePalmObservationBundle()` → trusted bundle에서 끝난다. 최종 parser 우회 cast 없음.
+- `PalmVisionProvider.extract(image, {signal}): Promise<unknown>`는 provider 중립적이다. OpenAI 타입은 adapter 안에만 있다. 추가 provider framework·자동 fallback 없음.
+- `palmObservation.ts`/`palmEvidence.ts`의 Phase 1A 계약 변경 없음. provider schema가 도메인에 유입되지 않았다. 품질과 관찰을 유지하고 서버 metadata를 모델 출력에서 받지 않는다.
+- `buildPalmEvidence`, analyzeDestiny, Trace/Claim/CoreTag/Pattern/convergence/Identity, storage/Supabase/UI로 이어지는 운영 연결 없음. 기존 코드·golden baseline diff 없음. 기존 CoreTag 순서, conflicts, keywordStrengths, Destiny Code, narrative, compatibility, sharing, analytics, 저장·legacy 의미 변경 근거 없음.
+- engine `'3'`, schema `2`, trace `1` 유지. 신규 endpoint/dependencies 외 기존 분석 동작은 회귀 결과와 diff 양쪽에서 보존됐다.
+
+## OpenAI·schema·프롬프트
+
+설치된 `openai 7.23.0` 코드/타입과 mock fetch로 Responses API의 input_image data URL, detail high, text.format json_schema, strict true, max_output_tokens 2000, store false, stream false, request AbortSignal, maxRetries 0을 확인했다. 실제 모델 snapshot의 이미지 입력·Responses·structured outputs 지원은 [공식 모델 문서](https://developers.openai.com/api/docs/models/gpt-4.1)에 부합한다. 계정에서 호출 가능한지는 확인하지 않았다.
+
+Schema는 root object, 전 필드 required, 각 object additionalProperties false, 상태별 nested anyOf다. 중첩 anyOf는 [공식 structured outputs 지원 범위](https://developers.openai.com/api/docs/guides/structured-outputs)에 들어간다. enum은 기존 계약 상수를 사용한다. Schema가 표현하지 않는 품질·관찰 모순과 중복 issue는 최종 parser가 거부한다. 실제 서버의 schema 수락은 유료 smoke 전까지 미실측이다.
+
+고정 프롬프트는 시각 관찰만 요청한다. personality/health/future/identity 추론을 금지하고 not-detected를 사진 안 후보 미검출로 한정하며 불확실성은 unreadable로 표현한다. 이미지 내 문자·QR·명령 무시, 사용자 prompt·filename·EXIF 미전달, tools 없음, schema와 parser로 방어한다. prompt injection이 불가능하다는 주장은 하지 않는다.
+
+## 접근·이미지·자원·개인정보
+
+- 기본 비활성, 설정 3개와 운영자 secret 필요. body 이전 인증, hash 후 timingSafeEqual, 서버 전용 import, no-store 확인. POST만 구현한다.
+- raw binary body 실제 누적 byte 4,000,000 상한, 초과 시 cancel. Content-Length만 신뢰하지 않고 압축 Content-Encoding을 거부한다. [Vercel 4.5MB request 제한](https://vercel.com/docs/functions/limitations) 아래로 payload 여유가 있으며 base64는 서버가 provider에 보낼 때만 만든다. 플랫폼이 먼저 거부하면 애플리케이션 오류 형식은 보장할 수 없다.
+- MIME·signature·decoded format 검사, JPEG/PNG/static WebP 허용. APNG acTL·WebP ANIM/ANMF와 pages 검사로 animation 거부. 실제 투명 pixel 거부, alpha 채널만 있고 완전 불투명한 PNG는 허용한다.
+- metadata 후 20MP/변 8000px, 최소 짧은 변 640px 검사. full decode에는 limitInputPixels 적용. Sharp 3초 timeout은 libvips eval kill을 쓰는 실제 중단 경로다. header metadata 작업에는 해당 timeout이 없으며 alpha stats와 재인코딩 각각의 3초 제한이다. 전체 준비가 반드시 3초 또는 전체 요청이 정확히 30초 이내라는 의미는 아니다.
+- EXIF 방향 보정·metadata 제거·필요 시 inside 2048 축소·sRGB JPEG90/4:4:4. 확대/crop/sharpen/denoise/선 보정 없음. 준비 결과 2MB 상한.
+- 직접 dependency `sharp 0.35.5`가 resolve되며 Next 내부 copy와 구분된다. native 처리와 build는 현재 Node24.16.0에서 통과. sharp는 Node >=20.9, OpenAI SDK는 >=22 필요하므로 실제 배포 runtime도 지원 버전이어야 한다. Vercel 계정 runtime/native 배포 자체는 이 로컬 검수로 실증하지 않았다.
+- 앱의 파일·DB·storage·analytics에 원본/준비 이미지 쓰기 0건. 메모리에서 provider로 전송된다. store:false를 provider의 모든 보관이 0이라는 뜻으로 해석하지 않는다.
+- 오류 응답은 정규화된 code다. 기본 로그 회귀 통과. 추가로 OPENAI_LOG=debug + mock fetch + 합성 marker로 검사했으며 설치 SDK의 sanitizer에 의해 이미지 base64/응답 marker 노출은 재현되지 않았다. debug 설정에서는 SDK 부가 로그가 생기므로 '모든 환경에서 code만 로그'라는 설명은 엄밀히는 제한된다. 실증된 개인정보 유출 이슈로 집계하지 않았다.
+- provider 20초/남은 예산 signal, 실제 SDK 전달과 늦은 결과 거부 확인. **업로드 cancellation은 I-1 미충족.** 준비 native 작업은 위 별도 제한이다.
+- 응답 누적 128KiB 초과 reader cancel, output text 32KiB, completed/단일 text/JSON 검사, refusal/incomplete/잘못된 출력 거부. 자동 retry 0.
+- 동시 1건/분당 2건/선택적 request ID 10분 중복 거부는 instance 메모리 범위이며 전역 비용 상한이 아니다. 별도 전역 infra는 요구하지 않는다. I-1 정리 후 동시 제한 의미를 재검증해야 한다.
+- live 스크립트는 --live와 키를 요구하며 npm/build/회귀와 분리돼 있다. 자동 유료 실행은 없다. M-1 경로 보호는 보완 권고. 기술 smoke 및 8~12장 시각 평가는 이번에 수행하지 않았다.
+
+## 독립 실행 결과
+
+동일 TypeScript 실행을 위해 로컬 캐시의 tsx loader와 `--conditions=react-server`를 사용했다. 모든 이미지와 provider 응답은 합성/mock이며 유료 API 호출 0회다.
+
+| 검사 | 결과 |
+| --- | --- |
+| regression-palm-extraction | 105 PASS |
+| regression-palm-evidence | 76 PASS |
+| regression-saved-context | 14 PASS |
+| regression-evidence-trace | 218 PASS |
+| regression-analysis-patterns | 74 PASS |
+| regression-identity-selection | 97 PASS |
+| regression-identity-catalog-v3 | 23 PASS |
+| golden-analysis | 7 cases, v1/v2/v3 모두 PASS |
+| diagnostic-identity-diversity | 종료 0, selection digest `25ab43b8`, result digest `dab19aab` 보존 |
+| npx tsc --noEmit -p . | PASS |
+| npm run build | PASS, /api/palm/analyze 동적 Node route 포함 |
+| git diff --check 및 기준..HEAD diff check | PASS |
+
+기존 검사가 통과해도 I-1은 검출하지 못한다. `/tmp` 독립 probe로 업로드 잔존 reader를 재현했으며 저장소 테스트/생산 코드를 수정하지 않았다.
+
+## 결론·다음 단계
+
+추출 기능과 도메인 신뢰 경계는 충족하지만 안전한 timeout 자원 정리까지 포함한 Phase 1B stop condition은 아직 완전히 충족하지 못했다. Claude는 I-1 수정과 집중 회귀를 추가하고, M-1은 같은 범위에서 보완하는 것을 권고한다. 이후 재검수한다. 실제 계정 가용성·사진 판독 정확도는 미검증이며 현재 live evaluation 승인은 보류한다. 이전 설계의 책임 범위는 바꾸지 않는다.
+
+---
+
+## 이전 설계·검수 기록 (원문 보존)
+
 # Palm Phase 1B — Vision Extraction Design (2026-09-30)
 
 **설계 완료 / 구현 미시작.** 실제 기준은 `main` 및 로컬 `origin/main`의 `0c21092`다. Phase 1A는 병합 완료이며 해당 타입의 의미와 공개 parser를 유지한다. 이번 작업은 문서만 수정한다.
