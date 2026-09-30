@@ -1,3 +1,21 @@
+# Palm CV 오픈소스 평가 — 아키텍처 검토
+
+Status: PALM CV OPEN-SOURCE EVALUATION — ARCHITECTURE REVIEW
+
+**검토 완료 / 권고 D — 통제된 비교 실험 우선.** 기준 `main` / `6d4fbd5` (2026-09-30). Phase 1B 기술 통합·운영자 live smoke #1 PASS는 유지한다. 시각 정확도는 아직 평가하지 않았다.
+
+- 실제 코드 검토: `samuelwbarber/palm-line-reader` (`bc48939f`), `yeonsumia/palmistry` (`17610c3f`), `parthmax2/palm-reader` (`2500fdb0`).
+- 첫 실험 후보는 samuel의 ONNX 3선 segmentation. Heart/Head/Life mask·browser 추론·overlay는 있지만 Fate 클래스가 없고, 단일 연결선을 유도한 학습은 continuity 관찰과 차이가 있다.
+- yeonsumia는 binary segmentation + 세 선 기하 분류, parth의 Fate는 남은 중앙 세로 후보 선택 휴리스틱이다. 상업 사용은 code/weight/dataset 권리를 분리해 확인해야 한다.
+- GPT-4.1은 유지한다. primary 교체·hybrid·자동 fallback 역할은 실험 전 확정하지 않는다.
+- 가장 작은 후속 실험: 동의받은 동일 사진 8장, 사람 2명 기준 관찰, 현 GPT와 CV paired 비교. 두 장 calibration 후 나머지 평가; Fate 미지원·continuity 오류·overlay·cold/warm latency를 분리 기록한다. 상세는 `CODEX_REVIEW.md` 최상단에 있다.
+- 이번 작업: 문서만 변경. 유료 호출·weight 다운로드·대형 dependency 설치·실험 실행·Phase 1C 착수 없음. 기존 PalmObservation/Evidence/Claim/Identity/CoreTag/convergence/engine '3'/schema 2와 비저장 정책 불변.
+- 다음 단계: 데이터·모델 권리 확인과 비교 프로토콜 확정. 별도 진단 브랜치는 미병합 유지한다.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm Visual Accuracy Evaluation
 
 Status: PALM VISUAL ACCURACY EVALUATION — NOT STARTED

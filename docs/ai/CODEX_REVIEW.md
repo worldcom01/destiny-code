@@ -1,3 +1,161 @@
+# Palm CV 오픈소스 아키텍처 검토 (2026-09-30)
+
+**최종 방향: D. 근거가 아직 부족하므로 통제된 비교 실험을 먼저 한다.**
+
+GPT-4.1을 제거하거나 CV를 primary로 승격하지 않는다. 비교 실험의 첫 CV 후보는 `samuelwbarber/palm-line-reader`다. 배포된 3-class line ONNX와 브라우저 추론 코드가 있어 가장 작은 실험이 가능하다. 그러나 **실제 끊김을 보존하는 학습 목표인지, Fate를 어떻게 다룰지, 상업 배포 권리가 충분한지**가 해결되지 않았다. CV가 항상 LLM보다 정확하다는 근거는 없다.
+
+## 1. 검토 범위와 증거 수준
+
+현재 저장소는 `main` / `6d4fbd5`, 작업 시작 시 clean이다. Phase 1B는 병합 완료이며 사용자 및 저장소 보고에 따르면 live smoke #1은 4,132ms, 준비 이미지 1536×2048에서 성공했다. 이 사실은 provider 통신·parser 성공이지 선 식별 정확도의 입증은 아니다. 이번에는 live 호출을 재실행하지 않았다. 별도 `fix/palm-smoke-diagnostics`는 이 검토에서 변경·병합하지 않는다.
+
+공개 GitHub tree와 아래 revision의 실제 소스·라이선스·model metadata·학습 notebook을 읽었다. README 수치, 실제 코드, 본 검토의 추론을 구분한다. 소스 텍스트만 `/tmp/palm-cv-review`로 받아 검사했으며 모델 weight·손바닥 이미지 다운로드, dependency 설치, 추론 실험은 하지 않았다. 따라서 'weight 파일 제공 확인'과 '현 환경에서 정상 추론 확인'은 다르다.
+
+| 후보 | 검토 revision | 역할 |
+| --- | --- | --- |
+| [samuelwbarber/palm-line-reader](https://github.com/samuelwbarber/palm-line-reader/tree/bc48939f4deee6d8ff842bfde499396dab9c4830) | `bc48939f` | 가장 작은 segmentation 비교 후보 |
+| [yeonsumia/palmistry](https://github.com/yeonsumia/palmistry/tree/17610c3f031ee312d3352116eefff9b833e9cafb) | `17610c3f` | 정규화·binary segmentation·기하 분류 참고 |
+| [parthmax2/palm-reader](https://github.com/parthmax2/palm-reader/tree/2500fdb0e5a84b4343cdcf6263a11f15e5ac3ea7) | `2500fdb0` | CV와 서사 분리 구조 및 Fate 한계 참고 |
+
+## 2. 실제 출력과 모델 파일
+
+| 항목 | samuelwbarber | yeonsumia | parthmax2 |
+| --- | --- | --- | --- |
+| 실제 주요 선 | Heart / Head / Life | binary mask를 후처리해 Heart / Head / Life | 같은 세 선 + 남은 후보에서 Fate 휴리스틱 |
+| Fate 전용 학습 클래스 | 없음 | 없음 | 없음 |
+| 원시 출력 | `[1,4,512,512]` logits; background + 세 선 | 256×256 1-channel U-Net 출력 → threshold binary mask | yeonsumia 모델의 binary mask 재사용 |
+| 후처리 출력 | class-index mask, RGBA overlay | skeleton 후보 좌표, 고정 cluster center와 비교해 세 선 선택 | 선별 points / 길이 / curvature / fork / heuristic confidence |
+| geometry 복원 | mask별 centerline 추출 가능 | 선택된 선 좌표 있음 | 좌표와 일부 기하 계산 구현됨 |
+| pretrained artifact | ONNX 3개 실제 tree에 있음 | PyTorch checkpoint 실제 tree에 있음 | LFS pointer와 upstream checkpoint 경로 있음 |
+| 무게 | fp16 11,284,720B; fp32 22,329,537B; int8 5,904,771B | augmented 55,490,203B; epoch35 55,488,041B | pointer 133B; 대상 55,490,203B |
+| 실행 | ONNX Runtime Web, 학습 PyTorch/SMP | PyTorch/OpenCV/MediaPipe/scikit-image | FastAPI + 위 Python stack + Gemini 서사 |
+
+파일 크기는 GitHub tree metadata 및 LFS pointer로 확인했다. parthmax2의 pointer는 weight 자체가 아니며 LFS fetch가 필요하다. 해당 LFS 원격 객체의 다운로드 성공은 검증하지 않았다. yeonsumia는 동일 이름의 원본 weight가 저장소에 있어 후속 검증 경로가 있다. samuel의 student PyTorch `.pt`와 324MB teacher는 포함돼 있지 않지만 추론용 ONNX는 제공된다.
+
+### samuelwbarber — 가장 실험하기 쉽지만 continuity에는 특별한 주의가 필요
+
+[model_meta.json](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/models/model_meta.json)은 SMP U-Net / `mit_b0`, 5.55M parameter, RGB ImageNet normalization, 고정 512² 입력, opset17, fp32 I/O를 명시한다. [palmLines.js](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/web/palmLines.js)는 이를 실행하고 argmax mask와 색 overlay를 만든다. 네 개 semantic class이지 네 손금 모델이 아니다.
+
+[web/index.html](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/web/index.html)은 파일 선택·canvas resize·추론 demo다. 저장소에 있는 이 브라우저 진입점에는 MediaPipe crop/회전 구현이 없다. README가 설명하는 외부 live demo와 저장소 내 검증 demo를 동일한 완성 pipeline으로 보지 않는다. [pipeline/hand_preprocess.py](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/pipeline/hand_preprocess.py)에는 Python MediaPipe의 wrist→middle MCP 회전·bbox crop·좌우 통일이 있다. 브라우저로 이 단계를 연결하는 일은 별도 작업이다.
+
+핵심 위험은 mask를 원본 선의 정확한 흔적으로 곧바로 간주할 수 없다는 점이다. [teacher 후처리](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/pipeline/infer.py)는 closing → largest component → skeleton/branch 정리 → dilation을 수행한다. [student losses](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/training/losses.py)는 작은 분리 component의 확률 질량을 벌점 처리한다. 즉, 예쁜 단일 선 mask가 실제 끊김을 지웠을 가능성이 있다. **이 mask의 연결성만 보고 continuous를 확정하면 안 된다.** 이는 실측 오분류율 주장이 아니라 학습 목표와 우리 관찰 목표 사이의 구체적 설계 차이다.
+
+### yeonsumia — 정규화와 기하 분류가 실제 있지만 네 선 모델은 아님
+
+[read_palm.py](https://github.com/yeonsumia/palmistry/blob/17610c3f031ee312d3352116eefff9b833e9cafb/code/read_palm.py)는 background 제거 → MediaPipe warp → 256 resize → U-Net ContextFusion → 선 분류 → 길이/해석 출력 순서다. [detection.py](https://github.com/yeonsumia/palmistry/blob/17610c3f031ee312d3352116eefff9b833e9cafb/code/detection.py)는 1-channel 출력을 0.03 threshold로 binary mask화한다. [classification.py](https://github.com/yeonsumia/palmistry/blob/17610c3f031ee312d3352116eefff9b833e9cafb/code/classification.py)는 skeleton 후보와 미리 기록된 세 cluster center를 사용한다. 매 요청마다 새 K-means를 학습하는 구조가 아니다. segmentation 자체에 heart/head/life/Fate class label이 있는 것도 아니다.
+
+[rectification.py](https://github.com/yeonsumia/palmistry/blob/17610c3f031ee312d3352116eefff9b833e9cafb/code/rectification.py)는 MediaPipe 21개 점과 고정 template 사이 homography를 구한다. [tools.py](https://github.com/yeonsumia/palmistry/blob/17610c3f031ee312d3352116eefff9b833e9cafb/code/tools.py)의 background 제거는 고정 HSV 범위다. 조명·피부색에 대한 취약성 우려가 코드상 존재하지만 집단별 실패율은 미측정이다. 원본 CLI는 중간 이미지를 디스크에 저장하고 최종 palmistry 해석도 작성하므로 그대로 서비스에 가져오면 현 비저장/관찰-only 경계와 맞지 않는다.
+
+### parthmax2 — 참고할 분리는 있으나 Fate와 breaks는 완성 모델이 아님
+
+[CV pipeline](https://github.com/parthmax2/palm-reader/blob/2500fdb0e5a84b4343cdcf6263a11f15e5ac3ea7/app/cv/pipeline.py)과 [service.py](https://github.com/parthmax2/palm-reader/blob/2500fdb0e5a84b4343cdcf6263a11f15e5ac3ea7/app/service.py)를 확인했다. 실제로 MediaPipe warp → U-Net → 좌표/feature → rule match → Gemini 또는 template 서사로 분리한다. Destiny가 참고할 것은 이 책임 분리이며 palmistry rulebook은 도입하지 않는다.
+
+[lines.py](https://github.com/parthmax2/palm-reader/blob/2500fdb0e5a84b4343cdcf6263a11f15e5ac3ea7/app/cv/lines.py)의 Fate는 사용하지 않은 candidate 중 중앙 30~70%, 높이 22% 이상, 세로/가로 비율 1.4 이상 등을 고르는 heuristic이다. 모델이 candidate를 만들지 못하면 Fate가 나오지 않는다. README도 샘플에서 세 후보만 나온다고 명시한다. forks는 junction 인접 여부, curvature는 chord 대비 최대 이탈 0.12 threshold이며 confidence는 point count 기반이다. 이 confidence를 확률/정확도로 가져오지 않는다. breaks/islands는 schema/rules에 있어도 검출을 채우지 않는다고 보고한다. `_BRIDGE=0`은 의도적으로 gap 연결을 꺼 둔 상태다. 임시 파일 사용도 현 메모리-only 경계와 다르다.
+
+## 3. 학습 데이터·성능 증거
+
+| 후보 | 문서/코드에서 확인한 것 | 입증되지 않은 것 |
+| --- | --- | --- |
+| samuel | README: Reddit palm 사진 수천 장, teacher pseudo-label + 사람 승인/수정. metadata: epoch102 val foreground Dice 0.8098. dataset 코드: stem 단위 기본 90/10 split, seed0 | 정확한 학습 장수·개인/중복 분리·독립 test manifest·원본 dataset 권리·피부색/조명/기기별 성능·실제 continuity 정확도 |
+| yeonsumia | notebook: `PLSU/img`, `PLSU/Mask`; 같은 집합 4개를 ConcatDataset. 출력 길이 4156, 따라서 같은 실행 설정이라면 원본 1039장으로 추론. 80/10/10 random_split seed0 | 정확한 PLSU 출처/annotation 문서/사용권, subject-disjoint 분리, 독립 신규 사진 정확도 |
+| parthmax2 | upstream 모델 재사용, sample 동작·Fate/fragment 한계 문서화 | 독립 학습·held-out 정량 평가 없음; inherited 모델과 별개의 성능 근거 없음 |
+
+samuel의 숫자는 [metadata](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/models/model_meta.json)의 저자 보고값이다. [dataset split](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/training/dataset.py)은 identity별 group split을 입증하지 않는다. pseudo-label과의 Dice는 실제 선 해부/visibility/continuity 정확도와 다르다. README의 저사양 휴대폰 속도·fp16 동일성 주장도 이번 실측 결과가 아니다.
+
+[yeonsumia 학습 notebook](https://github.com/yeonsumia/palmistry/blob/17610c3f031ee312d3352116eefff9b833e9cafb/detect/palmistry_detector.ipynb)의 저장된 출력은 epoch35 F1 0.7336 / IoU 0.5829, augmented epoch70 F1 0.6659 / IoU 0.5035다. 이를 독립 benchmark로 쓰지 않는다. 같은 원본을 네 번 합친 뒤 random split하므로 원본이 train/test에 중복될 수 있고, transform이 평가에도 남아 있다. F1은 probability 기반 식이고 IoU는 threshold 0.1이며 추론 threshold와도 다르다. '4156개의 독립 사진' 또는 '표준 discrete F1'이라고 인용하면 오해다. notebook cell 출력과 현재 checkpoint 성능 일치도 재실행 확인하지 않았다.
+
+모든 후보에서 조명·피부색·방향·거리·배경·잔주름·해상도별 성능표는 확인하지 못했다. augmentation이 존재하는 것은 robustness 실증이 아니다. [U-Net ContextFusion 논문](https://arxiv.org/abs/2102.12127)은 관련 연구이나 논문의 성능을 이 저장소 weight의 성능으로 대체해서는 안 된다.
+
+## 4. 라이선스와 상업 이용 판단
+
+| 후보 | 코드 | weight | 학습 데이터 / 판정 |
+| --- | --- | --- | --- |
+| samuel | [MIT](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/LICENSE) 확인 | 같은 repo에 있으나 별도 weight license/model card의 권리 설명은 확인 못함 | Reddit 수집 사진·teacher NIR 데이터·ImageNet encoder 출처의 권리를 MIT로 일괄 해결할 수 없음. 실험 1순위이나 상업 배포 권리 검증 완료 아님 |
+| yeonsumia | [Apache-2.0](https://github.com/yeonsumia/palmistry/blob/17610c3f031ee312d3352116eefff9b833e9cafb/LICENSE) 확인 | `.pth` 포함, 별도 weight 조건 확인 못함 | PLSU 권리·annotation/수집 동의 불명. 참조 코드 provenance 추가 확인 필요 |
+| parthmax2 | 검토 tree에 프로젝트 LICENSE 없음 | upstream weight를 LFS로 참조; upstream 조건 따로 확인 필요 | 원본 vendor가 Apache라는 설명이 전체 앱에 사용권을 주지는 않는다. 아키텍처 참고와 코드 복사/상업 배포는 구분 |
+
+특히 yeonsumia `model.py`는 `milesial/Pytorch-UNet`을 코드 참조로 명시하고 구조도 공유한다. 해당 [upstream LICENSE](https://github.com/milesial/Pytorch-UNet/blob/master/LICENSE)는 GPL-3.0이다. 참고했다는 사실만으로 위반이라고 단정하지 않지만 복사 범위·당시 license·재배포 조건을 확인하기 전 'Apache니까 모든 코드 상업 사용 문제없음'으로 결론 내릴 수 없다. 이를 vendor한 parth에도 provenance 확인이 필요하다. GPL 자체가 상업 이용 금지를 의미하는 것은 아니다.
+
+주요 runtime [ONNX Runtime MIT](https://github.com/microsoft/onnxruntime/blob/main/LICENSE), [MediaPipe Apache-2.0](https://github.com/google-ai-edge/mediapipe/blob/master/LICENSE), [PyTorch license](https://github.com/pytorch/pytorch/blob/main/LICENSE)를 확인했다. samuel은 SMP/timm encoder·ONNX 변환·Albumentations/OpenCV/scikit-image, 다른 둘은 PyTorch/torchvision/OpenCV/MediaPipe/scikit-image 및 parth FastAPI/google-genai를 추가 사용한다. 선택할 정확한 버전의 transitive notice·모델 자산 조건까지 감사한 것은 아니다. 특히 코드 license와 사전학습 encoder/MediaPipe task/학습 사진 권리는 별도 목록으로 확인해야 한다. 현재 어느 후보도 '상업 배포 법적 검증 완료'로 승인하지 않는다.
+
+## 5. browser와 server 비교
+
+| 기준 | 브라우저 CV | 서버 CV (Node ONNX 또는 Python) | 현재 GPT-4.1 |
+| --- | --- | --- | --- |
+| 이미지 전송 | local 처리 구현 시 불필요 | 우리 서버로 전송 | 우리 서버 + OpenAI |
+| 개인정보 통제 | 강점; 모델/CDN fetch와 이미지 upload를 구분해야 함 | provider 전송은 줄지만 서버 로그/임시 파일 관리 필요 | 현재 메모리 처리·store:false, provider 보관 정책은 별도 |
+| 지연 | 첫 모델/runtime 다운로드·session 초기화, 이후 기기 의존 | network+queue+cold load 또는 상시 process | 사용자 보고 smoke 4.132초 1회, 일반 latency 아님 |
+| 비용 구조 | 서버 inference 비용 없음; CDN/cache·사용자 전력/메모리 부담 | 모델 호스팅·CPU/GPU·유휴·운영 비용 | 이미지/출력 token 과금; 세션별 호출량에 비례 |
+| 배포 | 정적 model/WASM 별도 lazy load, client worker | Node native ORT 또는 Python runtime/service 추가 | 현 API 유지 |
+| 모바일 | 저메모리·발열·browser/backend 편차 실측 필요 | 클라이언트 부담 낮음 | 클라이언트 부담 낮음 |
+| 재현성 | weight/threshold 고정해도 backend 수치 차이는 확인 필요 | runtime 통일 쉬움 | snapshot 고정이어도 응답 재현성/기하 설명 한계 |
+
+[ONNX Runtime Web 문서](https://onnxruntime.ai/docs/tutorials/web/)는 WASM/WebGPU 등의 실행 경로를 제공하지만 특정 모델의 모든 연산·fp16·각 모바일에서 정상 실행을 보장하지 않는다. samuel의 provider 배열 `['webgpu','wasm']`와 README만으로 지원을 확정하지 않는다. 실제 demo는 `ort.min.js`를 사용하므로 GPU entrypoint/backend 로딩도 실험에서 확인한다. fp16은 파일 11.3MB이지 peak RAM 11.3MB가 아니다. 입력만 약 3MiB, logits 약 4MiB이며 decode bitmap·activations·WASM/GPU 복사·MediaPipe가 추가된다. 모델은 앱 JS에 embed하지 않고 별도 versioned asset으로 시험한다. int8은 저자가 얇은 선 손실을 보고하므로 첫 정확도 비교에서는 제외한다.
+
+[MediaPipe Web 가이드](https://developers.google.com/edge/mediapipe/solutions/vision/hand_landmarker/web_js)의 detect 계열은 메인 스레드를 막을 수 있어 worker가 적절하다. 이는 Phase 1C UI 설계가 아니라 실험 실행 환경 고려다.
+
+Vercel에서는 static ONNX/WASM 배포가 단순한 편이다. Node ONNX는 native package와 Linux bundle, CPU/timeout/cold start를 검증해야 한다. Python API 자체는 가능하지만 PyTorch/OpenCV/MediaPipe를 기존 Next route에 그대로 얹는 변경은 아니다. [Vercel Functions 제한](https://vercel.com/docs/functions/limitations)의 일반 Node 함수 250MB uncompressed, Python 500MB 및 런타임별 자원 한도를 전체 dependency와 함께 확인해야 한다. 별도로 최대 5GB large functions Beta도 문서화되어 있지만 해당 프로젝트의 사용 조건·설정은 확인하지 않았다. 55.5MB weight만 보고 적합하다고 판단하지 않는다. 연구용 Python은 로컬 별도 환경에서 시작하고, 필요하면 추후 별도 상시 추론 service를 비교한다. 지금 배포 구조를 만들지 않는다.
+
+## 6. MediaPipe 정규화
+
+MediaPipe hand landmarks는 손 영역·방향·좌우 통일에 유용하지만 **손금 검출기나 palm/front 품질 판별기 자체는 아니다**. 우선 crop·회전·좌우 일관성이 framing 변화에 도움 되는지 비교한다. samuel은 Python 구현이 있으나 web 연결은 별도, yeonsumia/parth는 실제 homography 경로가 있다.
+
+모든 손가락 점을 평면 template로 맞추는 homography가 항상 자연스러운 손바닥 복원은 아니다. 손은 완전 평면이 아니며 가려진/흐린 선은 복원되지 않는다. warp·비등방 resize는 곡률 측정도 바꾼다. 학습과 다른 정규화를 무조건 추가하지 않는다. crop/rotation/reflection/resize matrix를 보관하고 geometry는 원본 좌표 또는 정의된 공통 좌표로 역변환해 측정한다. 심한 perspective는 추측 보정보다 unreadable 처리 후보로 둔다. 먼저 정면·펼친 손으로 비교 후 normalization 전후 차이를 작은 paired case로 관찰한다.
+
+## 7. 최소 deterministic geometry analyzer — 가능한 것과 보장되지 않는 것
+
+추가 AI 없이 mask에서 수치를 계산하는 것은 가능하다. 그러나 **mask의 연결성과 실제 주름의 연속성은 동일하지 않다**. deterministic은 같은 입력에 같은 결과를 뜻하며 정확하다는 뜻이 아니다.
+
+1. 모델 revision과 전처리를 고정하고 class별 원본 probability/logit·mask를 유지한다. quality, ROI coverage, 선 후보 혼동 여부를 먼저 검사한다. argmax가 항상 class를 만든다고 visible로 확정하지 않는다.
+2. class별 connected components와 skeleton graph를 만든다. endpoint/branch를 찾고 위치·방향·길이로 후보 경로를 정렬한다. skeleton 픽셀을 단순 x-sort하지 않는다. 작은 가지 제거도 길이 threshold와 제거 기록을 고정하며, continuity 평가용 원본 mask를 보존한다.
+3. curvature: 주 경로를 arc-length 균등 재표본화하고 chord 길이 C, 경로 길이 L, 최대/중앙 chord 이탈/C, PCA 또는 직선 fit residual/선 길이를 계산한다. `L/C` 하나만 쓰면 짧은 noisy 선에 취약하다. 최소 지지 길이·분기/loop gate를 둔 후 straight/curved threshold를 사람이 라벨한 calibration으로 정한다. 임의 0.12를 그대로 정답처럼 수입하지 않는다. 애매하면 해당 속성 unreadable.
+4. continuity: 같은 선에 속할 가능성이 높은 components의 endpoint 방향·간격·경로 위치를 검사한다. palm width 또는 선 폭으로 gap을 정규화하고 원본 고해상도 사진의 contrast/occlusion과 대조한다. morphological closing·강제 bridge·largest-component-only 결과로 판정하지 않는다. branch 교차나 model dropout은 실제 interrupted와 구분해야 한다. 이번 student는 이미 학습 label에서 gap이 지워졌을 수 있어 mask만으로 실제 continuity 복구가 불가능한 경우가 있다.
+5. 충분히 보이는 영역에서 검출 가능한 클래스에 대해 후보가 없을 때만 not-detected를 고려한다. 흐림/가림/잘림/불확실한 선에는 계약의 실제 unreadable reason을 사용한다. detector 미지원과 생물학적 선 부재를 혼동하지 않는다.
+
+이것은 새 engine 구현 명세가 아니라 실험용 계산 순서다. threshold를 8장 모두에 맞춘 뒤 같은 사진에서 정확도를 발표하지 않는다. threshold·전처리·model revision을 함께 고정한다.
+
+## 8. Fate와 기존 PalmObservation 계약
+
+검토한 세 후보에 검증된 Fate segmentation head는 없다. parth의 중앙 세로선 heuristic은 후보 baseline이지만 모델이 Fate를 지웠으면 geometry로 되살릴 수 없다. 원본 이미지의 ridge/방향 필터를 추가할 수는 있으나 잔주름·조명·교차선 false positive와 별도 평가 부담이 생긴다. 즉, 간단한 완성 대안이 아니다.
+
+추가 검색에서 [MuntahaShams 후보](https://github.com/MuntahaShams/palm-line-detection)의 [실제 pipeline](https://github.com/MuntahaShams/palm-line-detection/blob/main/palm_reader_pipeline.py)은 `s3://palm-reader/model-weights/best5.pt`를 내려받아 YOLO를 실행하고 masks/boxes를 처리한다. 공개 tree의 일반 YOLO weight 이름만으로 Fate용 학습 weight 제공을 입증할 수 없고, 모델 사용권·실측도 불충분해 우선 후보로 올리지 않았다. 공개 Fate 모델이 세상에 없다는 뜻은 아니며, 이번 조사에서 즉시 사용 가능한 검증된 대안을 확보하지 못했다는 뜻이다.
+
+GPT-4.1은 그대로 비교 기준으로 유지한다. Fate만 GPT에 맡기는 hybrid는 후보 선택지이나, 그 역할을 지금 확정하지 않는다. 자동 fallback/다수결/충돌 결과 덮어쓰기는 구현하지 않는다.
+
+현재 계약은 네 선 모두 필수이며 model-unsupported reason이 없다. **CV의 Fate 미지원 자체를 not-detected나 가짜 unreadable 사유로 위장해 valid bundle을 만들지 않는다.** 실험에서는 계약 밖의 평가 기록에 'Fate 미지원'으로 표시하고 세 선 결과만 비교한다. 네 선을 실제로 관찰할 수 있는 adapter 또는 별도 승인된 composite 정책이 생겼을 때 기존 `parsePalmObservationBundle(unknown)`를 통과시키는 full bundle을 평가한다. 타입을 지금 수정할 필요는 없다.
+
+미래 서버 CV adapter는 기존 `PalmVisionProvider.extract(...): Promise<unknown>` 뒤에 둘 수 있다. mask/landmark/transform/기하값은 관찰 산출의 내부 데이터이며 CoreTag·Identity에 직접 연결하지 않는다. quality는 별도 유지한다. 모델 provenance는 기존 extraction metadata에 실제 revision을 명시할 수 있도록 후속 adapter 설계에서 다루며 GPT의 modelRevision을 재사용하지 않는다. browser CV는 현재 server-only 경계의 단순 대체가 아니므로 초기에는 독립 평가 harness로 두고, 나중에 통합하더라도 client 결과·metadata를 신뢰된 서버 산출물로 취급하지 않는다.
+
+## 9. Overlay와 개인정보
+
+class mask를 RGBA로 색칠하는 것은 samuel에 이미 구현돼 있다. 원본 사진 overlay는 crop/resize/mirror/homography의 역변환으로 기술적으로 가능하다. nearest-neighbor로 class mask를 복원하고 정렬을 검사한다. 단, 깨끗한 선을 그렸다고 진실한 검출이 되는 것은 아니다. review에서는 raw mask와 필요 시 skeleton을 구별해 보고 원본과 나란히 확인한다. UI 디자인이나 자동 사용자 설명은 이번에 만들지 않는다.
+
+브라우저 local CV는 사진을 서버/provider로 보내지 않을 수 있다. CDN 접속·telemetry·브라우저 저장까지 자동으로 0이 되는 것은 아니므로 모델/runtime self-host 및 network 검사를 실험에 포함한다. server CV는 제3자 AI 전송을 줄이지만 API 요청·메모리·로그·임시 파일 정책이 필요하다. 현재 GPT pipeline은 준비 JPEG의 EXIF를 제거하고 앱 저장을 하지 않지만 외부 provider에 전송한다. store:false를 전체 외부 보관 0으로 해석하지 않는다.
+
+실험 사진은 촬영자·대상자의 목적별 동의를 받고 저장소 밖 접근 제한 위치에만 둔다. EXIF 제거, 개인 식별자 대신 case ID, 평가 종료 시 삭제 시점, overlay도 사진 파생 개인정보라는 점을 명시한다. 기존 production 비저장 정책은 변경하지 않는다. 파생 observation 저장 여부도 이번에 추가하지 않는다. browser-only라고 설명한 뒤 묵시적으로 GPT fallback 업로드를 해서는 안 된다.
+
+## 10. 가장 작은 유용한 비교 실험 — 설계만, 미실행
+
+**8장 / 4명 이상 / 동일 사진 paired 비교**를 권장한다. 성능 추정용 대표 표본이 아니라 실패 유형을 찾는 pilot이다. 공개 Reddit 사진 대신 동의받은 사진을 쓴다. 보통 선명한 정면 4장, 같은 손의 방향/조명 변화 2장, 사람이 판단할 수 있는 얕은 선 또는 실제 gap 1장, blur/crop으로 unreadable이어야 하는 1장을 포함한다. 가능 범위에서 피부색·좌우 손·배경을 달리하되 이 표본으로 집단 공정성을 주장하지 않는다.
+
+- **시작 전:** model/data 권리의 실험 이용 조건 확인, revision/weight hash와 runtime 고정. 학습/원본을 함부로 재배포하지 않는다. weight 다운로드·환경 구성·유료 호출은 후속 작업으로 별도 승인한다.
+- **사람 기준:** reviewer 2명이 모델 결과를 보지 않고 선별 visible/not-detected/unreadable, 읽히는 속성별 curvature/continuity, 대표 centerline와 gap 위치를 기록한다. 불일치는 합의 또는 ambiguous로 남긴다. 원본으로도 못 정하면 모델 오답으로 강제하지 않는다.
+- **A:** 현 GPT-4.1 파이프라인, 고정 prompt/model/preparation, 사진당 1회. 전체 유료 호출 계획은 8회이며 이번에는 0회다.
+- **B:** samuel fp32 ONNX를 연구용 기준으로 사용하고 동일하게 준비된 사진에서 정해진 palm crop/방향을 적용한다. 입력 normalization을 모델에 맞추고 pre/post transform을 기록한다. 처음에는 수동 crop을 명시해 segmentation 단독 적합성을 보고, 같은 crop을 MediaPipe로 만들었을 때 실패를 따로 기록한다. 수동 도움을 받은 결과를 자동 end-to-end와 동등하다고 보고하지 않는다. 실제 11.3MB fp16 browser 경로는 2장 정도에서 fp32와 mask/성능 차이를 확인한다.
+- **계산:** geometry threshold 2장 calibration으로 정하고 나머지 6장은 변경 없이 평가한다. 사람 visibility 기준은 사전에 고정한다. 재학습·threshold 탐색을 평가에 섞지 않는다. CV Fate 미지원은 별도 coverage 결손으로 집계한다.
+- **보고 단위:** 선 종류별 상태 confusion/읽을 수 있는 비율, 속성 일치율과 분모, false-visible/false-continuous 사례, unreadable률, Fate coverage, centerline/overlay 위치 오류. 성공한 선만 세서 우수하다고 하지 않는다. mask 정답을 실제 그렸을 때만 Dice/IoU 또는 허용 거리 기반 centerline precision/recall을 쓴다.
+- **속도/운영:** 모델 download, cold session, warm inference, 전처리, GPT 왕복을 분리한다. 실제 휴대폰 1대와 desktop 1대에서 메모리/오류 여부를 관찰한다. 표본 8장으로 의미 있는 production p95나 정밀 비용을 추정하지 않는다.
+- **결정:** 반복되는 틀린 선·실제 gap을 이어 버리는 사례가 있으면 CV primary 승격 보류. 세 선 overlay/curvature가 유용해도 continuity와 Fate를 못 채우면 '보조 관찰 후보'로만 남긴다. 권리·coverage·관찰 정확도·abstention·운영 비용이 확인된 다음 A/B/C를 선택한다. 이 pilot 성공만으로 production 정확도를 승인하지 않는다.
+
+## 11. 이번 변경과 다음 단계
+
+`docs/ai/CODEX_REVIEW.md`와 `docs/ai/CURRENT_PHASE.md`만 갱신한다. 기존 기록을 보존한다. 애플리케이션·테스트·PalmObservationBundle·Evidence/Claim·Identity/CoreTag/convergence·engine/schema 변경 없음. 모델 다운로드 0, 대형 dependency 설치 0, 유료 호출 0, 실험 실행 0. 코드 변경이 없어 build/회귀를 다시 실행하지 않으며 문서 diff-check만 한다.
+
+다음 단계는 **권리 확인 질문 목록과 8장 비교 프로토콜 확정**이다. GPT-4.1은 유지하고 CV 우선 전환, hybrid/fallback 자동화, Phase 1C와 해석 연결은 시작하지 않는다. 이번 결론은 **D**다.
+
+---
+
+## 이전 검수 기록 (원문 보존)
+
 # Palm Phase 1B — 최종 MINOR 종료·승인 검수 (2026-09-30)
 
 **A. MINOR CLOSED — PHASE 1B APPROVED / READY FOR MERGE**
