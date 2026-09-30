@@ -5,7 +5,7 @@
 // (--conditions=react-server resolves the `server-only` guard the same way Next does for route handlers.)
 // All images are synthetic and generated in memory. The OpenAI adapter is exercised with a mock fetch.
 
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { relative } from 'node:path';
 import { isRepositoryImagePath, REPOSITORY_ROOT } from './palmSmokePaths';
@@ -598,6 +598,44 @@ async function main() {
       try { unlinkSync(linkInRepo); } catch { /* not created */ }
       rmSync(outsideDir, { recursive: true, force: true });
     }
+  }
+
+  // ══ I. smoke path containment by path components, not text (Codex focused re-review MINOR) ══
+  {
+    // a throwaway directory tree stands in for the repository root; the real repository is not touched
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'palm-contain-')));
+    const repo = join(base, 'repo');
+    const outside = join(base, 'outside');
+    const sibling = join(base, 'repo-other');
+    try {
+      for (const d of [repo, join(repo, 'sub'), outside, sibling]) mkdirSync(d, { recursive: true });
+      for (const f of [join(repo, 'photo.jpg'), join(repo, '..hand.jpg'), join(repo, '.hidden.jpg'), join(outside, 'private.jpg'), join(sibling, 'photo.jpg')]) writeFileSync(f, 'synthetic');
+      symlinkSync(join(outside, 'private.jpg'), join(repo, 'link-out.jpg'));
+      symlinkSync(join(repo, 'photo.jpg'), join(outside, 'link-in.jpg'));
+      const cases: Array<[string, string, string, boolean]> = [
+        ['A <repo>/photo.jpg', join(repo, 'photo.jpg'), base, true],
+        ['B <repo>/..hand.jpg (filename, not a parent segment)', join(repo, '..hand.jpg'), base, true],
+        ['B relative ..hand.jpg from repo cwd', '..hand.jpg', repo, true],
+        ['C <repo>/.hidden.jpg', join(repo, '.hidden.jpg'), base, true],
+        ['D relative repository file', 'photo.jpg', repo, true],
+        ['E ./ repository file', './photo.jpg', repo, true],
+        ['F subdir/../ repository file', 'sub/../photo.jpg', repo, true],
+        ['G ../ that resolves outside', '../outside/private.jpg', repo, false],
+        ['H outside file', join(outside, 'private.jpg'), base, false],
+        ['I prefix sibling <base>/repo-other/photo.jpg', join(sibling, 'photo.jpg'), base, false],
+        ['J symlink inside repository → outside target', join(repo, 'link-out.jpg'), base, true],
+        ['K symlink outside → inside target', join(outside, 'link-in.jpg'), base, true],
+        ['L nonexistent path', join(outside, 'missing.jpg'), base, true],
+      ];
+      for (const [name, path, cwd, reject] of cases) {
+        check(`I containment ${name} → ${reject ? 'reject' : 'allow'}`, isRepositoryImagePath(path, cwd, repo) === reject, path);
+      }
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+    const helper = readFileSync(join(__dirname, 'palmSmokePaths.ts'), 'utf8').split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+    check('I helper decides by path segments, not a textual ".." prefix/substring test',
+      !/startsWith\(['"]\.\.['"]\)|includes\(['"]\.\.['"]\)/.test(helper));
   }
 
   if (failures) {
