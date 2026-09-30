@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { activeBaseRef, buildPalmSupplementFor, saveActive, type ActiveAnalysis } from '@/app/lib/activeAnalysis';
-import { isCurrentPalmAttempt } from '@/app/lib/palmAttempt';
+import { PalmAttemptTracker } from '@/app/lib/palmAttempt';
 import { trackPalmEvent } from '@/app/lib/palmAnalytics';
 import { ensurePalmSession, requestPalmObservation } from '@/app/lib/palmClient';
 import {
@@ -13,7 +13,7 @@ import {
 } from '@/app/lib/palmPresentation';
 import type { PalmObservationBundle } from '@/app/lib/palmObservation';
 import type { PalmComparisonKind, PalmSupplement } from '@/app/lib/palmSupplement';
-import { readPalmSupplement, savePalmSupplement } from '@/app/lib/palmSupplementStore';
+import { readPalmSupplement, saveBaseThenPalm } from '@/app/lib/palmSupplementStore';
 
 // ── 손바닥 패턴 분석 (Palm Phase 1C 보조 카드) ─────────────────────────────────
 // 기본 결과가 표시된 뒤의 선택 기능이다. 기본 결과를 바꾸거나 다시 분석하지 않는다.
@@ -57,13 +57,14 @@ export default function PalmSupplementPanel({ active, storeVersion, onPendingCha
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [hasFailedOnce, setHasFailedOnce] = useState(false);
 
-  const attemptRef = useRef<string | null>(null);
+  const trackerRef = useRef(new PalmAttemptTracker()); // 이 결과(mount) 전용
   const abortRef = useRef<AbortController | null>(null);
   const previewRef = useRef<string | null>(null);
   const viewedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
+    const tracker = trackerRef.current;
     ensurePalmSession().then((s) => {
       if (cancelled) return;
       setEnabled(s.enabled);
@@ -74,7 +75,7 @@ export default function PalmSupplementPanel({ active, storeVersion, onPendingCha
     });
     return () => {
       cancelled = true;
-      attemptRef.current = null;          // 늦게 도착한 응답은 반영하지 않는다
+      tracker.invalidate();               // 늦게 도착한 응답은 반영하지 않는다 (결과 이동·삭제 remount 포함)
       abortRef.current?.abort();          // 네트워크 abort가 provider 과금 취소를 보장하지는 않는다
       if (previewRef.current) URL.revokeObjectURL(previewRef.current);
       previewRef.current = null;
@@ -113,9 +114,8 @@ export default function PalmSupplementPanel({ active, storeVersion, onPendingCha
 
   const analyze = async (isRetry: boolean) => {
     if (!file || !noticeAcceptedAt || phase === 'processing' || !baseRef) return;
-    const attemptId = crypto.randomUUID();
-    const captured = { baseRef, attemptId };
-    attemptRef.current = attemptId;
+    const tracker = trackerRef.current;
+    const captured = tracker.begin(baseRef, crypto.randomUUID());
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -125,8 +125,8 @@ export default function PalmSupplementPanel({ active, storeVersion, onPendingCha
     trackPalmEvent(isRetry ? 'palm_retry' : 'palm_started');
 
     const session = await ensurePalmSession();
-    const current = () => ({ baseRef: activeBaseRef(active), attemptId: attemptRef.current });
-    if (!isCurrentPalmAttempt(captured, current())) return;
+    const isCurrent = () => tracker.isCurrent(captured, activeBaseRef(active));
+    if (!isCurrent()) return;
     if (!session.enabled) {
       setEnabled(false);
       setErrorCode('UNAVAILABLE');
@@ -134,7 +134,7 @@ export default function PalmSupplementPanel({ active, storeVersion, onPendingCha
       return;
     }
     const outcome = await requestPalmObservation(file, session.csrfToken, crypto.randomUUID(), controller.signal);
-    if (!isCurrentPalmAttempt(captured, current())) return; // 다른 결과로 이동했거나 더 새 시도가 있음
+    if (!isCurrent()) return; // 다른 결과로 이동했거나, 결과가 삭제됐거나, 더 새 시도가 있음
 
     if (!outcome.ok) {
       if (outcome.code === 'ABORTED') return;
@@ -169,16 +169,21 @@ export default function PalmSupplementPanel({ active, storeVersion, onPendingCha
 
   const saveFresh = () => {
     if (!fresh) return;
-    saveActive(active); // 이미 저장된 결과면 기존 항목을 그대로 둔다
-    const r = savePalmSupplement(fresh);
-    if (r.ok) {
+    // 기본 결과 저장(이미 저장돼 있으면 그대로) → 성공했을 때만 보조 기록. 실패해도 받은 결과는 메모리에 남아
+    // 다시 저장할 수 있다 (provider 재호출 없음).
+    const r = saveBaseThenPalm(() => saveActive(active), baseRef, fresh);
+    if (r.base === 'failed') {
+      setSaveMessage('기본 결과를 저장하지 못했습니다. 저장 공간을 확인한 뒤 다시 저장해 주세요.');
+      return;
+    }
+    if (r.palm.ok) {
       setLocalVersion((v) => v + 1);
       setSaveMessage('손바닥 결과를 이 기기에 저장했습니다.');
       onSaved();
     } else {
-      setSaveMessage(r.reason === 'storage-failed'
-        ? '기본 결과는 저장됐지만 손바닥 결과는 저장하지 못했습니다. 저장 공간을 확인해 주세요.'
-        : '손바닥 결과를 저장하지 못했습니다. 기본 결과를 먼저 저장해 주세요.');
+      setSaveMessage(r.palm.reason === 'storage-failed'
+        ? '기본 결과는 저장됐지만 손바닥 결과는 저장하지 못했습니다. 저장 공간을 확인한 뒤 다시 저장해 주세요.'
+        : '손바닥 결과를 저장하지 못했습니다. 다시 시도해 주세요.');
     }
   };
 

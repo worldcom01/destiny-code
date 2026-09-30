@@ -121,3 +121,23 @@ export function savePendingPalmFor(
   if (!sameBaseRef(pending.baseRef, currentBaseRef)) return { ok: false, reason: 'other-result' };
   return savePalmSupplement(pending);
 }
+
+export type PalmBaseThenPalmResult =
+  | { base: 'failed' }
+  | { base: 'saved'; palm: PalmSupplementSaveResult | { ok: false; reason: 'none' | 'other-result' } };
+
+// 기본 결과를 먼저 저장하고(예외를 잡는다), 성공했을 때만 이 결과의 Palm 보조 기록을 저장한다.
+// 기본 저장이 실패하면 보조 기록을 쓰지 않는다 — orphan 없음. 받은 관찰은 호출부 메모리에 남아
+// 사용자가 다시 저장할 수 있고, provider를 다시 호출하지 않는다.
+export function saveBaseThenPalm(
+  saveBase: () => unknown,
+  currentBaseRef: PalmBaseRef | null,
+  pending: PalmSupplement | null,
+): PalmBaseThenPalmResult {
+  try {
+    saveBase();
+  } catch {
+    return { base: 'failed' };
+  }
+  return { base: 'saved', palm: savePendingPalmFor(currentBaseRef, pending) };
+}

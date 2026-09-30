@@ -21,13 +21,13 @@ import { buildPalmEvidence } from '../app/lib/palmEvidence';
 import type { PalmLineObservation, PalmObservationBundle } from '../app/lib/palmObservation';
 import { buildPalmInterpretation, PALM_SYMBOLIC_RULES } from '../app/lib/palmInterpretation';
 import { baseTraitsOf, buildSupplementaryComparison } from '../app/lib/palmComparison';
-import { isCurrentPalmAttempt } from '../app/lib/palmAttempt';
+import { isCurrentPalmAttempt, PalmAttemptTracker, shouldResetPalmOnDelete } from '../app/lib/palmAttempt';
 import {
   parsePalmSupplement, PALM_COMPARISON_RULE_VERSION, PALM_INTERPRETATION_RULE_VERSION, type PalmSupplement,
 } from '../app/lib/palmSupplement';
 import {
   deletePalmSupplement, PALM_SUPPLEMENT_STORAGE_KEY, prunePalmSupplements, readPalmSupplement, savedBaseRef, savePalmSupplement,
-  savePendingPalmFor,
+  saveBaseThenPalm, savePendingPalmFor,
 } from '../app/lib/palmSupplementStore';
 import {
   checkPalmFile, palmErrorMessage, palmObservationRows, palmQualityNote, PALM_DISCLAIMER, PALM_PROCESSING_NOTICE_TEXT,
@@ -382,12 +382,18 @@ for (const order of ['A-first', 'B-first'] as const) {
   const root = join(__dirname, '..');
   const page = readFileSync(join(root, 'app/page.tsx'), 'utf8');
   const panel = readFileSync(join(root, 'app/components/PalmSupplementPanel.tsx'), 'utf8');
-  check('UI: panel is keyed by the result baseRef (fresh state per result)', /key=\{`\$\{ref\.kind\}:\$\{ref\.id\}`\}/.test(page));
+  check('UI: panel is keyed by the result baseRef (fresh state per result)', /key=\{`\$\{ref\.kind\}:\$\{ref\.id\}:/.test(page));
   check('UI: upload happens only from the explicit analyze action (no request on mount)',
     (panel.match(/requestPalmObservation\(/g) ?? []).length === 1 && /const analyze = async/.test(panel) && !/useEffect\([^]*?requestPalmObservation/.test(panel.split('const releasePhoto')[0]));
   check('UI: camera + gallery inputs, accept limited to JPEG/PNG/WebP', /capture="environment"/.test(panel) && (panel.match(/type="file"/g) ?? []).length === 2 && /accept=\{PALM_ACCEPT\}/.test(panel));
   check('UI: analyze button requires the processing notice to be confirmed', /disabled=\{!noticeAcceptedAt \|\| busy\}/.test(panel));
-  check('UI: late responses are discarded via the attempt guard', (panel.match(/isCurrentPalmAttempt\(captured, current\(\)\)/g) ?? []).length >= 2);
+  check('UI: late responses are discarded via the per-mount attempt tracker', (panel.match(/if \(!isCurrent\(\)\) return/g) ?? []).length >= 2
+    && /tracker\.invalidate\(\)/.test(panel) && /URL\.revokeObjectURL/.test(panel));
+  check('UI: deleting the active result remounts the Palm card (generation key) and clears pending Palm',
+    /key=\{`\$\{ref\.kind\}:\$\{ref\.id\}:\$\{palmGeneration\}`\}/.test(page) && /shouldResetPalmOnDelete\(activeBaseRef\(active\), savedBaseRef\(saved\)\)/.test(page)
+    && /setPalmGeneration\(\(g\) => g \+ 1\)/.test(page));
+  check('UI: panel and page save base-then-Palm through the guarded helper', /saveBaseThenPalm\(\(\) => saveActive\(active\), baseRef, fresh\)/.test(panel)
+    && /saveBaseThenPalm\(\(\) => saveActive\(active\), activeBaseRef\(active\), pendingPalm\)/.test(page) && !/savePalmSupplement\(/.test(panel));
   check('UI: no raw JSON / rule ids / provider metadata rendered', !/JSON\.stringify|ruleId|modelRevision|adapterVersion|promptVersion/.test(panel));
   check('UI: photo never stored (no localStorage/sessionStorage/FileReader/base64 in the panel)', !/localStorage|sessionStorage|FileReader|readAsDataURL|base64/.test(panel));
   check('UI: share stays base-only (activeShareText untouched, note shown)', /PALM_SHARE_NOTE/.test(panel) && !/palm/i.test(readFileSync(join(root, 'app/lib/shareEngine.ts'), 'utf8')));
@@ -396,6 +402,79 @@ for (const order of ['A-first', 'B-first'] as const) {
   const analytics = readFileSync(join(root, 'app/lib/palmAnalytics.ts'), 'utf8');
   check('analytics: client sends only event + random id (3 allowed events)', /JSON\.stringify\(\{ eventId: crypto\.randomUUID\(\), event \}\)/.test(analytics)
     && /'palm_prompt_viewed' \| 'palm_started' \| 'palm_retry'/.test(analytics));
+}
+
+
+// ══ M-2: deleting the active result invalidates its in-flight Palm (release-relevant) ══
+{
+  reset();
+  const a = activeFromNewAnalysis(analyzeA(), inputA);
+  saveActive(a);
+  const refA = activeBaseRef(a)!;
+  // open A, start Palm A (panel mount for A)
+  const trackerA = new PalmAttemptTracker();
+  const inflightA = trackerA.begin(refA, 'attempt-A');
+  let pending: PalmSupplement | null = null;
+  // delete A (the active result)
+  deleteAnalysis(getSavedAnalyses()[0].id);
+  deletePalmSupplement(refA);
+  const reset1 = shouldResetPalmOnDelete(refA, refA);
+  if (reset1) { trackerA.invalidate(); pending = null; } // page: clear pending + remount (cleanup invalidates, revokes preview)
+  check('M-2: deleting the active result requests a Palm reset', reset1);
+  // open/create B (new mount)
+  const b = activeFromNewAnalysis(analyzeB(), inputB);
+  const trackerB = new PalmAttemptTracker();
+  saveActive(b);
+  // late A response arrives
+  const lateApplies = trackerA.isCurrent(inflightA, refA) || trackerB.isCurrent(inflightA, activeBaseRef(b));
+  check('M-2: late response of the deleted result A is discarded (old and new mounts)', !lateApplies);
+  if (lateApplies) pending = buildPalmSupplementFor(a, FULL, { id: 'late-A', ...NOW });
+  const saveB = saveBaseThenPalm(() => saveActive(b), activeBaseRef(b), pending);
+  check('M-2: B stays completely unaffected (no Palm, nothing written for A or B)',
+    saveB.base === 'saved' && !saveB.palm.ok && readPalmSupplement(activeBaseRef(b)).status === 'none' && readPalmSupplement(refA).status === 'none'
+    && getSavedAnalyses().length === 1 && getSavedAnalyses()[0].kind === 'v2' && (getSavedAnalyses()[0].resultData as AnalysisSnapshot).analysisId === (b.result as AnalysisSnapshot).analysisId);
+  check('M-2: even a leftover pending A cannot attach to B', eq(savePendingPalmFor(activeBaseRef(b), buildPalmSupplementFor(a, FULL, { id: 'x', ...NOW })), { ok: false, reason: 'other-result' }));
+  // deleting a different (non-active) result must not disturb the active result's Palm
+  const c = activeFromNewAnalysis(analyzeA(), inputA);
+  saveActive(c);
+  addPalm(b, 'b-palm');
+  deleteAnalysis(getSavedAnalyses().find((x) => x.kind === 'v2' && x.resultData.analysisId === (c.result as AnalysisSnapshot).analysisId)!.id);
+  check('M-2: deleting another result does not reset or delete the active result\'s Palm',
+    !shouldResetPalmOnDelete(activeBaseRef(b), activeBaseRef(c)!) && readPalmSupplement(activeBaseRef(b)).status === 'ok');
+  // a new attempt on the tracker supersedes an older one
+  const t = new PalmAttemptTracker();
+  const first = t.begin(refA, '1');
+  t.begin(refA, '2');
+  check('M-2: newer attempt supersedes older one on the same result', !t.isCurrent(first, refA));
+}
+
+// ══ M-3: base save failure is handled before any supplement write ══
+{
+  reset();
+  const keep = activeFromNewAnalysis(analyzeB(), inputB);
+  saveActive(keep);
+  const before = store['destiny_ai_v1'];
+  const a = activeFromNewAnalysis(analyzeA(), inputA);
+  const fresh = buildPalmSupplementFor(a, FULL, { id: 'fresh-A', ...NOW })!; // already-paid observation, in memory
+  const ls = g.localStorage as { setItem: (k: string, v: string) => void };
+  const realSet = ls.setItem;
+  ls.setItem = (k: string, v: string) => { if (k === 'destiny_ai_v1') throw new Error('QuotaExceededError'); store[k] = v; };
+  const r1 = saveBaseThenPalm(() => saveActive(a), activeBaseRef(a), fresh);
+  check('M-3: base save throws → reported as base failed (no exception escapes)', r1.base === 'failed');
+  check('M-3: no orphan supplement written when the base failed', !store[PALM_SUPPLEMENT_STORAGE_KEY] && readPalmSupplement(activeBaseRef(a)).status === 'none');
+  check('M-3: existing saved results preserved', store['destiny_ai_v1'] === before);
+  ls.setItem = realSet;
+  const r2 = saveBaseThenPalm(() => saveActive(a), activeBaseRef(a), fresh);
+  check('M-3: explicit retry saves base then the SAME in-memory supplement (no new observation needed)',
+    r2.base === 'saved' && r2.palm.ok && (() => { const x = readPalmSupplement(activeBaseRef(a)); return x.status === 'ok' && x.supplement.id === 'fresh-A'; })());
+  // base ok + supplement storage failure are reported separately
+  reset();
+  const d = activeFromNewAnalysis(analyzeA(), inputA);
+  const sd = buildPalmSupplementFor(d, FULL, { id: 'fresh-D', ...NOW })!;
+  ls.setItem = (k: string, v: string) => { if (k === PALM_SUPPLEMENT_STORAGE_KEY) throw new Error('quota'); store[k] = v; };
+  const r3 = saveBaseThenPalm(() => saveActive(d), activeBaseRef(d), sd);
+  ls.setItem = realSet;
+  check('M-3: base saved but supplement storage failed → distinguished', r3.base === 'saved' && eq(r3.palm, { ok: false, reason: 'storage-failed' }) && getSavedAnalyses().length === 1);
 }
 
 // ══ Stage 3: server-render smoke of the panel (stored supplement, legacy, none) ══

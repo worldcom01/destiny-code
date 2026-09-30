@@ -21,7 +21,8 @@ import {
   type ActiveAnalysis,
 } from '@/app/lib/activeAnalysis';
 import type { PalmSupplement } from '@/app/lib/palmSupplement';
-import { deletePalmSupplement, prunePalmSupplements, savedBaseRef, savePendingPalmFor } from '@/app/lib/palmSupplementStore';
+import { deletePalmSupplement, prunePalmSupplements, savedBaseRef, saveBaseThenPalm } from '@/app/lib/palmSupplementStore';
+import { shouldResetPalmOnDelete } from '@/app/lib/palmAttempt';
 import PalmSupplementPanel from '@/app/components/PalmSupplementPanel';
 import { shuffleCards } from '@/app/lib/tarotEngine';
 import { generateDestinyCode } from '@/app/lib/destinyCode';
@@ -315,6 +316,8 @@ export default function Home() {
   const [pendingPalm, setPendingPalm] = useState<PalmSupplement | null>(null);
   const [palmStoreVersion, setPalmStoreVersion] = useState(0);
   const [palmSaveNote, setPalmSaveNote] = useState<string | null>(null);
+  // 활성 결과를 삭제하면 증가 → Palm 카드를 remount해 진행 중 요청·미저장 결과·미리보기를 버린다
+  const [palmGeneration, setPalmGeneration] = useState(0);
 
   useEffect(() => {
     prunePalmSupplements(); // 삭제·10개 제한으로 사라진 결과의 보조 기록 정리
@@ -408,14 +411,18 @@ export default function Home() {
 
   const handleSave = () => {
     if (!active) return;
-    saveActive(active);
-    // 이 결과에서 받은 저장 전 손바닥 결과가 있으면 base 저장 후 별도로 저장한다 (원자적 저장을 가장하지 않음)
+    // 기본 결과를 먼저 저장하고, 성공했을 때만 이 결과의 저장 전 손바닥 결과를 별도로 저장한다
+    // (원자적 저장을 가장하지 않음). 기본 저장 실패 시 보조 기록을 쓰지 않는다.
     setPalmSaveNote(null);
-    const palm = savePendingPalmFor(activeBaseRef(active), pendingPalm);
-    if (palm.ok) {
+    const r = saveBaseThenPalm(() => saveActive(active), activeBaseRef(active), pendingPalm);
+    if (r.base === 'failed') {
+      setPalmSaveNote('결과를 저장하지 못했습니다. 저장 공간을 확인한 뒤 다시 시도해 주세요.');
+      return;
+    }
+    if (r.palm.ok) {
       setPendingPalm(null);
       setPalmStoreVersion((v) => v + 1);
-    } else if (palm.reason !== 'none' && palm.reason !== 'other-result') {
+    } else if (r.palm.reason !== 'none' && r.palm.reason !== 'other-result') {
       setPalmSaveNote('기본 결과는 저장됐지만 손바닥 결과는 저장하지 못했습니다.');
     }
     prunePalmSupplements();
@@ -445,7 +452,14 @@ export default function Home() {
   const handleDeleteSaved = (id: string) => {
     const saved = savedList.find((s) => s.id === id);
     deleteAnalysis(id);
-    if (saved) deletePalmSupplement(savedBaseRef(saved)); // 삭제한 결과의 보조 기록도 함께 지운다
+    if (saved) {
+      deletePalmSupplement(savedBaseRef(saved)); // 삭제한 결과의 보조 기록도 함께 지운다
+      // 지금 보고 있는 결과를 지웠다면 그 결과의 진행 중 Palm 요청·미저장 결과·미리보기를 모두 버린다
+      if (active && shouldResetPalmOnDelete(activeBaseRef(active), savedBaseRef(saved))) {
+        setPendingPalm(null);
+        setPalmGeneration((g) => g + 1);
+      }
+    }
     prunePalmSupplements();
     setSavedList(getSavedAnalyses());
     setPalmStoreVersion((v) => v + 1);
@@ -1325,7 +1339,7 @@ export default function Home() {
               const ref = activeBaseRef(active);
               return ref && (
                 <PalmSupplementPanel
-                  key={`${ref.kind}:${ref.id}`}
+                  key={`${ref.kind}:${ref.id}:${palmGeneration}`}
                   active={active}
                   storeVersion={palmStoreVersion}
                   onPendingChange={(s) => setPendingPalm(s)}
