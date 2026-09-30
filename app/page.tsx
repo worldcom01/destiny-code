@@ -12,6 +12,7 @@ import {
 } from '@/app/lib/storageEngine';
 import { shareResult, type ShareOutcome } from '@/app/lib/shareEngine';
 import {
+  activeBaseRef,
   activeFromNewAnalysis,
   activeFromSaved,
   activeDestinyCode,
@@ -19,6 +20,9 @@ import {
   saveActive,
   type ActiveAnalysis,
 } from '@/app/lib/activeAnalysis';
+import type { PalmSupplement } from '@/app/lib/palmSupplement';
+import { deletePalmSupplement, prunePalmSupplements, savedBaseRef, savePendingPalmFor } from '@/app/lib/palmSupplementStore';
+import PalmSupplementPanel from '@/app/components/PalmSupplementPanel';
 import { shuffleCards } from '@/app/lib/tarotEngine';
 import { generateDestinyCode } from '@/app/lib/destinyCode';
 import { saveProfile } from '@/app/lib/profileStore';
@@ -307,8 +311,13 @@ export default function Home() {
   const [shareStatus, setShareStatus] = useState<ShareOutcome | 'idle'>('idle');
   const resultRef = useRef<HTMLDivElement>(null);
   const [codeCopyStatus, setCodeCopyStatus] = useState<'idle' | 'copied'>('idle');
+  // Palm 보조 결과: 저장 전 성공본(이 결과에 속한 것만)과 보조 저장 알림. 기본 결과와 별개다.
+  const [pendingPalm, setPendingPalm] = useState<PalmSupplement | null>(null);
+  const [palmStoreVersion, setPalmStoreVersion] = useState(0);
+  const [palmSaveNote, setPalmSaveNote] = useState<string | null>(null);
 
   useEffect(() => {
+    prunePalmSupplements(); // 삭제·10개 제한으로 사라진 결과의 보조 기록 정리
     setSavedList(getSavedAnalyses());
   }, []);
 
@@ -328,6 +337,8 @@ export default function Home() {
   const handleSubmit = (e: { preventDefault(): void }) => {
     e.preventDefault();
     setActive(null);
+    setPendingPalm(null);
+    setPalmSaveNote(null);
     setSaveStatus('idle');
     setShuffledCards(shuffleCards(9));
     setAppStep('picking');
@@ -358,6 +369,8 @@ export default function Home() {
       form.solarType,
       form.isLeapMonth,
     );
+    setPendingPalm(null);
+    setPalmSaveNote(null);
     setActive(activeFromNewAnalysis(analysisResult, {
       nickname: form.name,
       birthdate,
@@ -396,6 +409,16 @@ export default function Home() {
   const handleSave = () => {
     if (!active) return;
     saveActive(active);
+    // 이 결과에서 받은 저장 전 손바닥 결과가 있으면 base 저장 후 별도로 저장한다 (원자적 저장을 가장하지 않음)
+    setPalmSaveNote(null);
+    const palm = savePendingPalmFor(activeBaseRef(active), pendingPalm);
+    if (palm.ok) {
+      setPendingPalm(null);
+      setPalmStoreVersion((v) => v + 1);
+    } else if (palm.reason !== 'none' && palm.reason !== 'other-result') {
+      setPalmSaveNote('기본 결과는 저장됐지만 손바닥 결과는 저장하지 못했습니다.');
+    }
+    prunePalmSupplements();
     setSaveStatus('saved');
     setSavedList(getSavedAnalyses());
     setTimeout(() => setSaveStatus('idle'), 2500);
@@ -411,6 +434,8 @@ export default function Home() {
 
   const handleViewSaved = (saved: SavedAnalysis) => {
     setActive(activeFromSaved(saved));
+    setPendingPalm(null);
+    setPalmSaveNote(null);
     setSaveStatus('idle');
     setShowHistory(false);
     setAppStep('result');
@@ -418,8 +443,12 @@ export default function Home() {
   };
 
   const handleDeleteSaved = (id: string) => {
+    const saved = savedList.find((s) => s.id === id);
     deleteAnalysis(id);
+    if (saved) deletePalmSupplement(savedBaseRef(saved)); // 삭제한 결과의 보조 기록도 함께 지운다
+    prunePalmSupplements();
     setSavedList(getSavedAnalyses());
+    setPalmStoreVersion((v) => v + 1);
   };
 
   const result = active?.result ?? null;
@@ -824,6 +853,8 @@ export default function Home() {
                 </button>
               </div>
             </div>
+
+            {palmSaveNote && <p className="text-xs text-amber-300/80 text-right" role="status">{palmSaveNote}</p>}
 
             {/* ── 당신의 본질 헤더 ── */}
             <div className="flex items-center gap-3 pt-2 opacity-0 [animation:fadeInUp_0.4s_ease-out_50ms_forwards]">
@@ -1288,6 +1319,20 @@ export default function Home() {
                 </div>
               </div>
             </div>
+
+            {/* ── 손바닥 패턴 분석 (선택 보조 기능 — 기본 결과와 분리, 결과마다 새로 mount) ── */}
+            {active && (() => {
+              const ref = activeBaseRef(active);
+              return ref && (
+                <PalmSupplementPanel
+                  key={`${ref.kind}:${ref.id}`}
+                  active={active}
+                  storeVersion={palmStoreVersion}
+                  onPendingChange={(s) => setPendingPalm(s)}
+                  onSaved={() => { setPendingPalm(null); setSavedList(getSavedAnalyses()); }}
+                />
+              );
+            })()}
 
             {/* ── 또 하나의 흐름과 연결하기 ── */}
             {destinyCode && (

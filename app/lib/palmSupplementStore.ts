@@ -110,3 +110,14 @@ export function prunePalmSupplements(): void {
     .slice(0, MAX_SUPPLEMENTS);
   if (next.length !== entries.length) writeRaw(next);
 }
+
+// 기본 결과 저장 직후 호출: 저장 전 손바닥 결과가 "지금 이 결과"에 속할 때만 저장한다.
+// 다른 결과(A의 pending이 B 저장 때)에 붙는 일은 없다.
+export function savePendingPalmFor(
+  currentBaseRef: PalmBaseRef | null,
+  pending: PalmSupplement | null,
+): PalmSupplementSaveResult | { ok: false; reason: 'none' | 'other-result' } {
+  if (!pending) return { ok: false, reason: 'none' };
+  if (!sameBaseRef(pending.baseRef, currentBaseRef)) return { ok: false, reason: 'other-result' };
+  return savePalmSupplement(pending);
+}

@@ -27,7 +27,13 @@ import {
 } from '../app/lib/palmSupplement';
 import {
   deletePalmSupplement, PALM_SUPPLEMENT_STORAGE_KEY, prunePalmSupplements, readPalmSupplement, savedBaseRef, savePalmSupplement,
+  savePendingPalmFor,
 } from '../app/lib/palmSupplementStore';
+import {
+  checkPalmFile, palmErrorMessage, palmObservationRows, palmQualityNote, PALM_DISCLAIMER, PALM_PROCESSING_NOTICE_TEXT,
+} from '../app/lib/palmPresentation';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { deleteAnalysis, getSavedAnalyses } from '../app/lib/storageEngine';
 import {
   activeBaseRef, activeDestinyCode, activeFromNewAnalysis, activeFromSaved, activeShareText, buildPalmSupplementFor, saveActive,
@@ -341,8 +347,81 @@ for (const order of ['A-first', 'B-first'] as const) {
   check('parser: extra fields (e.g. a photo) are rejected', threw);
 }
 
-if (failures) {
-  console.log(`\nFAIL: ${failures} palm-supplement check(s) failed`);
-  process.exit(1);
+// ══ Stage 3: page save flow (pending Palm), presentation, UI wiring ══
+{
+  reset();
+  const a = activeFromNewAnalysis(analyzeA(), inputA);
+  const b = activeFromNewAnalysis(analyzeB(), inputB);
+  const pendingA = buildPalmSupplementFor(a, FULL, { id: 'pending-A', ...NOW })!;
+  saveActive(b);
+  check('page save: pending Palm of A is NOT saved when result B is being saved', eq(savePendingPalmFor(activeBaseRef(b), pendingA), { ok: false, reason: 'other-result' })
+    && readPalmSupplement(activeBaseRef(b)).status === 'none' && readPalmSupplement(activeBaseRef(a)).status === 'none');
+  saveActive(a);
+  check('page save: pending Palm of A is saved after base A is saved', savePendingPalmFor(activeBaseRef(a), pendingA).ok
+    && readPalmSupplement(activeBaseRef(a)).status === 'ok' && readPalmSupplement(activeBaseRef(b)).status === 'none');
+  check('page save: no pending → nothing written', eq(savePendingPalmFor(activeBaseRef(b), null), { ok: false, reason: 'none' }));
 }
-console.log('\nPASS: all palm-supplement regression checks');
+{
+  check('file check: HEIC/HEIF rejected with guidance (by type or extension)',
+    checkPalmFile({ type: 'image/heic', name: 'a.heic', size: 10 }) === 'heic' && checkPalmFile({ type: '', name: 'IMG_1.HEIF', size: 10 }) === 'heic');
+  check('file check: JPEG/PNG/WebP ≤ 4 MB accepted; other types / oversize / empty refused',
+    checkPalmFile({ type: 'image/jpeg', name: 'a.jpg', size: 1000 }) === null && checkPalmFile({ type: 'image/webp', name: 'a.webp', size: 1 }) === null
+    && checkPalmFile({ type: 'image/gif', name: 'a.gif', size: 10 }) === 'type' && checkPalmFile({ type: 'image/png', name: 'a.png', size: 4_000_001 }) === 'size'
+    && checkPalmFile({ type: 'image/png', name: 'a.png', size: 0 }) === 'empty');
+  const codes = ['INVALID_IMAGE', 'IMAGE_TOO_LARGE', 'RATE_LIMITED', 'DUPLICATE_IMAGE', 'DUPLICATE_REQUEST', 'REQUEST_CONFLICT', 'PROVIDER_TIMEOUT', 'PROVIDER_ERROR', 'INVALID_PROVIDER_RESPONSE', 'SESSION_REQUIRED', 'UNAVAILABLE', 'NETWORK', 'weird'];
+  check('error messages: every code maps to Korean guidance without raw codes', codes.every((c) => /[가-힣]/.test(palmErrorMessage(c)) && !palmErrorMessage(c).includes(c)));
+  check('error messages: lost result explains that a retry is a new request', palmErrorMessage('PROVIDER_TIMEOUT').includes('새 요청'));
+  const rows = palmObservationRows(FULL);
+  check('presentation: four readable rows with everyday hints, no rule ids/JSON/confidence',
+    rows.length === 4 && rows.every((r) => r.hint.length > 0) && !/palm\.|ruleId|confidence|\{|\}/.test(JSON.stringify(rows.map((r) => r.summary))));
+  check('presentation: unusable / partial notes', !!palmQualityNote(bundle({ life: UNREADABLE, head: UNREADABLE, heart: UNREADABLE, fate: UNREADABLE }, 'unusable'))
+    && !!palmQualityNote(bundle({ life: UNREADABLE, head: vis('curved', null), heart: NOT_DETECTED, fate: NOT_DETECTED }, 'partial')) && palmQualityNote(FULL) === null);
+  check('disclosure text: exact required meaning', PALM_DISCLAIMER === '손바닥 분석은 AI 기반의 해석적 콘텐츠이며 과학적·의학적 판단이나 미래 예측을 제공하지 않습니다.');
+  check('processing notice: names the external AI service and does not promise zero retention',
+    PALM_PROCESSING_NOTICE_TEXT.includes('OpenAI') && !/어디에도 저장되지 않|전혀 저장되지 않|보관하지 않습니다\.$/.test(PALM_PROCESSING_NOTICE_TEXT));
+  const root = join(__dirname, '..');
+  const page = readFileSync(join(root, 'app/page.tsx'), 'utf8');
+  const panel = readFileSync(join(root, 'app/components/PalmSupplementPanel.tsx'), 'utf8');
+  check('UI: panel is keyed by the result baseRef (fresh state per result)', /key=\{`\$\{ref\.kind\}:\$\{ref\.id\}`\}/.test(page));
+  check('UI: upload happens only from the explicit analyze action (no request on mount)',
+    (panel.match(/requestPalmObservation\(/g) ?? []).length === 1 && /const analyze = async/.test(panel) && !/useEffect\([^]*?requestPalmObservation/.test(panel.split('const releasePhoto')[0]));
+  check('UI: camera + gallery inputs, accept limited to JPEG/PNG/WebP', /capture="environment"/.test(panel) && (panel.match(/type="file"/g) ?? []).length === 2 && /accept=\{PALM_ACCEPT\}/.test(panel));
+  check('UI: analyze button requires the processing notice to be confirmed', /disabled=\{!noticeAcceptedAt \|\| busy\}/.test(panel));
+  check('UI: late responses are discarded via the attempt guard', (panel.match(/isCurrentPalmAttempt\(captured, current\(\)\)/g) ?? []).length >= 2);
+  check('UI: no raw JSON / rule ids / provider metadata rendered', !/JSON\.stringify|ruleId|modelRevision|adapterVersion|promptVersion/.test(panel));
+  check('UI: photo never stored (no localStorage/sessionStorage/FileReader/base64 in the panel)', !/localStorage|sessionStorage|FileReader|readAsDataURL|base64/.test(panel));
+  check('UI: share stays base-only (activeShareText untouched, note shown)', /PALM_SHARE_NOTE/.test(panel) && !/palm/i.test(readFileSync(join(root, 'app/lib/shareEngine.ts'), 'utf8')));
+  check('UI: deleting a saved result also deletes its supplement', /deletePalmSupplement\(savedBaseRef\(saved\)\)/.test(page));
+  check('analytics: existing saveAnalyticsResult payload has no Palm data', !/palm/i.test(readFileSync(join(root, 'app/lib/analyticsEngine.ts'), 'utf8')));
+  const analytics = readFileSync(join(root, 'app/lib/palmAnalytics.ts'), 'utf8');
+  check('analytics: client sends only event + random id (3 allowed events)', /JSON\.stringify\(\{ eventId: crypto\.randomUUID\(\), event \}\)/.test(analytics)
+    && /'palm_prompt_viewed' \| 'palm_started' \| 'palm_retry'/.test(analytics));
+}
+
+// ══ Stage 3: server-render smoke of the panel (stored supplement, legacy, none) ══
+async function renderSmoke() {
+  const React = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const Panel = (await import('../app/components/PalmSupplementPanel')).default;
+  reset();
+  const a = activeFromNewAnalysis(analyzeA(), inputA);
+  saveActive(a);
+  addPalm(a, 'render-A');
+  const html = renderToStaticMarkup(React.createElement(Panel, { active: a, storeVersion: 0, onPendingChange: () => {}, onSaved: () => {} }));
+  check('render: stored supplement shows title, observations, symbolic reading, overlap section and disclaimer',
+    html.includes('손바닥 패턴 분석') && html.includes('관찰된 주요 패턴') && html.includes('상징적 해석') && html.includes('기존 운명 코드와의 교집합')
+    && html.includes('손바닥 분석은 AI 기반의 해석적 콘텐츠이며') && html.includes('공유에는 기본 운명 코드 결과만'));
+  check('render: no rule ids, provider metadata, JSON or confidence in the markup', !/palm\.symbolic|palm\.comparison|gpt-4|openai-responses|palm-vision|confidence|\{&quot;/.test(html));
+  const b = activeFromNewAnalysis(analyzeB(), inputB);
+  saveActive(b);
+  const htmlB = renderToStaticMarkup(React.createElement(Panel, { active: b, storeVersion: 0, onPendingChange: () => {}, onSaved: () => {} }));
+  check('render: result B does not render A\'s Palm supplement', !htmlB.includes('관찰된 주요 패턴') && htmlB.includes('손바닥 패턴 분석'));
+}
+
+renderSmoke().then(() => {
+  if (failures) {
+    console.log(`\nFAIL: ${failures} palm-supplement check(s) failed`);
+    process.exit(1);
+  }
+  console.log('\nPASS: all palm-supplement regression checks');
+}).catch((e) => { console.log(`FAIL: unexpected ${(e as Error).stack}`); process.exit(1); });
