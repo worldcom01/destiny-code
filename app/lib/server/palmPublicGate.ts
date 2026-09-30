@@ -51,7 +51,25 @@ export interface PalmPublicStore {
 }
 
 // 최소 RPC 호출 계약 — Supabase client와 테스트용 Postgres(PGlite) 모두 이 모양으로 연결한다.
-export type PalmRpc = (fn: string, args: Record<string, unknown>) => Promise<unknown>;
+// signal은 호출 시간 한도가 지나면 abort된다 (Supabase는 HTTP 요청 자체를 취소).
+export type PalmRpc = (fn: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
+
+// 모든 공유 DB 호출의 상한 (Codex I-2). 초과하면 PalmGateUnavailable — 무기한 대기 없음.
+export const PALM_DB_CALL_TIMEOUT_MS = 2_500;
+
+// promise를 ms 안에 끝나면 값, 아니면 'timeout'. 원래 작업을 취소하지는 않는다(호출부가 signal로 취소).
+export async function palmWithin<T>(promise: Promise<T>, ms: number): Promise<{ ok: true; value: T } | { ok: false; timedOut: boolean }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), Math.max(0, ms)); });
+  try {
+    const r = await Promise.race([promise.then((value) => ({ value })), timeout]);
+    return r === 'timeout' ? { ok: false, timedOut: true } : { ok: true, value: r.value };
+  } catch {
+    return { ok: false, timedOut: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const LEDGER_STATUSES: readonly PalmLedgerStatus[] = ['reserved', 'provider-started', 'completed', 'failed', 'uncertain'];
 
@@ -80,15 +98,17 @@ export function parseReserveOutcome(raw: unknown): PalmReserveOutcome {
   }
 }
 
-async function call(rpc: PalmRpc, fn: string, args: Record<string, unknown>): Promise<unknown> {
-  try {
-    return await rpc(fn, args);
-  } catch {
-    throw new PalmGateUnavailable(); // 원문 DB 오류는 전달하지 않는다
-  }
-}
-
-export function createPalmPublicStore(rpc: PalmRpc): PalmPublicStore {
+export function createPalmPublicStore(rpc: PalmRpc, options: { callTimeoutMs?: number } = {}): PalmPublicStore {
+  const limitMs = options.callTimeoutMs ?? PALM_DB_CALL_TIMEOUT_MS;
+  const call = async (_rpc: PalmRpc, fn: string, args: Record<string, unknown>): Promise<unknown> => {
+    const controller = new AbortController();
+    const r = await palmWithin(_rpc(fn, args, controller.signal), limitMs);
+    if (!r.ok) {
+      controller.abort();
+      throw new PalmGateUnavailable(); // timeout·원문 DB 오류 모두 정규화 — 원문은 전달하지 않는다
+    }
+    return r.value;
+  };
   return {
     async issueSession(ipKey, limitPerHour) {
       const r = asObject(await call(rpc, 'palm_issue_session', { p_ip_key: ipKey, p_limit_per_hour: limitPerHour }));
@@ -141,8 +161,9 @@ export function createPalmPublicStore(rpc: PalmRpc): PalmPublicStore {
 export async function createSupabasePalmRpc(url: string, serviceKey: string): Promise<PalmRpc> {
   const { createClient } = await import('@supabase/supabase-js');
   const client = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  return async (fn, args) => {
-    const { data, error } = await client.rpc(fn, args);
+  return async (fn, args, signal) => {
+    const query = client.rpc(fn, args);
+    const { data, error } = await (signal ? query.abortSignal(signal) : query);
     if (error) throw new PalmGateUnavailable();
     return data;
   };

@@ -15,7 +15,7 @@ import {
 import { PALM_ALLOWED_MIME, PALM_IMAGE_LIMITS, PalmImageError, preparePalmImage, readBoundedBody } from './palmImage';
 import { PalmProviderError, type PalmVisionProvider, type PreparedPalmImage } from './palmVisionProvider';
 import type { PalmPublicLimits } from './palmPublicAccess';
-import type { PalmPublicStore } from './palmPublicGate';
+import { palmWithin, PALM_DB_CALL_TIMEOUT_MS, type PalmPublicStore } from './palmPublicGate';
 
 // ── Palm Phase 1B: provider 응답 → 검증된 PalmObservationBundle ─────────────
 // provider의 unknown 응답 → 전송 형식 확인(observation·quality 두 필드) → 서버 소유 metadata 조립
@@ -174,17 +174,15 @@ export async function handlePalmAnalyze(req: Request, deps: PalmAnalyzeDeps): Pr
     if (deps.globalBudget) {
       const b = deps.globalBudget;
       const requestId = randomUUID();
-      let outcome;
-      try {
-        outcome = await b.store.reserve({
-          kind: 'operator', sessionKey: 'operator-path-ledger', requestId,
-          payloadFingerprint: `operator:${requestId}`, ipKey: 'operator', limits: b.limits,
-        });
-      } catch {
-        return fail(503, 'UNAVAILABLE');
-      }
+      const reserved = await palmWithin(b.store.reserve({
+        kind: 'operator', sessionKey: 'operator-path-ledger', requestId,
+        payloadFingerprint: `operator:${requestId}`, ipKey: 'operator', limits: b.limits,
+      }), PALM_DB_CALL_TIMEOUT_MS);
+      if (!reserved.ok) return fail(503, 'UNAVAILABLE');
+      const outcome = reserved.value;
       if (outcome.outcome !== 'reserved') return fail(429, 'RATE_LIMITED', 'retryAfterSeconds' in outcome ? outcome.retryAfterSeconds : 60);
-      ledger = { finalize: (status, code) => b.store.finalize('operator-path-ledger', requestId, status, code) };
+      // finalize는 상한 안에서 한 번만 (확인 못 하면 lease 만료로 uncertain — 환불·재호출 없음)
+      ledger = { finalize: async (status, code) => { await palmWithin(b.store.finalize('operator-path-ledger', requestId, status, code), PALM_DB_CALL_TIMEOUT_MS); } };
     }
 
     const providerTimeoutMs = Math.min(deps.providerTimeoutMs, remaining());

@@ -1,5 +1,6 @@
 import 'server-only';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 import { PALM_PROCESSING_NOTICE_VERSION } from '../palmSupplement';
 
 // ── Palm Phase 1C: 공개 브라우저 접근 (익명 서명 세션 + same-origin + CSRF) ──────
@@ -48,6 +49,44 @@ const LIMIT_ENV: Record<keyof PalmPublicLimits, string> = {
   eventsPerSessionDaily: 'PALM_LIMIT_EVENTS_PER_SESSION_DAILY',
 };
 
+// ── 신뢰 ingress (Codex I-1) ────────────────────────────────────────────────
+// 클라이언트 IP는 애플리케이션만으로 신뢰를 증명할 수 없다. 공개 경로는 다음 둘이 모두 있어야 켜진다.
+//   1) 승인된 ingress 전략 하나 (PALM_TRUSTED_INGRESS). 임의 헤더 이름은 설정할 수 없다.
+//   2) 그 배포에서 운영자 probe(/api/palm/ingress-check)가 "외부에서 넣은 값이 덮어써짐"을 확인하고
+//      발급한 검증 토큰 (PALM_TRUSTED_INGRESS_VERIFICATION). 전략·origin·세션 키가 바뀌면 무효가 된다.
+// 둘 중 하나라도 없으면 TRUST NOT ESTABLISHED → 공개 기능 OFF (fail closed). 다른 헤더로 대체하지 않는다.
+//
+// 'vercel': Vercel 문서(Request headers)는 x-forwarded-for를 덮어써 외부 IP를 전달하지 않으며,
+//   x-vercel-forwarded-for는 같은 값이고 Vercel 앞단 proxy가 덮어쓰지 않는다고 설명한다.
+//   이것은 플랫폼 설명일 뿐이므로 이 배포에서의 probe 검증을 반드시 요구한다.
+export const PALM_TRUSTED_INGRESS_STRATEGIES = {
+  vercel: { header: 'x-vercel-forwarded-for' },
+} as const;
+export type PalmTrustedIngress = keyof typeof PALM_TRUSTED_INGRESS_STRATEGIES;
+
+export type PalmIngressState =
+  | { state: 'configured'; strategy: PalmTrustedIngress; header: string }
+  | { state: 'not-established'; reason: 'strategy-missing' | 'strategy-unsupported' | 'verification-missing' | 'verification-mismatch' | 'secret-or-origin-invalid' };
+
+export function palmIngressVerificationToken(sessionSecret: string, strategy: PalmTrustedIngress, origin: string): string {
+  const header = PALM_TRUSTED_INGRESS_STRATEGIES[strategy].header;
+  return b64url(hmac(sessionSecret, `palm-ingress-verified-v1|${strategy}|${header}|${origin}`));
+}
+
+export function readPalmTrustedIngress(env: Record<string, string | undefined>): PalmIngressState {
+  const raw = (env.PALM_TRUSTED_INGRESS ?? '').trim();
+  if (!raw) return { state: 'not-established', reason: 'strategy-missing' };
+  if (!Object.prototype.hasOwnProperty.call(PALM_TRUSTED_INGRESS_STRATEGIES, raw)) return { state: 'not-established', reason: 'strategy-unsupported' };
+  const strategy = raw as PalmTrustedIngress;
+  const secret = env.PALM_SESSION_SECRET ?? '';
+  const origin = env.PALM_PUBLIC_ORIGIN ?? '';
+  if (secret.length < 32 || !isExactOrigin(origin)) return { state: 'not-established', reason: 'secret-or-origin-invalid' };
+  const token = (env.PALM_TRUSTED_INGRESS_VERIFICATION ?? '').trim();
+  if (!token) return { state: 'not-established', reason: 'verification-missing' };
+  if (!safeEqual(token, palmIngressVerificationToken(secret, strategy, origin))) return { state: 'not-established', reason: 'verification-mismatch' };
+  return { state: 'configured', strategy, header: PALM_TRUSTED_INGRESS_STRATEGIES[strategy].header };
+}
+
 export type PalmPublicConfig =
   | { enabled: false }
   | {
@@ -55,7 +94,7 @@ export type PalmPublicConfig =
       apiKey: string;
       sessionSecret: string;
       origin: string;
-      trustedIpHeader: string;
+      trustedIpHeader: string;       // 검증된 ingress 전략에서만 결정된다
       supabaseUrl: string;
       supabaseServiceKey: string;
       limits: PalmPublicLimits;
@@ -67,11 +106,12 @@ export function readPalmPublicConfig(env: Record<string, string | undefined>): P
   const apiKey = env.OPENAI_API_KEY ?? '';
   const sessionSecret = env.PALM_SESSION_SECRET ?? '';
   const origin = env.PALM_PUBLIC_ORIGIN ?? '';
-  const trustedIpHeader = (env.PALM_TRUSTED_IP_HEADER ?? '').trim().toLowerCase();
   const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL ?? '';
   const supabaseServiceKey = env.SUPABASE_SERVICE_ROLE_KEY ?? '';
-  if (!apiKey || sessionSecret.length < 32 || !isExactOrigin(origin) || !/^[a-z0-9-]{3,64}$/.test(trustedIpHeader)
-    || !supabaseUrl || !supabaseServiceKey) return { enabled: false };
+  if (!apiKey || sessionSecret.length < 32 || !isExactOrigin(origin) || !supabaseUrl || !supabaseServiceKey) return { enabled: false };
+  const ingress = readPalmTrustedIngress(env);
+  if (ingress.state !== 'configured') return { enabled: false }; // TRUST NOT ESTABLISHED
+  const trustedIpHeader = ingress.header;
   // 운영자 secret과 같은 값을 세션 서명 키로 재사용하지 않는다
   if (env.PALM_EXTRACTION_SECRET && env.PALM_EXTRACTION_SECRET === sessionSecret) return { enabled: false };
   const limits = { ...PALM_DEFAULT_LIMITS };
@@ -168,13 +208,19 @@ export function palmImageFingerprint(secret: string, sessionId: string, prepared
   return b64url(hmac(secret, `palm-img-v1|${sessionId}|`, preparedBytes));
 }
 
-// 배포 proxy가 설정하는 단일 IP 헤더만 신뢰한다. 목록(쉼표)이나 형식이 이상하면 거부 (임의 XFF 첫 값 불신).
+// 검증된 ingress 전략의 헤더 하나만 읽는다. 없음·목록(쉼표/공백)·IP가 아닌 값은 null — 다른 헤더로
+// 대체하지 않는다. IP 판정은 node:net의 실제 parser(isIP)로 한다.
 export function trustedClientIp(req: Request, header: string): string | null {
   const raw = req.headers.get(header);
-  if (!raw) return null;
+  if (raw === null) return null;
   const ip = raw.trim();
-  if (ip.length > 45 || ip.includes(',') || !/^[0-9a-fA-F:.]+$/.test(ip)) return null;
+  if (ip.length === 0 || ip.length > 45 || /[\s,]/.test(ip) || isIP(ip) === 0) return null;
   return ip;
+}
+
+// 문서화용 주소 대역(RFC 5737 / RFC 3849) — ingress probe가 "주입한 가짜 값"으로만 쓴다.
+export function isDocumentationIp(ip: string): boolean {
+  return /^(192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3}$/.test(ip) || /^2001:db8:/i.test(ip);
 }
 
 export type PalmOriginCheck = 'ok' | 'bad-origin' | 'cross-site';

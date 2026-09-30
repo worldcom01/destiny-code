@@ -14,8 +14,9 @@ import {
   trustedClientIp,
   verifyPalmSessionCookie,
 } from './palmPublicAccess';
-import type { PalmEventName, PalmPublicStore } from './palmPublicGate';
+import { palmWithin, PALM_DB_CALL_TIMEOUT_MS, type PalmEventName, type PalmPublicStore } from './palmPublicGate';
 import { PALM_PROCESSING_NOTICE_VERSION } from '../palmSupplement';
+import { PalmImageError, readBoundedBody } from './palmImage';
 
 // ── Palm Phase 1C: POST /api/palm/session, POST /api/palm/events ──────────────
 // session: 정확한 Origin + same-origin만. 유효한 cookie가 있으면 재사용(발급 한도 소모 없음),
@@ -27,6 +28,7 @@ export type PalmSessionDeps = {
   env: Record<string, string | undefined>;
   createStore: (config: { supabaseUrl: string; supabaseServiceKey: string }) => Promise<PalmPublicStore>;
   now?: () => number;
+  eventReadTimeoutMs?: number; // 이벤트 본문 읽기 상한 (기본 2초)
 };
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
@@ -49,7 +51,10 @@ export async function handlePalmSession(req: Request, deps: PalmSessionDeps): Pr
   if (!ip) return reply(503, { enabled: false, error: 'UNAVAILABLE' });
   let issued;
   try {
-    issued = await (await deps.createStore(config)).issueSession(palmIpKey(config.sessionSecret, ip, now()), config.limits.sessionIssuePerIpHour);
+    const store = await deps.createStore(config);
+    const r = await palmWithin(store.issueSession(palmIpKey(config.sessionSecret, ip, now()), config.limits.sessionIssuePerIpHour), PALM_DB_CALL_TIMEOUT_MS);
+    if (!r.ok) return reply(503, { enabled: false, error: 'UNAVAILABLE' });
+    issued = r.value;
   } catch {
     return reply(503, { enabled: false, error: 'UNAVAILABLE' });
   }
@@ -66,7 +71,8 @@ export async function handlePalmSession(req: Request, deps: PalmSessionDeps): Pr
 
 // 클라이언트가 보낼 수 있는 이벤트. palm_success/unusable/error는 서버 analyze 경로가 기록한다 (중복 집계 방지).
 export const PALM_CLIENT_EVENTS: readonly PalmEventName[] = ['palm_prompt_viewed', 'palm_started', 'palm_retry'];
-const MAX_EVENT_BODY = 512;
+const MAX_EVENT_BODY = 512;           // 실제 byte 상한 — 스트리밍 중 초과하면 즉시 취소
+const EVENT_READ_TIMEOUT_MS = 2_000;
 
 export async function handlePalmEvent(req: Request, deps: PalmSessionDeps): Promise<Response> {
   const now = deps.now ?? Date.now;
@@ -77,13 +83,16 @@ export async function handlePalmEvent(req: Request, deps: PalmSessionDeps): Prom
   if (!session || !isPalmCsrfValid(req.headers.get(PALM_CSRF_HEADER), config.sessionSecret, session.sessionId)) return reply(403, { ok: false });
   if ((req.headers.get('content-type') ?? '').split(';')[0].trim() !== 'application/json') return reply(415, { ok: false });
 
+  // 기존 hardened bounded reader 재사용: 누적 byte로 상한을 강제하고, 초과·deadline·요청 취소 시 reader를 취소한다.
+  // 본문은 로그에 남기지 않는다.
   let body: unknown;
   try {
-    const text = await req.text();
-    if (text.length > MAX_EVENT_BODY) return reply(413, { ok: false });
-    body = JSON.parse(text);
-  } catch {
-    return reply(400, { ok: false });
+    const bytes = await readBoundedBody(req.body, MAX_EVENT_BODY,
+      AbortSignal.any([req.signal, AbortSignal.timeout(deps.eventReadTimeoutMs ?? EVENT_READ_TIMEOUT_MS)]));
+    body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } catch (e) {
+    if (e instanceof PalmImageError && e.failure === 'too-large') return reply(413, { ok: false });
+    return reply(400, { ok: false }); // 빈 본문·끊긴 stream·지연·취소·잘못된 UTF-8/JSON
   }
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return reply(400, { ok: false });
   const b = body as Record<string, unknown>;
@@ -94,12 +103,13 @@ export async function handlePalmEvent(req: Request, deps: PalmSessionDeps): Prom
 
   try {
     const store = await deps.createStore(config);
-    const outcome = await store.recordEvent(
+    const r = await palmWithin(store.recordEvent(
       palmSessionKey(config.sessionSecret, session.sessionId),
       { eventId: b.eventId, event: b.event as PalmEventName, supplementVersion: 1, durationBucket: null, errorCode: null },
       config.limits.eventsPerSessionDaily,
-    );
-    return reply(outcome === 'rate-limited' ? 429 : 202, { ok: outcome !== 'rate-limited' });
+    ), PALM_DB_CALL_TIMEOUT_MS);
+    if (!r.ok) return reply(503, { ok: false });
+    return reply(r.value === 'rate-limited' ? 429 : 202, { ok: r.value !== 'rate-limited' });
   } catch {
     return reply(503, { ok: false }); // UI는 analytics 실패를 무시한다
   }
