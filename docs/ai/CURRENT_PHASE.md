@@ -1,3 +1,22 @@
+# Palm Phase 1B — Vision Extraction Boundary
+
+Status: PALM PHASE 1B — COMPLETED / MERGED
+
+Codex 최종 판정 **A — MINOR CLOSED — PHASE 1B APPROVED / READY FOR MERGE**(0/0/0/0, 승인 문서 `210cee6`) 후 `feat/palm-vision-phase1b`를 `main`에 fast-forward로 병합했다.
+
+- 운영자 전용 `POST /api/palm/analyze`: 이미지 한 장 → 서버 검증·준비 → OpenAI `gpt-4.1-2025-04-14` → `parsePalmObservationBundle()` → 검증된 `PalmObservationBundle`에서 끝난다. 기본 비활성이다.
+- Palm InterpretationClaim·CoreTag·convergence·Identity·저장·UI 연결은 없다. 기존 Destiny Code 분석은 변경되지 않았다. engine `'3'` / schema `2`.
+- 검증: Palm 1B 146 / 1A 76 / Pattern 74 / Identity v2 97 / v3 23 / saved-context 14 / evidence-trace 218, golden v1/v2/v3, digest `25ab43b8` / `dab19aab`, TypeScript·build·diff-check.
+- 유료 API 호출은 0건이다. live smoke는 실행하지 않았으므로 **실제 손금 판독 정확도는 아직 검증되지 않았다.**
+
+## Next
+
+**PALM LIVE EVALUATION — NOT STARTED**
+
+---
+
+## 이전 기록
+
 # Palm Phase 1B — Codex 최종 승인
 
 Status: PALM PHASE 1B — CODEX APPROVED / READY FOR MERGE
