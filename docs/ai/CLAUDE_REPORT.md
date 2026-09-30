@@ -1,3 +1,40 @@
+# Claude Implementation Report — Palm Phase 1B: 마지막 MINOR 수정
+
+Status: PALM PHASE 1B — FINAL MINOR FIX IMPLEMENTED / AWAITING CODEX APPROVAL
+
+- Codex focused re-review(B, IMPORTANT 종료) 문서는 `0ee954c`로 원문 그대로 보존했다. 수정 커밋은 `b547907`다.
+- **유료 API 호출은 0건**이다. 업로드 취소·동시 처리 수정(`898dac4`)과 `app/`·`package.json`은 변경하지 않았다.
+
+## 원인
+
+`scripts/palmSmokePaths.ts`의 `inside()`가 `relative(root, path).startsWith('..')`로 밖을 판정했다. 그래서 저장소 루트의 `..hand.jpg`처럼 점 두 개로 시작하는 **파일 이름**을 상위 디렉터리 구성요소로 오인해 허용했다. 재현 테스트에서 절대경로와 상대경로 모두 허용되는 것을 확인했다.
+
+## 수정
+
+- 상대경로가 `''`이면 내부, 절대경로면(다른 드라이브) 외부로 판정한다.
+- 그 밖에는 **`rel.split(sep)[0] === '..'`인 경우에만 외부**로 판정한다. 첫 구성요소가 정확히 `..`인지만 보며, 텍스트 prefix나 substring 검사는 쓰지 않는다.
+- lexical(`resolve`) 경로와 `realpath` 경로를 모두 검사하는 정책은 그대로다. 존재하지 않는 경로도 계속 거부한다.
+
+## 회귀 (132 → **146 PASS**)
+
+임시 디렉터리 트리(가짜 저장소 루트, 외부 디렉터리, 이름이 비슷한 형제 `repo-other`)에서 검사했다. 실제 저장소는 건드리지 않았다.
+
+| 사례 | 결과 |
+| --- | --- |
+| A `photo.jpg`, B `..hand.jpg`(절대·상대), C `.hidden.jpg` | 거부 |
+| D 상대경로, E `./`, F `sub/../` | 거부 |
+| G 실제로 밖을 가리키는 `../` | 허용 |
+| H 외부 파일 | 허용 |
+| I prefix 형제 `repo-other/photo.jpg` | 허용 |
+| J 저장소 안 → 밖 symlink, K 밖 → 저장소 안 symlink | 거부 |
+| L 존재하지 않는 경로 | 거부 |
+
+helper 코드에 `..` 텍스트 검사가 없는지도 정적으로 확인한다. 기존 132개(업로드 취소·slot 16개 포함)는 모두 PASS다.
+
+기존 회귀(Palm 1A 76, Pattern 74, Identity v2 97, v3 23, saved-context 14, evidence-trace 218), golden v1/v2/v3, digest `25ab43b8`/`dab19aab`, TypeScript·build·diff-check, lint(기존 9·신규 0) 모두 통과했다. engine `'3'` / schema `2`.
+
+---
+
 # Claude Implementation Report — Palm Phase 1B: Codex 지적 수정
 
 Status: PALM PHASE 1B — IMPORTANT FIX IMPLEMENTED / AWAITING CODEX RE-REVIEW

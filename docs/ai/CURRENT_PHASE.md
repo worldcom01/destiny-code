@@ -1,3 +1,13 @@
+# Palm Phase 1B — 마지막 MINOR 수정
+
+Status: PALM PHASE 1B — FINAL MINOR FIX IMPLEMENTED / AWAITING CODEX APPROVAL
+
+Codex focused re-review(`0ee954c` 보존)는 **B — IMPORTANT CLOSED / MINOR 1**이었다. 남은 MINOR(smoke 경로에서 `..hand.jpg`를 밖으로 오판)를 `b547907`에서 경로 구성요소 기준으로 수정했다. Palm 1B 회귀 146 PASS, 기존 회귀·golden·digest 불변, 유료 호출 0건. 승인은 Codex 최종 검수 후에 한다.
+
+---
+
+## 이전 기록
+
 # Palm Phase 1B — Codex 집중 재검수
 
 Status: PALM PHASE 1B — IMPORTANT CLOSED / MINOR CLEANUP REMAINS
