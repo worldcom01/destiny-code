@@ -1,3 +1,67 @@
+# Palm Phase 1C — Codex 검수(63e1750) 지적 수정 보고
+
+Status: **PHASE 1C CODEX FINDINGS FIXED — AWAITING FOCUSED RE-REVIEW** (승인 아님, 공개 OFF, migration 미실행)
+
+브랜치 `feature/palm-supplement-phase1c`. 수정 `f6fb6ce`(I-1/I-2/M-1), `8e413e2`(M-2/M-3), 이 문서. 지적 항목만 고쳤다. 설계·기능 추가, OpenAI 호출, Supabase 적용, merge/push는 없다.
+
+## I-1 신뢰 IP → 검증된 ingress만
+
+- 임의 헤더 이름을 설정할 수 있던 `PALM_TRUSTED_IP_HEADER`를 제거했다.
+- 승인 전략은 하나뿐이다: `PALM_TRUSTED_INGRESS=vercel` → `x-vercel-forwarded-for` 한 헤더.
+  - 근거: Vercel 문서는 이 헤더를 x-forwarded-for와 같은 값이며 앞단 proxy가 덮어쓰지 않는다고 설명한다. 이것은 플랫폼 설명일 뿐 보증으로 취급하지 않는다.
+- `x-forwarded-for`·`x-real-ip`는 대체 경로로도 읽지 않는다.
+- IP는 `node:net isIP`로 검증하고, 빈 값·목록(쉼표/공백)·형식 오류는 거부한다.
+- **검증 토큰 필수** `PALM_TRUSTED_INGRESS_VERIFICATION`:
+  - 운영자 전용 비유료 probe `POST /api/palm/ingress-check`가 발급한다(operator secret 필요, provider·DB 미호출, 공개 OFF 상태에서도 사용 가능).
+  - 발급 조건: 문서화용 가짜 IP를 신뢰 헤더·XFF·X-Real-IP에 주입해도 앱이 받은 값이 그 값이 아닐 때(= ingress가 덮어씀)만.
+  - 토큰은 전략·origin·세션 키에 HMAC으로 묶인다. 하나라도 바뀌면 무효다.
+  - 응답에는 원본 IP 없이 12자 fingerprint만 담는다. 두 네트워크에서 값이 달라야 한다.
+- 토큰이 없거나, 틀리거나, 전략이 지원 목록에 없으면 **TRUST NOT ESTABLISHED** → 공개 OFF(fail closed).
+
+## I-2 provider 이후 무기한 대기 제거
+
+- 모든 공유 DB RPC에 2.5초 상한과 abort가 있다. Supabase는 `.abortSignal`로 HTTP 요청까지 취소한다.
+- provider 이전(reserve/markStarted)이 지연·실패하면 provider 0회로 503을 반환한다.
+- provider 이후:
+  - finalize는 상한 안에서 1회만 시도한다. 실패·지연되어도 받은 관찰을 200으로 돌려준다.
+  - 이때 원장은 provider-started로 남고, lease가 만료되면 uncertain이 된다. 예산 환불·자동 재호출은 없다. 같은 이미지는 409로 막히고, 동시성 슬롯은 lease 동안 계속 점유된다(보수적).
+  - provider 실패 후 finalize가 지연되어도 정규화된 오류로 즉시 응답한다.
+- analytics는 1초 상한의 best-effort이며 지연·오류가 응답을 막지 않는다.
+- 응답 상한은 30초 + 2.5초 + 1초 < route maxDuration 40초다.
+- operator 경로 finalize와 세션·이벤트 handler의 DB 호출에도 같은 상한을 적용했다.
+
+## M-1 이벤트 본문
+
+`req.text()`를 기존 hardened `readBoundedBody`로 교체했다(512 bytes, 2초 deadline, 초과 시 스트리밍 중 취소). 빈 본문·끊긴 stream·요청 취소·잘못된 UTF-8/JSON은 400, 초과는 413이다. 본문은 로그에 남기지 않는다.
+
+## M-2 활성 결과 삭제
+
+- 삭제한 결과가 지금 화면의 결과면(`shouldResetPalmOnDelete`) 다음을 수행한다:
+  - pendingPalm 제거
+  - panel key의 generation을 증가시켜 remount → cleanup에서 진행 중 요청 abort, `PalmAttemptTracker.invalidate()`, 미리보기 URL revoke
+- 늦게 도착한 응답은 tracker가 버린다.
+- 다른 결과를 삭제해도 현재 결과의 Palm은 건드리지 않는다.
+
+## M-3 기본 결과 저장 실패
+
+`saveBaseThenPalm`이 base 저장 예외를 잡는다. base가 실패하면 supplement를 쓰지 않는다(orphan 없음). 기존 저장 항목은 보존되고, 받은 관찰은 메모리에 남아 명시적으로 다시 저장할 수 있다(provider 재호출 없음). "기본 결과 실패"와 "base 성공/supplement 실패"를 구분해 안내한다. panel과 page 모두 이 helper를 쓴다.
+
+## 검증
+
+- `regression-palm-public` **140 PASS**(기존 93 + 47). I-1 설정·probe·헤더 위조·quota identity, I-2 hang/error 상한·재호출 없음·uncertain 보존·슬롯 점유, M-1 스트리밍 한도·지연·끊김·취소를 검증한다.
+- `regression-palm-supplement` **117 PASS**(기존 104 + 13). M-2 삭제·늦은 응답·B 무영향, M-3 base 실패·orphan 없음·재시도·구분 안내를 검증한다.
+- 기존: palm-extraction 146, palm-evidence 76, patterns 74, identity-selection 97, catalog-v3 23, saved-context 14, evidence-trace 218, golden v1/v2/v3 PASS. digest `25ab43b8` / `dab19aab`.
+- tsc OK, build OK(route 4개), lint 9(기존 baseline), Palm 파일 lint 0, diff-check OK.
+- 보안 재점검:
+  - 신뢰 헤더 외 IP 헤더를 읽는 코드가 없다.
+  - provider 전후 모든 DB·analytics await에 상한이 있다.
+  - 이벤트 본문 전체 읽기가 없다.
+  - 번들에 secret·ingress 설정 이름·RPC·HMAC 코드가 없다.
+  - 새 console 호출 0, 이미지 저장 경로 없음.
+- M-2 한계: 브라우저 DOM 상호작용 테스트 환경이 없다. 삭제·늦은 응답 시나리오는 panel·page가 쓰는 tracker·판단·저장 helper로 재현했고, 연결은 정적 검사로 확인했다.
+
+---
+
 # Palm Phase 1C — Production Supplementary Analysis 구현 보고
 
 Status: **PHASE 1C IMPLEMENTATION COMPLETE — AWAITING CODEX REVIEW / LIVE SMOKE** (배포 아님, 공개 기본 OFF)

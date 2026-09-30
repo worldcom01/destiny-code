@@ -1,3 +1,23 @@
+# Palm Phase 1C — Codex 지적 수정 완료
+
+Status: **PHASE 1C CODEX FINDINGS FIXED — AWAITING FOCUSED RE-REVIEW** (승인 아님 · 공개 OFF · Supabase migration 미실행)
+
+- Codex `63e1750`(C, IMPORTANT 2 / MINOR 3 / NOTE 1)의 지적 5개를 수정했다(`f6fb6ce`, `8e413e2`). 상세는 `CLAUDE_REPORT.md` 최상단.
+  - I-1: 검증된 ingress 전략 + probe 토큰 없이는 공개 OFF
+  - I-2: 모든 DB·analytics 대기에 상한, 확인 불가 시 uncertain·재호출 없음
+  - M-1: 스트리밍 본문 한도
+  - M-2: 활성 결과 삭제 시 Palm 무효화
+  - M-3: base 저장 실패 처리
+- N-1(실제 다중 연결 Postgres smoke)은 migration 후, live 전에 수행할 운영 단계로 남긴다.
+- 회귀: supplement 117 / public 140 / 기존 전부 PASS, digest 불변, build·tsc OK, lint baseline 9. 유료 호출 0, merge/push 없음.
+- 다음 단계:
+  1. Codex focused re-review
+  2. 운영 순서(CODEX_REVIEW 63e1750 §운영 순서): migration → cleanup cron → env → **ingress probe(docs/palm-phase1c-operations.md 1-A)** → DB 다중 연결 smoke → 실기기 mock → 승인된 live 1회
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm Phase 1C — Production Readiness 검수 완료 / 수정 대기
 
 Status: **C. BLOCKED — SECURITY / DATA ISOLATION / COST CONTROL ISSUE** / public OFF 유지

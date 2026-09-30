@@ -127,6 +127,6 @@ git diff --check
 
 Never regenerate a golden baseline to make a diff pass. `scripts/golden-baseline.v1.json` (engine v1) and `scripts/golden-baseline.v2.json` (engine v2) are frozen historical baselines and are never rewritten; `scripts/golden-baseline.v3.json` is the current engine v3 baseline. An unexpected golden difference is a finding to report.
 
-Palm Phase 1C adds an optional public "손바닥 패턴 분석" card (off by default: `PALM_PUBLIC_ENABLED=false`); setup, kill switch and limits are in `docs/palm-phase1c-operations.md`. The Phase 1B operator branch below is unchanged.
+Palm Phase 1C adds an optional public "손바닥 패턴 분석" card (off by default: `PALM_PUBLIC_ENABLED=false`); setup, kill switch, limits and the mandatory trusted-ingress verification (`PALM_TRUSTED_INGRESS` + probe token; otherwise public stays off) are in `docs/palm-phase1c-operations.md`. The Phase 1B operator branch below is unchanged.
 
 Palm vision extraction (`/api/palm/analyze`) operator branch is disabled by default. Server-only environment variables (never `NEXT_PUBLIC_`): `OPENAI_API_KEY`, `PALM_EXTRACTION_ENABLED` (`true` to enable), `PALM_EXTRACTION_SECRET` (operator header `x-palm-extraction-secret`). Regressions never call the paid API; `scripts/smoke-palm-openai.ts --live` is a manual, optional live check.
