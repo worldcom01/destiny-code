@@ -1,3 +1,59 @@
+# Palm Phase 1C — Trusted Ingress 최종 한정 재검수 (2026-10-01)
+
+**A. TRUSTED INGRESS CLOSED — READY FOR CONTROLLED OPERATIONAL SETUP**
+
+**잔여 CRITICAL 0 / IMPORTANT 0 / MINOR 0 / NOTE 1.** I-1과 O-1 CLOSED. 검수 중 발견한 재배포 관련 문구 MINOR는 사용자 요청에 따라 문서에서 직접 정정하여 종료했다. 이 판정은 통제된 준비 단계만 허용하며 public ON, production launch, merge/push, 무제한 OpenAI 호출을 승인하지 않는다. 운영 단계는 이번에 실행하지 않았다.
+
+## 범위 및 변경
+
+`feature/palm-supplement-phase1c`의 `235e516`, `8058ae8`을 이전 검수 `8a7a281`과 비교했다. 검수 HEAD는 `8058ae8`. CODEX_REVIEW/CURRENT_PHASE/CLAUDE_REPORT/운영 문서와 변경된 두 서버 모듈·public 회귀를 읽었다. 이미 종료한 I-2/M-1/M-2/M-3 및 SQL 설계는 다시 열지 않았다. 앱·테스트·SQL·baseline 수정 없음.
+
+## 보안 계약 확인
+
+- **deployment identity PASS:** `readPalmDeploymentIdentity`는 서버 env만 받는다. `VERCEL=1`, production/preview만 허용하고 development/다른 환경은 거부한다. project는 `prj_` 뒤 8~64 영숫자, deployment ID는 `dpl_` 뒤 같은 형식, SHA는 소문자 hex 40자리, generation은 1~64 영숫자/점/밑줄/하이픈으로 제한한다. 누락·형식 오류는 fail closed다. production과 preview는 별도 토큰이다. 요청 헤더로 환경을 대체할 수 없다.
+- Vercel system env 확인은 운영자가 관리하는 배포 환경 검증이며 암호학적 플랫폼 attestation은 아니다. env를 통제하는 운영자까지 적대자로 가정하는 구조는 아니다. 공식 문서의 project/deployment ID runtime 제공과 부합한다. [Vercel system environment variables](https://vercel.com/docs/environment-variables/system-environment-variables).
+- **token binding PASS:** HMAC 입력은 `palm-ingress-verified-v2|strategy|header|origin|vercel|environment|projectId|commitSha|generation`. 입력 형식이 구분자 주입을 막으며 secret은 서버 전용이다. 길이 확인 후 `timingSafeEqual`로 비교한다. 이전 v1 토큰은 다른 domain separator 때문에 유효하지 않다.
+- **A→B/B→A PASS:** 저장소 테스트는 probe로 TA/TB를 발급하고 실제 `readPalmPublicConfig`를 통해 양방향 허용/거부를 검사한다. B에서 TA로 analyze 503/provider 0 및 session 비활성도 확인한다. 원래 테스트는 SHA와 deployment ID를 함께 바꾸므로 별도 비유료 검증에서 **SHA만 변경**하여 TA 거부·TB 허용·TB의 A 거부를 확인했다. helper HMAC 비교만으로 판정하지 않았다.
+- **generation PASS:** 기존 테스트의 g1→g2 이전 토큰 거부에 더해 별도 검증에서 g2 probe 토큰 발급·g2 config 허용·g1 config 거부까지 확인했다. 누락/불량 generation도 거부한다. 코드 없는 인프라 변경은 운영자가 먼저 OFF·generation 변경·재검증해야 한다. 자동 인프라 감지 기능으로 설명하지 않는다.
+- **same-commit 재배포 PASS:** deployment ID는 형식/존재만 확인하고 HMAC에는 넣지 않는다. 토큰 설치를 위한 같은 커밋·같은 보안 설정의 env-only 재배포가 유효하므로 순환이 없다. 동일 조건의 다른 env-only 재배포도 기술적으로 허용된다. 단 한 번만 허용하는 카운터나 모든 배포마다의 자동 폐기 기능은 없다. Vercel env 변경은 새 배포에 적용된다는 공식 계약과 부합한다. [Vercel environment variables](https://vercel.com/docs/environment-variables).
+- **probe PASS:** operator 인증 후 서버 env를 읽는다. public/extraction 모두 OFF이고 토큰이 없어도 동작한다. provider/DB/fetch 경로가 없으며 flag를 수정하지 않는다. 응답의 environment·7자리 commit은 검증 대상 확인용이고 secret/project ID/전체 SHA/원본 IP는 반환하지 않는다. 토큰은 서버 설정으로만 취급한다. probe의 origin 검사는 비어 있지 않은지만 확인하지만, 잘못된 origin으로 발급받은 값은 실제 config의 exact-origin 검사에서 거부되므로 paid gate 우회가 되지 않는다.
+
+## 외부 검증 절차와 OFF bootstrap
+
+**spoof 절차 PASS(실제 실행 전):** 같은 네트워크에서 대조/문서화 IPv4/일반 IPv4/IPv6/목록 주입을 비교하고 모든 fingerprint가 같아야 한다. 차이가 나거나 오류면 검증 실패다. 공개 도메인과 배포 URL 모두 적용한다. 이 절차는 현재 통제된 배포의 실증 점검으로 충분하다. 전 세계 Vercel 동작의 증명이나 이번 검수에서 이미 실제 ingress 검증을 마쳤다는 뜻이 아니다. 단일 `established` 응답만으로 토큰을 설치하면 안 된다.
+
+**two-network PASS(절차):** 동일 릴리스·동일 UTC 날짜에서 서로 다른 네트워크의 fingerprint 차이를 확인한다. 고정 proxy IP에 합쳐지는 구성을 찾는 보조 점검이며 spoof 시험을 대신하지 않는다. fingerprint는 HMAC/날짜/릴리스 범위이며 DB/analytics 저장 경로가 없다.
+
+**OFF bootstrap PASS:** 준비 1~7단계가 public=false다. probe에는 토큰·public ON·extraction ON·DB가 필요하지 않다. 유효 토큰을 넣어도 public=false이면 analyze는 provider 이전 503이다. 같은 커밋 env-only 재배포로 설치할 수 있다. DB-only smoke와 격리 mock UI 검증에도 public ON이 필요 없다. 토큰 설치 후 probe는 저장된 토큰 자체를 검증하는 endpoint가 아니므로, 설치값과 probe 재발급값의 일치 및 서버 설정 적용을 확인하고 public-OFF 응답도 점검한다. 이를 확인하려고 유료 경로를 켜지 않는다.
+
+## 문서 MINOR 정정 및 종료
+
+기존 “each new production deployment” 문구는 실제 구현보다 강했다. 사용자가 요청한 문서 정확성 수정으로 운영 문서·CLAUDE_REPORT·CURRENT_PHASE·PROJECT_CONTEXT의 해당 표현을 릴리스/보안 설정 기준으로 정정했다. 도메인/proxy/ingress 변경 시 generation을 올려야 함과 deployment ID만 바뀌면 자동 무효화되지 않음을 명시했다. 새로운 아키텍처 결정을 추가한 것이 아니다. 코드 주석의 “다른 배포에서는 무효”도 위의 **다른 릴리스/보안 설정** 의미로만 읽어야 하며 생산 코드는 수정하지 않았다. O-1의 조기 public=true 문제는 원래 수정 diff에서 제거됐다.
+
+## 검증 결과 및 한계
+
+- 신규 33개 assertion은 실제 probe/config/analyze/session 경로, 환경 누락/불량, public-OFF, header 주입 거부, fallback/목록 거부를 검사한다. B→A는 config 검사이고 A→B는 analyze도 검사한다. 운영 Vercel의 overwrite를 fake Request 테스트가 증명한다고 주장하지 않는다.
+- 직접 실행: public **173**, supplement **117**, extraction **146**, palm-evidence **76**, patterns **74**, identity-selection **97**, catalog-v3 **23**, saved-context **14**, evidence-trace **218** 모두 PASS. golden v1/v2/v3 각 7 cases PASS.
+- diagnostic selection **25ab43b8**, full **dab19aab** 일치. TypeScript PASS, diff-check PASS. 이번 좁은 변경 검수에서는 build/lint를 재실행하지 않았다.
+- 추가 비유료 검증 7조건 PASS: TA on A, SHA만 바꾼 B에서 TA 거부, TB on B, TB on A 거부, g2에서 g1 토큰 거부, g2 새 토큰 허용, g1에서 g2 토큰 거부. repo 테스트 파일을 수정하지 않았다.
+- immediate security regression 없음: secret isolation, OFF gate, fallback 없음, raw image 비저장, Identity/base와 A/B 격리, observation-only provider 경계 유지. 변경 diff에 관련 분석/UI/이미지/provider 구현 변경이 없다.
+- 실제 OpenAI **0회**, 실제 Supabase **0회**, migration/merge/push 없음. SQL/baseline 변경 없음.
+
+## N-1 — NOTE 및 정확한 다음 순서
+
+PGlite는 실제 다중 연결 PostgreSQL 경쟁을 증명하지 않는다. SQL 수정은 필요 없으며 이 NOTE는 migration을 막지 않는다. 실행은 별도 지시에 따른다.
+
+1. **public OFF** 유지, 준비 중 extraction도 OFF. 필요한 서버 설정: `PALM_EXTRACTION_SECRET`, 서로 다른 32자 이상 `PALM_SESSION_SECRET`, 정확한 `PALM_PUBLIC_ORIGIN`, `PALM_TRUSTED_INGRESS=vercel`, `PALM_INGRESS_GENERATION`, 초기에는 빈 `PALM_TRUSTED_INGRESS_VERIFICATION`. DB용 `NEXT_PUBLIC_SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`와 추후 live용 `OPENAI_API_KEY`를 준비한다. service/API/operator/session secret에는 NEXT_PUBLIC 접두사를 붙이지 않는다. Git 연동 Vercel의 system env 다섯 개를 노출하도록 설정하고 OFF로 배포한다.
+2. 승인된 준비 작업으로 `supabase/palm-public.sql`을 transaction으로 적용한다. anon/authenticated 거부와 service role을 확인하고 `select palm_cleanup();`을 예약한다(운영 문서 예시는 5분). body/header 로그 수집을 끈다.
+3. 같은 릴리스/UTC 날짜에 외부 대조·위조값·두 네트워크·배포 URL 검증을 모두 수행한다. 통과 토큰을 서버 env에 설치하고 **같은 커밋**으로 재배포하며 public OFF를 유지한다. 설정값과 재검증 결과를 확인한다.
+4. **migration 후, live 전** 실제 Supabase 별도 연결에서 중복 ID, 한도 직전 동시 reserve, lease 복구, finalize 경합·보수적 회계를 검사한다. provider 연결 없음.
+5. 격리된 preview/local mock으로 실기기 업로드·취소·저장·A/B·삭제/늦은 응답을 검사한다. production 유료 endpoint를 mock처럼 활성화하지 않는다.
+6. 전부 통과한 증거를 확인한 뒤에만 **live OpenAI 1회 별도 승인**을 요청한다. public ON이나 launch는 그 이후에도 별도 결정이다.
+
+---
+
+## 이전 검수 기록 (원문 보존)
+
 # Palm Phase 1C — Finding Closure 재검수 (2026-10-01)
 
 **C. BLOCKER REMAINS — DO NOT MIGRATE**

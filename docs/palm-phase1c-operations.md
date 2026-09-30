@@ -3,8 +3,8 @@
 기본값은 **꺼짐**(`PALM_PUBLIC_ENABLED=false`)이다. 아래 1~7단계와 별도 승인된 live smoke(8단계) 전에는 켜지 않는다.
 설계: `docs/ai/CODEX_REVIEW.md` "Palm Phase 1C", `docs/ai/DECISIONS.md` AD-007~009.
 
-> **Trusted ingress verification is deployment-specific and must be repeated after each new production deployment.**
-> 신뢰 ingress 검증은 배포마다 따로 해야 한다. 새 production 배포(새 커밋 릴리스)마다 다시 수행한다.
+> **신뢰 ingress 검증은 릴리스·보안 설정에 결합된다. 새 커밋, 환경·프로젝트·origin·세션 키·전략 변경 또는 ingress 세대 변경 시 재검증한다. 같은 설정의 같은 커밋에서 토큰을 적용하는 env-only 재배포는 기존 토큰을 유지한다.**
+> 코드 변경 없이 proxy 토폴로지·도메인·ingress 동작 등 신뢰 IP에 영향을 주는 인프라를 바꿀 때도 먼저 공개 OFF로 전환하고 `PALM_INGRESS_GENERATION`을 변경한 뒤 재검증한다. 배포 ID 변경만으로 토큰이 자동 무효화되지는 않는다.
 
 ## 1. 통제된 준비 순서 (그대로 실행 가능한 체크리스트)
 

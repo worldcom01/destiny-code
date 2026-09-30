@@ -1,3 +1,19 @@
+# Palm Phase 1C — Trusted Ingress 최종 한정 재검수 완료
+
+Status: **A. TRUSTED INGRESS CLOSED — READY FOR CONTROLLED OPERATIONAL SETUP**
+
+- 검수 HEAD `8058ae8`, 수정 `235e516`/`8058ae8`을 이전 `8a7a281`과 대조했다. I-1/O-1 CLOSED.
+- 잔여 CRITICAL 0 / IMPORTANT 0 / MINOR 0 / NOTE 1. 과도한 배포별 무효화 문구는 이번 문서 검수에서 정정·종료했다.
+- 토큰은 릴리스/보안 설정에 결합한다. 같은 커밋·같은 설정의 env-only 재배포는 유지된다. 코드 없는 신뢰 IP 인프라 변경은 OFF 전환·ingress generation 변경·재검증이 필요하다.
+- public 173 / supplement 117 및 기존 회귀·golden 전부 PASS. digest `25ab43b8` / `dab19aab`. TypeScript/diff-check PASS. 추가 SHA-only·generation 왕복 7조건 PASS.
+- 다음은 별도 지시에 따른 OFF 배포 → SQL/cleanup → 외부 ingress 검증/토큰 설치 → 실제 DB 다중 연결 smoke → 실기기 mock이다. NOTE는 migration 후·live 전 필수다.
+- 준비 진행 가능 판정이지 실제 ingress 검증 완료 또는 공개 승인이 아니다. live 1회는 별도 승인, public ON/merge/launch도 별도 결정이다.
+- 이번 작업은 문서만 변경·commit. OpenAI/Supabase 호출 0, migration/merge/push 없음. 상세는 CODEX_REVIEW 최상단.
+
+---
+
+## 이전 상태 기록 (이전 보고의 문구 정정 포함)
+
 # Palm Phase 1C — Trusted Ingress 배포 결합 수정
 
 Status: **PHASE 1C TRUSTED INGRESS BLOCKER FIXED — AWAITING FINAL FOCUSED RE-REVIEW** (승인 아님 · 공개 OFF · Supabase migration 미실행)
@@ -5,7 +21,7 @@ Status: **PHASE 1C TRUSTED INGRESS BLOCKER FIXED — AWAITING FINAL FOCUSED RE-R
 - Codex `8a7a281`(C: IMPORTANT 1 / MINOR 1 / NOTE 1)를 수정했다(`235e516`).
   - I-1: 검증 토큰을 Vercel 배포 식별값(환경·프로젝트·커밋·운영자 ingress 세대)에 결합했다. 새 릴리스에서는 이전 토큰이 거부되고 재검증이 필요하다. 식별값이 없으면 fail closed.
   - O-1: 운영 문서를 공개 OFF를 유지하는 1~8단계로 정리했다. probe는 공개 OFF에서 동작한다.
-- **Trusted ingress verification is deployment-specific and must be repeated after each new production deployment.**
+- **신뢰 ingress 검증은 릴리스·보안 설정에 결합된다. 새 커밋, 환경·프로젝트·origin·세션 키·전략 변경 또는 ingress 세대 변경 시 재검증한다. 같은 설정의 같은 커밋에서 토큰을 적용하는 env-only 재배포는 기존 토큰을 유지한다.**
 - N-1(실제 다중 연결 DB smoke)은 migration 후·live 전 운영 단계로 유지한다.
 - 회귀: public 173 / supplement 117 / 기존 전부 PASS, digest 불변, build·tsc OK, lint baseline 9. 유료 호출 0, merge/push 없음.
 - 다음 단계: Codex final focused re-review → 승인 시 운영 문서 1~8단계를 별도 지시에 따라 진행한다.

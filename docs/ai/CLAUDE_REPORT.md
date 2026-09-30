@@ -4,7 +4,7 @@ Status: **PHASE 1C TRUSTED INGRESS BLOCKER FIXED — AWAITING FINAL FOCUSED RE-R
 
 수정 `235e516`(코드·테스트)과 이 문서. 범위는 I-1 배포 결합과 O-1 운영 순서뿐이다. SQL·비용 gate·이미지·해석·Identity는 바꾸지 않았다. OpenAI 호출 0, merge/push 없음.
 
-**Trusted ingress verification is deployment-specific and must be repeated after each new production deployment.**
+**신뢰 ingress 검증은 릴리스·보안 설정에 결합된다. 새 커밋, 환경·프로젝트·origin·세션 키·전략 변경 또는 ingress 세대 변경 시 재검증한다. 같은 설정의 같은 커밋에서 토큰을 적용하는 env-only 재배포는 기존 토큰을 유지한다.**
 
 ## I-1: 토큰의 배포 결합
 
