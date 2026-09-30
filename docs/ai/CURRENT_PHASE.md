@@ -1,3 +1,19 @@
+# Palm Phase 1B — Codex 집중 재검수
+
+Status: PALM PHASE 1B — IMPORTANT CLOSED / MINOR CLEANUP REMAINS
+
+**B. IMPORTANT CLOSED — READY FOR MERGE / MINOR CLEANUP REMAINS** (2026-09-30, 검수 HEAD `28d59c4`). BLOCKER 0 / IMPORTANT 0 / MINOR 1 / OBSERVATION 0.
+
+- I-1 종료: 업로드 deadline·req.signal이 reader를 취소하고, 읽기 종료·lock 해제 뒤 gate slot을 반환함을 독립 확인했다.
+- M-1 잔여: `scripts/palmSmokePaths.ts:13`의 `startsWith('..')`가 저장소 내부 `..hand.jpg`를 외부로 잘못 분류한다. 부모 경로 요소 비교로 바꾸고 해당 회귀를 보완해야 전체 지적 종료로 표시할 수 있다. 병합 차단 수준은 아니다.
+- Palm 1B 132 및 모든 기존 회귀·golden·digest 통과. TypeScript/build/diff-check 통과. lint 기존 9건, 신규 0.
+- 기술적 live 평가 준비는 됐지만 실제 계정 가용성·시각 정확도는 미검증이다. 유료 호출 0건, Phase 1C 미착수.
+- 상세 재현과 정확한 cleanup은 `CODEX_REVIEW.md` 최상단을 따른다. 이번에는 문서만 수정했으며 commit/merge/push하지 않았다. Phase 1B 전체 지적 종료로 표시하지 않는다.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm Phase 1B — Codex 지적 수정
 
 Status: PALM PHASE 1B — IMPORTANT FIX IMPLEMENTED / AWAITING CODEX RE-REVIEW

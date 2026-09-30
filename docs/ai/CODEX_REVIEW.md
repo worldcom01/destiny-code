@@ -1,3 +1,69 @@
+# Palm Phase 1B — I-1 / M-1 집중 재검수 (2026-09-30)
+
+**B. IMPORTANT CLOSED — READY FOR MERGE / MINOR CLEANUP REMAINS**
+
+- 대상: `feat/palm-vision-phase1b`, HEAD `28d59c4`. 실제 수정 범위 `9a104a2..28d59c4`, 구현 수정 `898dac4`를 직접 검토했다.
+- **BLOCKER 0 / IMPORTANT 0 / MINOR 1 / OBSERVATION 0.** I-1 종료. M-1의 일반 상대경로·symlink 우회는 수정됐지만 아래 경계 사례가 남아 완전 종료는 아니다.
+- 병합을 막는 IMPORTANT는 없다. Phase 1B 전체 지적이 종료됐다고 표시하지 않는다. 애플리케이션·테스트 수정, 유료 API 호출, Phase 1C, merge/push 없음. B 판정의 잔여 cleanup을 문서에 기록하며 새 commit은 만들지 않았다.
+
+## I-1 종료: 실제 reader 수명이 slot 수명 안에 있다
+
+`app/lib/server/palmImage.ts`의 `readBoundedBody()`가 signal을 관찰하고 `reader.cancel()`로 pending read를 종료한다. 루프 종료 후 abort 여부를 검사하고 오류 경로에서 누적 chunk 참조를 비운다. finally에서 abort listener를 제거하고 lock을 해제한 뒤 settle한다. 이미 abort된 signal도 처리한다. 취소 Promise의 reject는 catch되어 unhandled rejection을 만들지 않는다.
+
+`app/lib/server/palmExtraction.ts`의 `handlePalmAnalyze()`는 `AbortSignal.any([req.signal, uploadDeadline.signal])`를 reader에 전달하고 읽기를 끝까지 await한다. 업로드 Promise.race는 제거됐다. handler의 finally는 reader가 settle한 뒤 gate.release를 호출한다. gate의 release는 원래대로 idempotent다. body 이전 형식/크기 거부는 reader를 획득하지 않으며, 정상/초과/오류/취소/이미지 오류/provider 오류 경로는 동일 finally로 반환한다.
+
+독립 재현은 `/tmp` 합성 stream으로 수행했다. source cancel Promise가 **영원히 pending인 경우와 reject되는 경우** 모두 400 반환, cancel 1회, `locked=false`, 이후 enqueue 거부, 다음 slot 획득을 확인했다. 원래의 '응답 후 계속 읽기'는 재현되지 않았다. cancel Promise가 source의 하부 정리를 마칠 때까지 await하지 않아도 Web ReadableStream의 pending read 종료·애플리케이션 소비 종료는 확보된다. socket/TCP 종료 또는 외부 producer의 모든 작업 종료까지 보장한다고 해석하지 않는다.
+
+요청 abort도 같은 경로로 전달된다. AbortSignal.any는 기존 provider에서도 쓰는 API이며 이번 Node24 검증 환경과 현재 SDK가 요구하는 Node22 이상에 부합한다. 읽기용 abort listener와 upload timer는 finally로 제거된다.
+
+30초 전체 예산은 body 시간을 포함한다. provider에는 `min(20_000, requestTimeoutMs - elapsed)`가 적용돼 새 20초를 무조건 주지 않는다. 이미지 준비의 native timeout은 앞선 검수 그대로 별도 경계이므로 30초를 모든 native 작업의 정확한 강제 종료 시각이라고 주장하지 않는다. provider Promise.race는 기존 승인 범위이며 실제 SDK HTTP signal 전달과 늦은 결과 거부를 유지한다.
+
+실제 byte 누적 4,000,000 상한, 정확한 상한 수용, 초과 취소, false-low/없는 Content-Length, chunked 수신, 압축 Content-Encoding 거부가 유지됐다. broken stream을 400 INVALID_IMAGE로 매핑한 것은 잘못되거나 중단된 업로드에 적합하다. 공개 오류 코드 추가 없이 기존 taxonomy 안에서 의도적으로 정리한 변경이다.
+
+## M-1 잔여: MINOR — '..'로 시작하는 정상 파일명도 부모 경로로 취급
+
+- 파일/함수: `scripts/palmSmokePaths.ts:13`, `inside()` (호출자 `isRepositoryImagePath()`).
+- 원인: `!rel.startsWith('..')`가 부모 경로 요소 `..`와 정상 파일명 `..hand.jpg`를 구분하지 않는다.
+- 독립 재현: 임시 `repo` root 안에 합성 파일 `hand.jpg`, `..hand.jpg`를 만들었다. 동일 helper에서 일반 파일은 true(차단), `..hand.jpg`는 false(허용)였다. 이 파일은 lexical/realpath 모두 저장소 내부지만 세 비교가 모두 실패한다. sibling `repo-other/hand.jpg`는 정상적으로 허용됐다. 실제 사진·유료 호출·저장소 파일 수정 없이 입증했다.
+- 영향: 수동 smoke의 '저장소 내부 사진 차단' 보장이 일부 파일명에서 누락된다. 명시적 --live/키가 필요한 운영자 도구이고 추출 API에 영향이 없으므로 MINOR이며 병합 차단 사유는 아니다.
+- 정확한 cleanup: 부모 탈출을 `rel === '..'` 또는 `rel.startsWith('..' + sep)`로 판정하고, absolute 여부와 함께 처리한다. prefix 전체를 부모 경로로 판단하지 않는다. 저장소 내부 `..hand.jpg` 및 `..photos/hand.jpg` 차단 회귀를 추가한다. 기존 외부 파일 허용과 sibling-prefix 구분을 유지한다.
+- 기존 사례: 절대/상대/./subdir/../외부 cwd 상대경로 차단, 내부 → 외부 및 외부 → 내부 symlink 차단, nonexistent 거부는 통과한다. helper root는 스크립트 위치에서 realpath로 구한다. 전체 파일 시스템 sandbox를 추가할 필요는 없다.
+
+## 테스트 품질과 범위
+
+새 G 16개는 상태 코드만 보지 않고 source 취소, lock 해제, 추가 enqueue 거부·pull 정지, 읽기 중 429와 cleanup 후 slot, timer 정리, 초과/깨진 stream, 정상 chunked 성공, provider HTTP abort와 남은 예산, unhandled rejection을 확인한다. 호출별 3초 watchdog와 미완료 exit hook은 읽기 누수로 검사 자체가 조용히 끝나는 것을 막는다. cancel을 제거하면 pending read가 끝나지 않아 watchdog 및 cleanup 검사가 실패하는 구조다. 이번에는 production mutation을 실행하지 않았으며 Claude의 mutation 실행 결과를 독립 실행했다고 주장하지 않는다.
+
+새 H 11개는 주요 경로·양방향 symlink·존재 여부와 smoke 연결을 검사하지만 '..' 접두 정상 이름은 빠져 있다. 이를 위 MINOR 회귀로 보완하면 된다.
+
+모델 `gpt-4.1-2025-04-14`, SDK/API 전략·schema, provider 인터페이스, 최종 parser, 이미지 형식/크기/준비, retry 0, provider 20초, 출력 2000 tokens, gate 정책, 저장 정책은 수정 diff에서 불변이다. 기존 승인 아키텍처는 재설계하지 않았다. live 스크립트의 --live·키 요구, 일반 regression/build와 분리, 이미지 미저장·키 미출력도 유지한다.
+
+## 독립 검증 결과
+
+로컬 캐시 tsx loader와 `--conditions=react-server`로 회귀를 실행했다. 모든 provider는 mock이며 유료 호출은 0건이다.
+
+| 검사 | 결과 |
+| --- | --- |
+| Palm Phase 1B | 132 PASS |
+| Palm Phase 1A | 76 PASS |
+| Pattern / Identity v2 / Identity v3 | 74 / 97 / 23 PASS |
+| saved-context / evidence-trace | 14 / 218 PASS |
+| golden v1/v2/v3 | 7 cases PASS, baseline 변경 없음 |
+| v3 diagnostic | selection `25ab43b8`, full `dab19aab` 보존 |
+| TypeScript | `npx tsc --noEmit -p .` PASS |
+| build | 초기 sandbox의 Google Fonts 접속 실패 후 외부 접속 허용으로 재실행 PASS |
+| diff-check | 작업 diff 및 `9a104a2..28d59c4` PASS |
+| lint | 기존 9건(8 errors / 1 warning), 신규 0; 해당 파일은 수정 범위 밖 |
+
+engineVersion `'3'` / schemaVersion `2` 유지. Palm UI/Evidence/Claim/CoreTag/convergence/Identity/저장 연결 없음. 기존 Destiny Code 분석·저장 결과 변경 없음. 허용된 의도적 차이는 업로드 cleanup과 broken-stream 400 응답이다.
+
+## 다음 단계
+
+기술적 provider 통합은 별도 수동 live smoke·8~12장 평가를 진행할 준비가 됐다. 저장소 밖의 동의받은 사진을 사용하고 잔여 M-1 경로 보호는 보완하는 것을 권고한다. 실제 계정 가용성과 손바닥 선 판독 정확도는 여전히 미검증이며 이번 검수는 live 호출을 하지 않았다. 병합/push는 수행하지 않았고 local main `d57b9a7`도 변경하지 않았다.
+
+---
+
+## 이전 검수 기록 (원문 보존)
+
 # Palm Phase 1B — 최종 독립 구현 검수 (2026-09-30)
 
 **C. NOT READY — IMPORTANT ISSUE**
