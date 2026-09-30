@@ -1,3 +1,21 @@
+# Palm Phase 1B — Codex 최종 승인
+
+Status: PALM PHASE 1B — CODEX APPROVED / READY FOR MERGE
+
+**A. MINOR CLOSED — PHASE 1B APPROVED / READY FOR MERGE** (2026-09-30, 검수 HEAD `66e0a7b`, 최종 수정 `b547907`). BLOCKER 0 / IMPORTANT 0 / MINOR 0 / OBSERVATION 0.
+
+- 기존 업로드 취소·reader/slot 수명 문제 I-1은 종료 유지. 마지막 `..hand.jpg` 경로 오판 M-1도 종료했다. 경로 요소·lexical/realpath·양방향 symlink·외부 sibling 판정을 확인했다.
+- 독립 회귀: Palm 1B 146, Palm 1A 76, Pattern 74, Identity v2 97/v3 23, saved-context 14, evidence-trace 218 PASS. golden v1/v2/v3 및 digest `25ab43b8`/`dab19aab` 보존.
+- TypeScript/build/diff-check 통과. 변경 파일 lint 신규 0. engine '3' / schema 2 및 기존 분석 동작 유지.
+- 병합·후속 push·별도 명시적 live smoke와 8~12장 평가를 위한 기술 준비 완료. 실제 모델 계정 접근과 시각 판독 정확도는 미검증이다.
+- 이번 작업은 검수 문서만 커밋한다. production/test/golden 수정·유료 호출·merge/push·Phase 1C 착수 없음. local main `d57b9a7` 유지.
+
+상세 검수는 `CODEX_REVIEW.md` 최상단을 따른다.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm Phase 1B — 마지막 MINOR 수정
 
 Status: PALM PHASE 1B — FINAL MINOR FIX IMPLEMENTED / AWAITING CODEX APPROVAL

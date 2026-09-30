@@ -1,3 +1,63 @@
+# Palm Phase 1B — 최종 MINOR 종료·승인 검수 (2026-09-30)
+
+**A. MINOR CLOSED — PHASE 1B APPROVED / READY FOR MERGE**
+
+**BLOCKER 0 / IMPORTANT 0 / MINOR 0 / OBSERVATION 0.** 기존 I-1 종료 유지, 최종 M-1 종료.
+
+## 검수 대상과 범위
+
+- 브랜치 `feat/palm-vision-phase1b`, 검수 HEAD `66e0a7b`, 수정 `b547907`, 이전 검수 보존 `0ee954c`.
+- `0ee954c..66e0a7b` 전체 diff를 직접 확인했다. 변경은 경로 helper·회귀·보고 문서이며 `app/`, package/lock, provider, parser, 이미지 준비, 업로드 취소에는 diff가 없다.
+- 승인된 아키텍처를 재설계하지 않았다. 이번 검수에서는 production/test 코드와 golden baseline을 수정하지 않았다. 문서 2개만 변경·커밋하며 merge/push와 Phase 1C, 유료 API 호출은 수행하지 않는다.
+
+## 최종 M-1 종료 근거
+
+이전 `inside()`의 `!rel.startsWith('..')`는 `..hand.jpg`도 부모 경로로 오인했다. 이전 검수에서 같은 helper를 임시 root의 합성 파일로 실행해 허용(false)을 재현했다. 현재는 `path.relative()` 결과가 비어 있으면 내부, 절대경로면 외부, 그 외에는 `rel.split(sep)[0]`가 정확히 `..`인지 판단한다. filename의 점 접두사와 부모 디렉터리 요소를 구분한다.
+
+이번 실행에서 `..hand.jpg` 절대·상대경로 모두 거부(true)를 확인했다. 별도 `/tmp` probe에서도 이전 false가 true로 바뀌었다. 일반 파일·`.hidden.jpg`·상대/./subdir/../ 경로는 거부한다. 실제 ../ 탈출의 존재하는 외부 파일과 일반 외부 파일은 허용하며, prefix sibling `repo-other/photo.jpg`도 허용한다.
+
+저장소 root의 realpath, 입력 lexical resolve, 입력 realpath를 검사하는 정책은 유지된다. 내부 symlink → 외부 target, 외부 symlink → 내부 target을 모두 거부하며 nonexistent도 거부한다. 검사는 경로 구성요소 기준이며 substring 비교가 아니다. 파일 시스템 sandbox로 확장하지 않았다.
+
+새 14개 assertion은 기존 132개를 유지한 채 실제 helper를 호출한다(행동 검사 13개 및 코드 형태 검사 1개). 임시 가짜 저장소와 합성 문자열 파일만 사용하며 finally로 제거한다. 이전 구현으로 돌아가면 `..hand.jpg` 절대·상대 두 행동 검사가 실패하므로 원래 결함을 검출한다. 이번에 추가 mutation은 실행하지 않았다. 실제 손바닥 사진을 추가하거나 사용하지 않았다.
+
+## 기존 IMPORTANT 종료 유지·smoke 안전성
+
+G 회귀는 업로드 deadline 취소, reader lock 해제, 이후 chunk 거부, 읽는 동안 slot 차단·정리 후 반환, req.signal 전달, timer 정리, 실제 streamed 4MB와 broken stream, provider abort, 남은 전체 예산, unhandled rejection 0을 재확인했다. 별도 probe에서도 source cancel Promise가 pending/reject인 경우 애플리케이션 reader는 정리되고 추가 chunk를 받지 않는 것을 확인했다. TCP 종료까지 보장한다는 뜻은 아니다.
+
+전체 예산 30초와 provider `min(20초, 남은 시간)`은 유지한다. 이미지 준비의 별도 native timeout에 관한 이전 검수의 한계도 그대로다.
+
+수동 smoke의 명시적 --live·OPENAI_API_KEY 요구는 유지된다. 회귀는 mock이고 smoke는 npm/build/자동 실행 경로에 연결되지 않는다. 사진을 저장소로 복사하거나 이미지·결과를 파일/DB에 저장하지 않고 키를 출력하지 않는다. 명시적 smoke 실행 시 검증된 observation/quality를 콘솔에 출력하는 기존 동작은 유지한다. 이번 검수에서는 --live를 실행하지 않았다.
+
+## 독립 실행 결과
+
+로컬 캐시 tsx loader와 `--conditions=react-server`를 사용해 아래 회귀를 전부 다시 실행했다.
+
+| 검사 | 결과 |
+| --- | --- |
+| Palm Phase 1B | 146 PASS |
+| Palm Phase 1A | 76 PASS |
+| Pattern | 74 PASS |
+| Identity v2 / v3 | 97 / 23 PASS |
+| saved-context / evidence-trace | 14 / 218 PASS |
+| golden v1/v2/v3 | 7 cases PASS, baseline 변경 없음 |
+| v3 diagnostic | selection `25ab43b8`, full `dab19aab` 보존 |
+| npx tsc --noEmit -p . | PASS |
+| npm run build | PASS, 외부 폰트 접근 허용 환경에서 실행 |
+| git diff --check, 수정 범위 diff-check | PASS |
+| 변경된 TypeScript 파일 ESLint | PASS, 신규 0 |
+
+전체 lint는 직전 재검수에서 기존 9건(8 errors/1 warning)을 확인했다. 이번에는 수정된 두 TypeScript 파일을 대상으로 다시 실행해 오류 0을 확인했다. 전체 lint를 다시 실행했다고 주장하지 않는다.
+
+engineVersion `'3'` / schemaVersion `2` 유지. 기존 분석·Phase 1A 계약·OpenAI 모델/API/schema·PalmVisionProvider·parser·이미지 처리·취소·storage/UI/Identity는 최종 수정에서 변경되지 않았다. 기존 golden과 결과 digest도 유지한다. 최종 수정의 동작 차이는 수동 smoke의 잘못된 경로 허용을 닫는 것뿐이다.
+
+## 승인과 다음 단계
+
+Phase 1B는 병합과 후속 push, 별도로 명시적으로 실행하는 live smoke 1회 및 이후 8~12장 시각 평가를 진행할 기술적 준비가 됐다. 이는 이번 작업에서 merge/push/live 실행을 했다는 뜻이 아니다. 실제 `gpt-4.1-2025-04-14` 계정 가용성과 손바닥 선 판독 정확도는 첫 live 호출 및 사진 평가 전까지 미검증이다. 유료 API 호출 0건. local main `d57b9a7`은 변경하지 않는다.
+
+---
+
+## 이전 검수 기록 (원문 보존)
+
 # Palm Phase 1B — I-1 / M-1 집중 재검수 (2026-09-30)
 
 **B. IMPORTANT CLOSED — READY FOR MERGE / MINOR CLEANUP REMAINS**
