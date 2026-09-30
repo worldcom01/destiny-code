@@ -5,7 +5,10 @@
 // (--conditions=react-server resolves the `server-only` guard the same way Next does for route handlers.)
 // All images are synthetic and generated in memory. The OpenAI adapter is exercised with a mock fetch.
 
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { relative } from 'node:path';
+import { isRepositoryImagePath, REPOSITORY_ROOT } from './palmSmokePaths';
 import { join } from 'node:path';
 import { crc32 } from 'node:zlib';
 import sharp from 'sharp';
@@ -89,6 +92,24 @@ const post = (body: BodyInit | null, headers: Record<string, string> = {}) =>
 const imagePost = (bytes: Uint8Array | Buffer, mime: string, headers: Record<string, string> = {}) =>
   post(new Uint8Array(bytes), { 'content-type': mime, ...headers });
 
+// a hang (e.g. a body read that is never cancelled) must be a failure, not a silent exit
+let finished = false;
+process.on('exit', (code) => {
+  if (!finished && code === 0) { console.log('FAIL: regression did not finish (unsettled promise / hang)'); process.exitCode = 1; }
+});
+const HUNG = Symbol('hung');
+async function settles<T>(p: Promise<T>, ms = 3_000): Promise<T | typeof HUNG> {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  const r = await Promise.race([p, new Promise<typeof HUNG>((res) => { t = setTimeout(() => res(HUNG), ms); })]);
+  clearTimeout(t);
+  return r;
+}
+const mustSettle = async (name: string, p: Promise<Response>): Promise<Response> => {
+  const r = await settles(p);
+  if (r === HUNG) { check(`G ${name} settles (no hang)`, false); return Response.json({ error: { code: 'HUNG' } }, { status: 599 }); }
+  return r;
+};
+
 async function main() {
   // ══ A. image validation & preparation ══
   {
@@ -137,9 +158,10 @@ async function main() {
     const m = await sharp(Buffer.from(p.bytes)).metadata();
     check('A opaque alpha channel accepted and removed', m.channels === 3 && !m.hasAlpha);
     const tooMany = new Uint8Array(PALM_IMAGE_LIMITS.maxInputBytes + 1);
-    check('A bounded read: more than 4,000,000 bytes → too-large', await failureOf(readBoundedBody(new Response(tooMany).body, PALM_IMAGE_LIMITS.maxInputBytes)) === 'too-large');
+    const live = () => new AbortController().signal;
+    check('A bounded read: more than 4,000,000 bytes → too-large', await failureOf(readBoundedBody(new Response(tooMany).body, PALM_IMAGE_LIMITS.maxInputBytes, live())) === 'too-large');
     check('A bounded read: exactly the limit is accepted',
-      (await readBoundedBody(new Response(new Uint8Array(PALM_IMAGE_LIMITS.maxInputBytes)).body, PALM_IMAGE_LIMITS.maxInputBytes)).byteLength === PALM_IMAGE_LIMITS.maxInputBytes);
+      (await readBoundedBody(new Response(new Uint8Array(PALM_IMAGE_LIMITS.maxInputBytes)).body, PALM_IMAGE_LIMITS.maxInputBytes, live())).byteLength === PALM_IMAGE_LIMITS.maxInputBytes);
   }
 
   // ══ B. extraction service: provider output → parser → bundle ══
@@ -422,10 +444,168 @@ async function main() {
       route.includes("runtime = 'nodejs'") && route.includes('maxDuration = 40') && route.includes('requestTimeoutMs: 30_000') && route.includes('providerTimeoutMs: 20_000'));
   }
 
+  // ══ G. upload deadline / body cleanup / concurrency-slot ownership (Codex I-1) ══
+  {
+    // observable body source: counts pulls, records cancellation, never closes unless told to
+    type Probe = { stream: ReadableStream<Uint8Array>; cancelled: () => boolean; pulls: () => number; push: (n: number) => boolean; close: () => void; fail: () => void };
+    const probe = (initialBytes = 1000): Probe => {
+      let ctl!: ReadableStreamDefaultController<Uint8Array>;
+      let cancelled = false, pulls = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) { ctl = c; if (initialBytes) c.enqueue(new Uint8Array(initialBytes).fill(0xff)); },
+        pull() { pulls++; },
+        cancel() { cancelled = true; },
+      }, { highWaterMark: 0 });
+      return {
+        stream, cancelled: () => cancelled, pulls: () => pulls,
+        push: (n) => { try { ctl.enqueue(new Uint8Array(n)); return true; } catch { return false; } },
+        close: () => { try { ctl.close(); } catch { /* already closed */ } },
+        fail: () => { try { ctl.error(new Error('socket reset')); } catch { /* closed */ } },
+      };
+    };
+    // a Request-shaped object so misleading Content-Length and a controllable signal can be supplied
+    const fakeReq = (body: ReadableStream<Uint8Array>, headers: Record<string, string> = {}, signal = new AbortController().signal) => ({
+      headers: new Headers({ 'x-palm-extraction-secret': 'operator-secret', 'content-type': 'image/jpeg', ...headers }),
+      body, signal,
+    }) as unknown as Request;
+    let unhandled = 0;
+    const onUnhandled = () => { unhandled++; };
+    process.on('unhandledRejection', onUnhandled);
+    const timers = () => process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
+
+    // 1/2 upload deadline cancels the body reader and releases it before the response
+    {
+      const calls = { n: 0 };
+      const b = probe();
+      const timersBefore = timers();
+      const res = await mustSettle('upload deadline', handlePalmAnalyze(fakeReq(b.stream), deps(fakeProvider(FULL, calls), { requestTimeoutMs: 40 })));
+      const body = await res.json();
+      check('G upload deadline → 400 INVALID_IMAGE, provider never called', res.status === 400 && body.error.code === 'INVALID_IMAGE' && calls.n === 0, `${res.status} ${JSON.stringify(body)}`);
+      check('G upload deadline cancelled the body source before the response returned', b.cancelled());
+      check('G body reader lock released (stream no longer locked)', !b.stream.locked);
+      const pullsAfter = b.pulls();
+      const accepted = b.push(5000);
+      check('G no further body consumption after cleanup (source closed: new chunk refused, no pulls)', !accepted && b.pulls() === pullsAfter);
+      check('G upload deadline timer cleaned up', timers() <= timersBefore, `${timersBefore} → ${timers()}`);
+    }
+    // 3/4 the concurrency slot stays owned while the body is being read, and frees only after cleanup
+    {
+      const gate = new PalmRequestGate(() => 0, { concurrent: 1, perMinute: 1000, duplicateTtlMs: 1 });
+      const b = probe();
+      const pending = handlePalmAnalyze(fakeReq(b.stream), deps(P, { gate, requestTimeoutMs: 150 }));
+      await new Promise((r) => setTimeout(r, 20));
+      const during = await handlePalmAnalyze(imagePost(img, 'image/jpeg'), deps(P, { gate }));
+      check('G slot not available while the first request is still reading its body', during.status === 429 && !b.cancelled());
+      const first = await mustSettle('slot holder', pending);
+      const probeSlot = gate.acquire(null);
+      check('G slot available again only after the timed-out body read was cancelled', first.status === 400 && b.cancelled() && !b.stream.locked && probeSlot.ok);
+      if (probeSlot.ok) probeSlot.release();
+    }
+    // client disconnect (req.signal) also stops the body read
+    {
+      const b = probe();
+      const ctl = new AbortController();
+      const pending = handlePalmAnalyze(fakeReq(b.stream, {}, ctl.signal), deps(P, { requestTimeoutMs: 5_000 }));
+      setTimeout(() => ctl.abort(), 20);
+      const res = await mustSettle('request abort', pending);
+      check('G request abort during upload → 400, body cancelled and released', res.status === 400 && b.cancelled() && !b.stream.locked);
+    }
+    // 7 oversized streamed body with a misleading low Content-Length
+    {
+      const b = probe(0);
+      const pending = handlePalmAnalyze(fakeReq(b.stream, { 'content-length': '100' }), deps(P));
+      for (let i = 0; i < 5; i++) { await new Promise((r) => setTimeout(r, 0)); b.push(1_000_000); }
+      const res = await mustSettle('oversized stream', pending);
+      const body = await res.json();
+      check('G >4,000,000 streamed bytes rejected despite Content-Length: 100 → 413', res.status === 413 && body.error.code === 'IMAGE_TOO_LARGE', `${res.status}`);
+      check('G oversized body: source cancelled and reader released', b.cancelled() && !b.stream.locked);
+    }
+    // 8 broken upload stream
+    {
+      const b = probe();
+      const pending = handlePalmAnalyze(fakeReq(b.stream), deps(P));
+      setTimeout(() => b.fail(), 10);
+      const res = await mustSettle('errored stream', pending);
+      const body = await res.json();
+      check('G errored body stream → 400 INVALID_IMAGE, reader released', res.status === 400 && body.error.code === 'INVALID_IMAGE' && !b.stream.locked, `${res.status} ${JSON.stringify(body)}`);
+    }
+    // 9/10 chunked success still works; exact limit still accepted by the reader
+    {
+      const bytes = new Uint8Array(img);
+      let at = 0;
+      const chunked = new ReadableStream<Uint8Array>({ pull(c) { if (at >= bytes.length) { c.close(); return; } c.enqueue(bytes.subarray(at, at + 4096)); at += 4096; } });
+      const res = await handlePalmAnalyze(fakeReq(chunked), deps(fakeProvider(FULL)));
+      check('G chunked body without Content-Length → 200', res.status === 200);
+      const exact = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array(PALM_IMAGE_LIMITS.maxInputBytes)); c.close(); } });
+      check('G exactly 4,000,000 streamed bytes accepted by the bounded reader',
+        (await readBoundedBody(exact, PALM_IMAGE_LIMITS.maxInputBytes, new AbortController().signal)).byteLength === PALM_IMAGE_LIMITS.maxInputBytes);
+    }
+    // provider stage: deadline aborts the real adapter's HTTP request (cooperative cancellation)
+    {
+      let sawAbort = false;
+      const f = (async (_i: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => { sawAbort = true; reject(new DOMException('aborted', 'AbortError')); });
+      })) as typeof fetch;
+      const res = await handlePalmAnalyze(imagePost(img, 'image/jpeg'), deps(() => openai(f), { providerTimeoutMs: 50 }));
+      check('G provider deadline aborts the OpenAI HTTP request before the slot is released', res.status === 504 && sawAbort);
+    }
+    // overall deadline: provider gets min(20s, remaining), never a fresh budget
+    {
+      let budget = -1;
+      const measuring: PalmVisionProvider = { extract: (_img, { signal }) => new Promise((_, reject) => {
+        const t0 = Date.now();
+        signal.addEventListener('abort', () => { budget = Date.now() - t0; reject(new DOMException('aborted', 'AbortError')); });
+      }) };
+      const res = await handlePalmAnalyze(imagePost(img, 'image/jpeg'), deps(measuring, { requestTimeoutMs: 400, providerTimeoutMs: 20_000 }));
+      check('G provider budget is limited by the remaining overall deadline', res.status === 504 && budget >= 0 && budget < 400, `budget ${budget}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    process.off('unhandledRejection', onUnhandled);
+    check('G no unhandled promise rejections from cancelled uploads or providers', unhandled === 0, `${unhandled}`);
+  }
+
+  // ══ H. live smoke: evaluation images must be outside the repository (Codex M-1) — no API call ══
+  {
+    const outsideDir = realpathSync(mkdtempSync(join(tmpdir(), 'palm-smoke-')));
+    const outsideImg = join(outsideDir, 'hand.jpg');
+    writeFileSync(outsideImg, 'not a real photo');
+    const repoFile = join(REPOSITORY_ROOT, 'README.md');
+    const linkToRepo = join(outsideDir, 'link-to-repo.jpg');
+    const linkInRepo = join(REPOSITORY_ROOT, 'node_modules', '.palm-smoke-test-link.jpg');
+    try {
+      symlinkSync(repoFile, linkToRepo);
+      symlinkSync(outsideImg, linkInRepo);
+      const root = REPOSITORY_ROOT;
+      const cases: Array<[string, string, string, boolean]> = [
+        ['absolute repository path', repoFile, root, true],
+        ['relative repository path', 'README.md', root, true],
+        ['./ repository path', './README.md', root, true],
+        ['subdir/../ repository path', 'app/../README.md', root, true],
+        ['relative repository path from outside cwd', relative(outsideDir, repoFile), outsideDir, true],
+        ['outside file, absolute', outsideImg, root, false],
+        ['outside file, relative from repository cwd', relative(root, outsideImg), root, false],
+        ['symlink outside → repository file', linkToRepo, root, true],
+        ['symlink inside repository → outside file', linkInRepo, root, true],
+        ['nonexistent path', join(outsideDir, 'missing.jpg'), root, true],
+      ];
+      for (const [name, path, cwd, reject] of cases) {
+        check(`H smoke image path: ${name} → ${reject ? 'reject' : 'allow'}`, isRepositoryImagePath(path, cwd) === reject, path);
+      }
+      const smoke = readFileSync(join(__dirname, 'smoke-palm-openai.ts'), 'utf8');
+      check('H smoke script uses the canonical path check (no cwd string prefix test)',
+        smoke.includes('isRepositoryImagePath(path)') && !smoke.includes('startsWith(process.cwd())'));
+    } finally {
+      try { unlinkSync(linkInRepo); } catch { /* not created */ }
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  }
+
   if (failures) {
+    finished = true;
     console.log(`\nFAIL: ${failures} palm-extraction check(s) failed`);
     process.exit(1);
   }
+  finished = true;
   console.log('\nPASS: all palm-extraction regression checks');
 }
 

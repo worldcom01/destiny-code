@@ -20,8 +20,9 @@ export const PALM_IMAGE_LIMITS = {
 export const PALM_ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'] as const;
 export type PalmInputMime = (typeof PALM_ALLOWED_MIME)[number];
 
-// unsupported → 415, invalid → 422, empty → 400, too-large → 413
-export type PalmImageFailure = 'unsupported' | 'invalid' | 'empty' | 'too-large';
+// unsupported → 415, invalid → 422, empty·upload-failed → 400, too-large → 413
+// upload-failed: 업로드가 전체 deadline 안에 끝나지 않았거나, 요청이 취소되었거나, 본문 stream이 오류로 끝남
+export type PalmImageFailure = 'unsupported' | 'invalid' | 'empty' | 'too-large' | 'upload-failed';
 
 export class PalmImageError extends Error {
   constructor(readonly failure: PalmImageFailure) {
@@ -31,23 +32,42 @@ export class PalmImageError extends Error {
 }
 
 // body를 limit까지만 읽는다. 선언된 Content-Length가 아니라 실제 누적 byte로 강제한다.
-export async function readBoundedBody(body: ReadableStream<Uint8Array> | null, limit: number): Promise<Uint8Array> {
+// signal이 abort되면 reader를 취소한다(대기 중인 read가 즉시 끝남). 이 함수는 읽기 루프가 끝나고
+// lock이 풀린 뒤에만 반환하므로, 반환 이후 이 요청의 본문을 계속 소비하는 작업은 남지 않는다.
+// (애플리케이션 stream 취소이며, 플랫폼의 socket 종료 시점까지 보장하지는 않는다.)
+export async function readBoundedBody(
+  body: ReadableStream<Uint8Array> | null, limit: number, signal: AbortSignal,
+): Promise<Uint8Array> {
   if (!body) throw new PalmImageError('empty');
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  // cancel()의 source 정리 완료는 기다리지 않는다(무한 대기 방지). 대기 중인 read는 cancel 즉시 done으로 끝난다.
+  const cancel = () => { reader.cancel().catch(() => undefined); };
+  signal.addEventListener('abort', cancel, { once: true });
   try {
+    if (signal.aborted) cancel();
     for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch {
+        throw new PalmImageError('upload-failed'); // 본문 stream 오류 (연결 끊김 등)
+      }
+      if (signal.aborted) throw new PalmImageError('upload-failed');
+      if (chunk.done) break;
+      total += chunk.value.byteLength;
       if (total > limit) {
-        await reader.cancel().catch(() => undefined);
+        cancel();
         throw new PalmImageError('too-large');
       }
-      chunks.push(value);
+      chunks.push(chunk.value);
     }
+  } catch (e) {
+    chunks.length = 0; // 이미 받은 이미지 조각 참조 해제
+    throw e;
   } finally {
+    signal.removeEventListener('abort', cancel);
     reader.releaseLock();
   }
   if (total === 0) throw new PalmImageError('empty');

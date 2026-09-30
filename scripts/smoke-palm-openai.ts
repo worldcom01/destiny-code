@@ -11,6 +11,7 @@
 
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
+import { isRepositoryImagePath } from './palmSmokePaths';
 import { preparePalmImage, PalmImageError } from '../app/lib/server/palmImage';
 import { extractPalmObservation } from '../app/lib/server/palmExtraction';
 import { PalmProviderError } from '../app/lib/server/palmVisionProvider';
@@ -30,8 +31,8 @@ async function main() {
   const imageAt = args.indexOf('--image');
   if (imageAt >= 0 && args[imageAt + 1]) {
     const path = args[imageAt + 1];
-    if (path.startsWith(process.cwd())) {
-      console.log('Refusing: keep evaluation photos outside the repository.');
+    if (isRepositoryImagePath(path)) {
+      console.log('Refusing: the image must be an existing file outside the repository (relative paths and symlinks are resolved).');
       process.exit(2);
     }
     bytes = new Uint8Array(readFileSync(path));

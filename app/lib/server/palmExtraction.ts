@@ -97,6 +97,7 @@ const IMAGE_FAILURE: Record<PalmImageError['failure'], [number, PalmErrorCode]> 
   unsupported: [415, 'INVALID_IMAGE'],
   invalid: [422, 'INVALID_IMAGE'],
   empty: [400, 'INVALID_IMAGE'],
+  'upload-failed': [400, 'INVALID_IMAGE'],
   'too-large': [413, 'IMAGE_TOO_LARGE'],
 };
 const PROVIDER_FAILURE: Record<PalmProviderError['failure'], [number, PalmErrorCode]> = {
@@ -123,19 +124,17 @@ export async function handlePalmAnalyze(req: Request, deps: PalmAnalyzeDeps): Pr
     const declared = Number(req.headers.get('content-length') ?? NaN);
     if (Number.isFinite(declared) && declared > PALM_IMAGE_LIMITS.maxInputBytes) return fail(413, 'IMAGE_TOO_LARGE');
 
-    // 느린 업로드도 전체 deadline에 포함된다
+    // 느린 업로드도 전체 deadline에 포함된다. deadline·요청 취소 시 본문 reader를 취소하고,
+    // 읽기가 실제로 끝난 뒤에만 다음 단계(또는 finally의 slot 해제)로 진행한다 — race로 먼저 반환하지 않는다.
     const remaining = () => deps.requestTimeoutMs - (Date.now() - started);
-    let uploadTimer: ReturnType<typeof setTimeout> | undefined;
-    const uploadDeadline = new Promise<'deadline'>((resolve) => {
-      uploadTimer = setTimeout(() => resolve('deadline'), Math.max(0, remaining()));
-    });
-    let read: Uint8Array | 'deadline';
+    const uploadDeadline = new AbortController();
+    const uploadTimer = setTimeout(() => uploadDeadline.abort(), Math.max(0, remaining()));
+    let read: Uint8Array;
     try {
-      read = await Promise.race([readBoundedBody(req.body, PALM_IMAGE_LIMITS.maxInputBytes), uploadDeadline]);
+      read = await readBoundedBody(req.body, PALM_IMAGE_LIMITS.maxInputBytes, AbortSignal.any([req.signal, uploadDeadline.signal]));
     } finally {
       clearTimeout(uploadTimer);
     }
-    if (read === 'deadline') return fail(400, 'INVALID_IMAGE');
 
     const prepared = await preparePalmImage(read, mime);
 
