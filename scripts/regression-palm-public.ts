@@ -14,7 +14,7 @@ import sharp from 'sharp';
 import { handlePalmAnalyze } from '../app/lib/server/palmExtraction';
 import { PalmRequestGate } from '../app/lib/server/palmAccess';
 import {
-  createPalmSession, palmCsrfToken, palmIngressVerificationToken, readPalmPublicConfig, readPalmTrustedIngress, trustedClientIp, PALM_SESSION_COOKIE,
+  createPalmSession, palmCsrfToken, palmIngressVerificationToken, readPalmDeploymentIdentity, readPalmPublicConfig, readPalmTrustedIngress, trustedClientIp, PALM_SESSION_COOKIE,
 } from '../app/lib/server/palmPublicAccess';
 import { handlePalmIngressCheck } from '../app/lib/server/palmIngressProbe';
 import { handlePalmPublicAnalyze, type PalmPublicAnalyzeDeps } from '../app/lib/server/palmPublicAnalyze';
@@ -38,14 +38,21 @@ for (const k of ['log', 'warn', 'error', 'info'] as const) {
 const ORIGIN = 'https://destiny.example';
 const SESSION_SECRET = 's'.repeat(40);
 const OPERATOR_SECRET = 'operator-secret-value-1234567890';
+// Vercel runtime system env for "deployment A" (see readPalmDeploymentIdentity)
+const DEPLOY_A: Record<string, string> = {
+  VERCEL: '1', VERCEL_ENV: 'production', VERCEL_PROJECT_ID: 'prj_destinyTestProject01',
+  VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40), VERCEL_DEPLOYMENT_ID: 'dpl_deploymentAAAA0001', PALM_INGRESS_GENERATION: 'g1',
+};
+const bindingOf = (env: Record<string, string | undefined>) => { const d = readPalmDeploymentIdentity(env); if (!d.ok) throw new Error(d.reason); return d.bindingKey; };
 const ENV: Record<string, string> = {
+  ...DEPLOY_A,
   PALM_EXTRACTION_ENABLED: 'true',
   PALM_PUBLIC_ENABLED: 'true',
   OPENAI_API_KEY: 'sk-test-not-real',
   PALM_SESSION_SECRET: SESSION_SECRET,
   PALM_PUBLIC_ORIGIN: ORIGIN,
   PALM_TRUSTED_INGRESS: 'vercel',
-  PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationToken('s'.repeat(40), 'vercel', 'https://destiny.example'),
+  PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationToken('s'.repeat(40), 'vercel', 'https://destiny.example', bindingOf(DEPLOY_A)),
   NEXT_PUBLIC_SUPABASE_URL: 'https://db.example',
   SUPABASE_SERVICE_ROLE_KEY: 'service-role-test',
   PALM_EXTRACTION_SECRET: OPERATOR_SECRET,
@@ -444,8 +451,8 @@ async function main() {
       !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS: undefined, PALM_TRUSTED_INGRESS_VERIFICATION: undefined, PALM_TRUSTED_IP_HEADER: 'x-client-ip' }).enabled);
     check('ingress: verification token missing → OFF', !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: '' }).enabled);
     check('ingress: token from another origin / secret / tampered → OFF',
-      !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationToken(SESSION_SECRET, 'vercel', 'https://other.example') }).enabled
-      && !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationToken('t'.repeat(40), 'vercel', ORIGIN) }).enabled
+      !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationToken(SESSION_SECRET, 'vercel', 'https://other.example', bindingOf(DEPLOY_A)) }).enabled
+      && !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationToken('t'.repeat(40), 'vercel', ORIGIN, bindingOf(DEPLOY_A)) }).enabled
       && !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: ENV.PALM_TRUSTED_INGRESS_VERIFICATION.slice(0, -1) + 'x' }).enabled);
     check('ingress: changing the origin after verification invalidates it', !readPalmPublicConfig({ ...ENV, PALM_PUBLIC_ORIGIN: 'https://new.example' }).enabled);
     check('ingress: feature disabled stays disabled even with valid ingress', !readPalmPublicConfig({ ...ENV, PALM_PUBLIC_ENABLED: 'false' }).enabled);
@@ -497,6 +504,104 @@ async function main() {
       okBody.ingress === 'established' && okBody.verificationToken === ENV.PALM_TRUSTED_INGRESS_VERIFICATION && !JSON.stringify(okBody).includes('198.18.0.1')
       && okProbe.headers.get('cache-control') === 'no-store' && typeof okBody.ipFingerprint === 'string' && okBody.ipFingerprint.length === 12);
     check('probe: works while public is OFF and makes no provider/DB call', (await bodyOf(await probe({ ...op, 'x-palm-ingress-probe': '192.0.2.77', 'x-vercel-forwarded-for': '198.18.0.1' }, { ...ENV, PALM_PUBLIC_ENABLED: 'false', PALM_TRUSTED_INGRESS_VERIFICATION: '' }))).ingress === 'established');
+  }
+
+
+  // ══ I-1 (re-review): verification token is DEPLOYMENT-BOUND ══
+  {
+    const op = { 'x-palm-extraction-secret': OPERATOR_SECRET };
+    const probeOn = async (env: Record<string, string | undefined>) => bodyOf(await handlePalmIngressCheck(new Request('https://destiny.example/api/palm/ingress-check', {
+      method: 'POST', headers: { ...op, 'x-palm-ingress-probe': '192.0.2.77', 'x-vercel-forwarded-for': '198.18.0.1', 'x-forwarded-for': '192.0.2.77' },
+    }), { env }));
+    // controlled setup: public OFF, provider OFF, no token yet
+    const setupA = { ...ENV, PALM_PUBLIC_ENABLED: 'false', PALM_EXTRACTION_ENABLED: 'false', PALM_TRUSTED_INGRESS_VERIFICATION: '' };
+    const pa = await probeOn(setupA);
+    check('deploy: probe on A works while PALM_PUBLIC_ENABLED=false and PALM_EXTRACTION_ENABLED=false', pa.ingress === 'established' && typeof pa.verificationToken === 'string');
+    const TA = pa.verificationToken as string;
+    const envA = { ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: TA };
+    check('deploy: token TA issued by the probe on A is accepted on A', readPalmPublicConfig(envA).enabled);
+
+    // deployment B: new release — ONLY the Vercel deployment identity differs (new commit + new deployment id)
+    const DEPLOY_B = { ...DEPLOY_A, VERCEL_GIT_COMMIT_SHA: 'b'.repeat(40), VERCEL_DEPLOYMENT_ID: 'dpl_deploymentBBBB0002' };
+    const envB_oldToken = { ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: TA };
+    const differing = Object.keys(envB_oldToken).filter((k) => (envB_oldToken as Record<string, string>)[k] !== (envA as Record<string, string>)[k]).sort();
+    check('deploy: B differs from A only by deployment identity (commit, deployment id)', differing.join() === 'VERCEL_DEPLOYMENT_ID,VERCEL_GIT_COMMIT_SHA', differing.join());
+    check('deploy: TA is REJECTED on B (same origin, session key, strategy) → public OFF',
+      !readPalmPublicConfig(envB_oldToken).enabled && (readPalmTrustedIngress(envB_oldToken) as { reason?: string }).reason === 'verification-mismatch');
+    providerCalls = 0;
+    const onB = await handlePalmPublicAnalyze(publicReq(await jpeg(), newSession()), deps(storeA, provider(OBS), {}, envB_oldToken));
+    const sessB = await handlePalmSession(new Request('https://destiny.example/api/palm/session', { method: 'POST', headers: { origin: ORIGIN, 'x-vercel-forwarded-for': '198.51.100.8' } }),
+      { env: envB_oldToken, createStore: async () => storeA });
+    check('deploy: old TA cannot survive the redeploy — paid analyze 503 with 0 provider calls, session disabled',
+      onB.status === 503 && providerCalls === 0 && (await bodyOf(sessB)).enabled === false && !sessB.headers.get('set-cookie'));
+    // re-verify on B → TB accepted on B, TB rejected on A
+    const pb = await probeOn({ ...ENV, ...DEPLOY_B, PALM_PUBLIC_ENABLED: 'false', PALM_TRUSTED_INGRESS_VERIFICATION: '' });
+    const TB = pb.verificationToken as string;
+    check('deploy: re-verification on B issues TB ≠ TA', pb.ingress === 'established' && TB !== TA && pb.deployment?.commit === 'bbbbbbb');
+    check('deploy: TB accepted on B', readPalmPublicConfig({ ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: TB }).enabled);
+    check('deploy: TB not accepted back on A', !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: TB }).enabled);
+    // other identity parts
+    check('deploy: preview token not valid on production (VERCEL_ENV bound)',
+      !readPalmPublicConfig({ ...envA, PALM_TRUSTED_INGRESS_VERIFICATION: (await probeOn({ ...setupA, VERCEL_ENV: 'preview' })).verificationToken }).enabled);
+    check('deploy: another Vercel project invalidates the token', !readPalmPublicConfig({ ...envA, VERCEL_PROJECT_ID: 'prj_otherProject00001' }).enabled);
+    check('deploy: bumping PALM_INGRESS_GENERATION invalidates the token (operator-forced re-verification)', !readPalmPublicConfig({ ...envA, PALM_INGRESS_GENERATION: 'g2' }).enabled);
+    check('deploy: env-only redeploy of the SAME commit (new deployment id) keeps the token — no apply-token circularity',
+      readPalmPublicConfig({ ...envA, VERCEL_DEPLOYMENT_ID: 'dpl_envOnlyRedeploy0003' }).enabled);
+    check('deploy: changed origin invalidates the token', !readPalmPublicConfig({ ...envA, PALM_PUBLIC_ORIGIN: 'https://moved.example' }).enabled);
+    check('deploy: changed strategy invalidates the token', !readPalmPublicConfig({ ...envA, PALM_TRUSTED_INGRESS: 'x-real-ip' }).enabled);
+    check('deploy: changed session/HMAC key invalidates the token', !readPalmPublicConfig({ ...envA, PALM_SESSION_SECRET: 'q'.repeat(40) }).enabled);
+    // missing / malformed identity → fail closed (config and probe)
+    const bad: Array<[string, Record<string, string | undefined>]> = [
+      ['not on Vercel (VERCEL unset)', { VERCEL: undefined }],
+      ['VERCEL_ENV development', { VERCEL_ENV: 'development' }],
+      ['VERCEL_ENV missing', { VERCEL_ENV: undefined }],
+      ['project id missing', { VERCEL_PROJECT_ID: undefined }],
+      ['project id malformed', { VERCEL_PROJECT_ID: 'project-1' }],
+      ['commit sha missing (non-git deploy)', { VERCEL_GIT_COMMIT_SHA: undefined }],
+      ['commit sha malformed', { VERCEL_GIT_COMMIT_SHA: 'abc123' }],
+      ['deployment id missing', { VERCEL_DEPLOYMENT_ID: undefined }],
+      ['ingress generation missing', { PALM_INGRESS_GENERATION: undefined }],
+      ['ingress generation malformed', { PALM_INGRESS_GENERATION: 'g 1;drop' }],
+    ];
+    for (const [name, over] of bad) {
+      const e = { ...envA, ...over };
+      check(`deploy: ${name} → public OFF and probe not-established`, !readPalmPublicConfig(e).enabled
+        && (await probeOn({ ...e, PALM_PUBLIC_ENABLED: 'false' })).ingress === 'not-established');
+    }
+    // flag OFF keeps the paid public path closed even with a valid deployment-bound token
+    providerCalls = 0;
+    const off = await handlePalmPublicAnalyze(publicReq(await jpeg(), newSession()), deps(storeA, provider(OBS), {}, { ...envA, PALM_PUBLIC_ENABLED: 'false' }));
+    check('deploy: PALM_PUBLIC_ENABLED=false → paid analyze 503, provider 0 (probe token does not enable it)', off.status === 503 && providerCalls === 0);
+    // identity cannot come from the request
+    providerCalls = 0;
+    const spoofId = await handlePalmPublicAnalyze(publicReq(await jpeg(), newSession(), {
+      'x-vercel-deployment-url': 'a.vercel.app', 'x-vercel-id': 'iad1::abc', 'x-vercel-git-commit-sha': 'a'.repeat(40),
+    }), deps(storeA, provider(OBS), {}, envB_oldToken));
+    check('deploy: deployment identity cannot be supplied by request headers (still 503 on B with TA)', spoofId.status === 503 && providerCalls === 0);
+    // B still rejects spoofed fallbacks and chained values once verified
+    const envBok = { ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: TB };
+    providerCalls = 0;
+    const fb = await handlePalmPublicAnalyze(publicReq(await jpeg(), newSession(), { 'x-forwarded-for': '1.2.3.4', 'x-real-ip': '1.2.3.4' }, null), deps(storeA, provider(OBS), {}, envBok));
+    const chain = await handlePalmPublicAnalyze(publicReq(await jpeg(), newSession(), {}, '1.2.3.4, 5.6.7.8'), deps(storeA, provider(OBS), {}, envBok));
+    check('deploy: on verified B, spoofed fallback headers ignored and chained trusted header rejected (503, provider 0)', fb.status === 503 && chain.status === 503 && providerCalls === 0);
+    // probe output: minimum data only
+    const txt = JSON.stringify(pa);
+    check('probe: response exposes no secret, OpenAI key, generation nonce, project id, full commit or binding material',
+      !txt.includes(SESSION_SECRET) && !txt.includes('sk-test') && !txt.includes('prj_') && !txt.includes('a'.repeat(40)) && !/"g1"|vercel\|/.test(txt)
+      && Object.keys(pa).sort().join() === 'deployment,ingress,ipFingerprint,strategy,verificationToken');
+    check('probe: fingerprint is deployment-scoped (same client IP, A vs B differ)', pa.ipFingerprint !== pb.ipFingerprint);
+    // probe is non-paid: no provider/DB/network imports and no network use at runtime
+    const probeSrc = readFileSync(join(__dirname, '..', 'app/lib/server/palmIngressProbe.ts'), 'utf8');
+    check('probe: source imports no provider, extraction, DB gate or Supabase', !/openai|palmExtraction|palmPublicGate|supabase|palmVisionProvider|fetch\(/i.test(probeSrc.replace(/\/\/.*$/gm, '')));
+    const realFetch = globalThis.fetch;
+    let fetched = 0;
+    globalThis.fetch = (async () => { fetched++; throw new Error('network forbidden'); }) as typeof fetch;
+    const pr = await probeOn(setupA);
+    globalThis.fetch = realFetch;
+    check('probe: runs with network blocked (0 fetch calls)', pr.ingress === 'established' && fetched === 0);
+    // deployment identity is server env only
+    const serverSrc = readdirSync(join(__dirname, '..', 'app/lib/server')).map((f) => readFileSync(join(__dirname, '..', 'app/lib/server', f), 'utf8')).join('\n');
+    check('deploy: identity read only from env (no request header read of Vercel deployment headers)', !/headers\.get\(['"]x-vercel-(deployment|id|git)/.test(serverSrc));
   }
 
   // ══ I-2: bounded post-provider work (finalize / analytics) ══

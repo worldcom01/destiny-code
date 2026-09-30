@@ -53,8 +53,10 @@ const LIMIT_ENV: Record<keyof PalmPublicLimits, string> = {
 // 클라이언트 IP는 애플리케이션만으로 신뢰를 증명할 수 없다. 공개 경로는 다음 둘이 모두 있어야 켜진다.
 //   1) 승인된 ingress 전략 하나 (PALM_TRUSTED_INGRESS). 임의 헤더 이름은 설정할 수 없다.
 //   2) 그 배포에서 운영자 probe(/api/palm/ingress-check)가 "외부에서 넣은 값이 덮어써짐"을 확인하고
-//      발급한 검증 토큰 (PALM_TRUSTED_INGRESS_VERIFICATION). 전략·origin·세션 키가 바뀌면 무효가 된다.
-// 둘 중 하나라도 없으면 TRUST NOT ESTABLISHED → 공개 기능 OFF (fail closed). 다른 헤더로 대체하지 않는다.
+//      발급한 검증 토큰 (PALM_TRUSTED_INGRESS_VERIFICATION).
+//   3) 토큰은 전략·origin·세션 키와 함께 "배포 식별값"에 묶인다 (Codex 재검수 I-1). 새 코드 릴리스·다른 프로젝트·
+//      preview↔production·운영자 ingress 세대 변경이면 토큰이 무효가 되고 probe를 다시 해야 한다.
+// 하나라도 없으면 TRUST NOT ESTABLISHED → 공개 기능 OFF (fail closed). 다른 헤더로 대체하지 않는다.
 //
 // 'vercel': Vercel 문서(Request headers)는 x-forwarded-for를 덮어써 외부 IP를 전달하지 않으며,
 //   x-vercel-forwarded-for는 같은 값이고 Vercel 앞단 proxy가 덮어쓰지 않는다고 설명한다.
@@ -64,13 +66,49 @@ export const PALM_TRUSTED_INGRESS_STRATEGIES = {
 } as const;
 export type PalmTrustedIngress = keyof typeof PALM_TRUSTED_INGRESS_STRATEGIES;
 
+// ── 배포 식별값 (서버 env만 — 요청 헤더에서는 절대 읽지 않는다) ─────────────────
+// Vercel system env(문서: System environment variables, runtime 제공):
+//   VERCEL=1, VERCEL_ENV(production|preview), VERCEL_PROJECT_ID, VERCEL_GIT_COMMIT_SHA, VERCEL_DEPLOYMENT_ID
+// + 운영자 PALM_INGRESS_GENERATION (도메인·proxy·ingress 구성을 바꿀 때 운영자가 올린다).
+// 토큰 결합 값: environment + projectId + commitSha + ingressGeneration.
+// VERCEL_DEPLOYMENT_ID는 "실제 Vercel 런타임" 증거로 존재만 요구하고 결합하지 않는다: Vercel은 env 변경에 새
+// 배포가 필요하므로, 배포 ID에 묶으면 토큰을 env에 넣는 재배포가 곧바로 그 토큰을 무효로 만드는 순환이 생긴다.
+// 같은 커밋의 env-only 재배포는 식별값이 같다(= 토큰 적용 가능). 새 커밋 릴리스는 항상 재검증 대상이다.
+export type PalmDeploymentIdentity = {
+  platform: 'vercel';
+  environment: 'production' | 'preview';
+  projectId: string;
+  commitSha: string;
+  ingressGeneration: string;
+};
+
+export type PalmDeploymentRead =
+  | { ok: true; identity: PalmDeploymentIdentity; bindingKey: string }
+  | { ok: false; reason: 'not-vercel-runtime' | 'environment-unsupported' | 'project-missing' | 'commit-missing' | 'deployment-id-missing' | 'generation-missing' };
+
+export function readPalmDeploymentIdentity(env: Record<string, string | undefined>): PalmDeploymentRead {
+  if (env.VERCEL !== '1') return { ok: false, reason: 'not-vercel-runtime' };
+  const environment = env.VERCEL_ENV;
+  if (environment !== 'production' && environment !== 'preview') return { ok: false, reason: 'environment-unsupported' };
+  const projectId = env.VERCEL_PROJECT_ID ?? '';
+  if (!/^prj_[A-Za-z0-9]{8,64}$/.test(projectId)) return { ok: false, reason: 'project-missing' };
+  const commitSha = env.VERCEL_GIT_COMMIT_SHA ?? '';
+  if (!/^[0-9a-f]{40}$/.test(commitSha)) return { ok: false, reason: 'commit-missing' }; // git 연동 배포만 지원
+  if (!/^dpl_[A-Za-z0-9]{8,64}$/.test(env.VERCEL_DEPLOYMENT_ID ?? '')) return { ok: false, reason: 'deployment-id-missing' };
+  const ingressGeneration = env.PALM_INGRESS_GENERATION ?? '';
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(ingressGeneration)) return { ok: false, reason: 'generation-missing' };
+  const identity: PalmDeploymentIdentity = { platform: 'vercel', environment, projectId, commitSha, ingressGeneration };
+  return { ok: true, identity, bindingKey: `vercel|${environment}|${projectId}|${commitSha}|${ingressGeneration}` };
+}
+
 export type PalmIngressState =
   | { state: 'configured'; strategy: PalmTrustedIngress; header: string }
-  | { state: 'not-established'; reason: 'strategy-missing' | 'strategy-unsupported' | 'verification-missing' | 'verification-mismatch' | 'secret-or-origin-invalid' };
+  | { state: 'not-established'; reason: 'strategy-missing' | 'strategy-unsupported' | 'verification-missing' | 'verification-mismatch' | 'secret-or-origin-invalid' | 'deployment-identity-missing' };
 
-export function palmIngressVerificationToken(sessionSecret: string, strategy: PalmTrustedIngress, origin: string): string {
+// 토큰 = HMAC(세션 키, 전략 + 헤더 + origin + 배포 결합 값). 발급은 probe만 하며 입력 재료는 응답에 없다.
+export function palmIngressVerificationToken(sessionSecret: string, strategy: PalmTrustedIngress, origin: string, deploymentBindingKey: string): string {
   const header = PALM_TRUSTED_INGRESS_STRATEGIES[strategy].header;
-  return b64url(hmac(sessionSecret, `palm-ingress-verified-v1|${strategy}|${header}|${origin}`));
+  return b64url(hmac(sessionSecret, `palm-ingress-verified-v2|${strategy}|${header}|${origin}|${deploymentBindingKey}`));
 }
 
 export function readPalmTrustedIngress(env: Record<string, string | undefined>): PalmIngressState {
@@ -81,9 +119,11 @@ export function readPalmTrustedIngress(env: Record<string, string | undefined>):
   const secret = env.PALM_SESSION_SECRET ?? '';
   const origin = env.PALM_PUBLIC_ORIGIN ?? '';
   if (secret.length < 32 || !isExactOrigin(origin)) return { state: 'not-established', reason: 'secret-or-origin-invalid' };
+  const deployment = readPalmDeploymentIdentity(env);
+  if (!deployment.ok) return { state: 'not-established', reason: 'deployment-identity-missing' };
   const token = (env.PALM_TRUSTED_INGRESS_VERIFICATION ?? '').trim();
   if (!token) return { state: 'not-established', reason: 'verification-missing' };
-  if (!safeEqual(token, palmIngressVerificationToken(secret, strategy, origin))) return { state: 'not-established', reason: 'verification-mismatch' };
+  if (!safeEqual(token, palmIngressVerificationToken(secret, strategy, origin, deployment.bindingKey))) return { state: 'not-established', reason: 'verification-mismatch' };
   return { state: 'configured', strategy, header: PALM_TRUSTED_INGRESS_STRATEGIES[strategy].header };
 }
 
