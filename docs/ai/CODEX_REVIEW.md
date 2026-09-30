@@ -1,3 +1,75 @@
+# Palm Phase 1C — Finding Closure 재검수 (2026-10-01)
+
+**C. BLOCKER REMAINS — DO NOT MIGRATE**
+
+**잔여 CRITICAL 0 / IMPORTANT 1 / MINOR 1 / NOTE 1.** I-1은 부분 개선됐지만 OPEN이다. I-2 및 기존 M-1/M-2/M-3은 CLOSED다. 새 CRITICAL/IMPORTANT는 발견하지 않았다. 운영 문서의 실행 순서에는 별도 MINOR가 남는다. 이 검수는 migration, 공개 활성화, merge/push 또는 live 호출 승인이 아니다.
+
+## 범위와 판정
+
+브랜치 `feature/palm-supplement-phase1c`, HEAD `fceda61`. 이전 검수 `63e1750`과 수정 `f6fb6ce`, `8e413e2`, `fceda61`의 실제 diff 및 직접 의존 코드를 대조했다. CODEX_REVIEW/CURRENT_PHASE/CLAUDE_REPORT/DECISIONS와 운영 문서를 읽었다. 생산 코드·테스트·SQL·golden baseline은 수정하지 않았다. 아래에 이전 검수 원문을 보존한다.
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| I-1 trusted ingress | **OPEN / IMPORTANT** | 엄격한 IP 파싱과 토큰 필수화는 개선됐지만 실제 배포 제약·변경 후 검증 무효화가 없음 |
+| I-2 bounded finalization | **CLOSED** | RPC timeout/abort, finalize 상한, analytics best-effort, 보수적 ledger 및 자동 재호출 없음 |
+| M-1 event body | **CLOSED** | 누적 512 bytes, 2초 deadline, cancel/release, 엄격한 UTF-8 처리 |
+| M-2 delete/late response | **CLOSED** | 활성 삭제 시 pending 제거·generation remount·tracker invalidate·abort·preview revoke |
+| M-3 save failure | **CLOSED** | base 예외 포착 후 supplement 쓰기 차단, 메모리 관찰 재저장 가능 |
+
+## I-1 — IMPORTANT: 검증 토큰이 실제 배포 신뢰 경계에 묶이지 않음
+
+위치: `app/lib/server/palmPublicAccess.ts:71` (`palmIngressVerificationToken`), `:76` (`readPalmTrustedIngress`), `app/lib/server/palmIngressProbe.ts:30`, `docs/palm-phase1c-operations.md:46`.
+
+**해결된 부분:** 임의 헤더 설정 제거, `vercel` 전략만 허용, `node:net isIP` 사용, 빈 값/목록/형식 오류 거부, XFF/X-Real-IP fallback 없음. 토큰이 없거나 origin/secret이 다르면 public OFF이며 provider 이전에 거부된다. probe는 operator 인증을 요구하고 DB/provider를 호출하지 않으며 원본 IP나 서명 secret을 반환하지 않는다.
+
+**미해결 부분:** `vercel`이라는 설정 문자열 외에는 실제 지원 배포 환경을 확인하지 않는다. 토큰 입력은 strategy/header/origin/session secret뿐이며 배포 환경·검증된 ingress 구성의 식별값 또는 세대가 없다. 같은 도메인과 secret을 유지한 채 다른 런타임/ingress로 옮겨도 기존 토큰이 유효하다. 이는 요청의 I-1 조건 2·9·10을 충족하지 못한다.
+
+독립 로컬 재현(가짜 secret, 네트워크/DB/provider 없음): 동일 토큰으로 `VERCEL=1, VERCEL_ENV=production, VERCEL_DEPLOYMENT_ID=old` → `configured`; preview/new로 변경 → `configured`; Vercel 환경 식별값 전부 제거 → `configured`. 단순 재배포마다 반드시 토큰을 폐기해야 한다는 뜻이 아니라, **검증한 신뢰 경계가 바뀌어도 이를 전혀 구분할 수 없다는 뜻**이다. 실제 production ingress가 위조 가능하다고 입증한 것은 아니며, 일반 사용자가 secret 없이 토큰을 위조할 수 있다는 주장도 아니다.
+
+**probe 판단:** 문서의 curl을 정확히 실행하면 그 요청에서 문서화 IP가 그대로 전달되지 않았다는 유용한 증거가 된다. 그러나 handler는 전달받은 두 헤더가 다르다는 사실만 보며, 모든 공격자 제공 값이 제거됐는지 또는 지원 플랫폼을 실제 통과했는지를 증명하지 않는다. 추가된 성공 테스트도 이미 다른 IP가 들어 있는 Request를 직접 만든 것이므로 실제 proxy overwrite를 검증하지 않는다. 문서화 IP만 걸러내고 일반 유효 IP는 보존하는 ingress도 이 단일 시험을 통과할 수 있다. 따라서 현재의 `established`와 장기 유효 토큰만으로 요구한 신뢰 보장을 완료했다고 판단할 수 없다.
+
+**최소 필수 보완:**
+
+1. 지원 배포 환경을 코드/배포 계약으로 제한하고, 검증된 ingress 구성 식별값 또는 세대를 토큰에 결합한다. 관련 경계 변경 시 public OFF 및 재검증을 강제한다. 토큰을 env에 넣기 위한 재배포가 곧바로 토큰을 무효화하는 순환은 피하도록 발급·적용 절차를 함께 명시한다.
+2. 공개 OFF 상태의 외부 probe 절차에 정상 대조 요청과 서로 다른 유효 IPv4/IPv6 위조값·목록을 포함해, 같은 네트워크에서 quota identity가 위조값에 따라 바뀌지 않음을 확인한다. 공개 도메인/배포 URL 및 직접 origin 우회 경계를 확인한다. probe의 단일 응답과 실제 외부 검증 완료를 구분하고, 지원하지 않는 환경/검증 구성 변경 시 이전 토큰 거부 회귀를 추가한다.
+
+two-network fingerprint 비교는 고정 proxy IP를 찾는 보조 점검으로 적절하나 overwrite 증명은 아니다. fingerprint는 날짜에 따라 바뀌므로 같은 UTC 날짜에 비교해야 한다. 이 코드에는 DB/analytics 영구 저장이 없으며 비교용으로만 사용해야 한다. raw IP를 반환하지 않는 점은 적절하다.
+
+## I-2와 MINOR 종료 근거
+
+- I-2: `createPalmPublicStore`가 모든 RPC를 2.5초로 제한하고 AbortSignal을 Supabase `.abortSignal`에 전달한다. handler의 reserve/markStarted 대기도 제한되고 실패 시 provider 0회다. finalize 상한 후 성공 관찰을 반환하며 analytics 대기는 1초다. analytics의 내부 HTTP 작업은 store의 2.5초 상한까지 남을 수 있지만 응답을 무기한 막지 않는다. 기본 의도 상한은 30 + 2.5 + 1초로 route 40초 안이다. DB HTTP abort가 이미 실행된 SQL rollback을 보장하지는 않는다.
+- 성공 후 finalize 확인 불가 시 실제 DB는 이미 completed일 수도 있고 provider-started로 남을 수도 있다. 후자는 lease 만료 후 다음 정리/예약 처리에서 uncertain이 된다. 예산 환불이나 provider 자동 재호출은 없다. 같은 이미지 즉시 재요청 409, lease 동안 동시성 슬롯 유지, provider 실패+finalize 실패, analytics hang/error, store signal abort를 회귀가 직접 검사한다. 이후 명시적 재시도를 영구 금지한다는 의미는 아니다.
+- M-1: `readBoundedBody` 재사용으로 검증 전 전체 text 할당이 사라졌다. 한도를 넘는 chunk는 보관하지 않고 reader를 cancel/release한다. 지연·끊김·abort·잘못된 UTF-8/JSON은 종료되며 본문 로그가 없다. 성공 시 복사도 최대 512 bytes다.
+- M-2: page의 활성 삭제 분기와 panel key/cleanup 연결을 직접 확인했다. 이전 mount의 tracker가 늦은 관찰/오류를 버리며 B는 별도 mount/state다. helper 시나리오, baseRef 저장 가드, 정적 연결 검사로 다음 준비 단계 판단에는 충분하다. 실제 DOM/카메라/preview 해제의 실기기 확인은 운영 smoke에 남기지만 실제 A→B 오염 경로는 발견하지 않았다.
+- M-3: page와 panel이 모두 `saveBaseThenPalm`을 사용한다. base 실패 시 orphan을 쓰지 않고 기존 저장 항목·화면·받은 관찰을 유지한다. 다시 저장은 provider 호출 경로가 아니다. base 실패와 supplement 실패 안내가 구분된다.
+
+## O-1 — MINOR: 운영 문서의 OFF 순서 정정 필요
+
+`docs/palm-phase1c-operations.md:16`은 준비 env에 `PALM_PUBLIC_ENABLED=true`를 명시하지만 첫 문장은 승인 전 OFF를 요구한다. 그대로 따라가면 검증 토큰 적용 시 DB/실기기 smoke 전 public 경로가 활성화될 수 있다. 준비 단계에는 명확히 `false`를 쓰고, 토큰 적용 후 재배포도 OFF임을 명시해야 한다. `PALM_EXTRACTION_SECRET`의 probe 사전 설정과 실제 다중 연결 DB-only smoke 단계를 같은 실행 순서에 포함해야 한다. OFF probe 자체는 provider flag/토큰/DB 없이 가능하므로 현재 코드에 순환 의존은 없다. 다만 문서 전체를 안전한 단일 체크리스트로 그대로 실행할 수 있는 상태는 아니다.
+
+## N-1 — NOTE 유지: 실제 DB 다중 연결 smoke
+
+`supabase/palm-public.sql`은 이전 검수 이후 변경 없음. 이번 수정으로 SQL 설계를 다시 열 이유는 없으며 SQL 수정 요구도 없다. PGlite 시험은 실제 다중 연결 PostgreSQL 경쟁을 입증하지 않는다. **수정 재검수 승인 후 migration을 적용하고, live 호출 전에** 별도 연결에서 동시 reserve/중복 ID/전체·세션 cap·lease 복구를 검증한다. 이 NOTE 자체가 migration 차단 이유는 아니며 이번 차단은 I-1이다.
+
+## 독립 검증 결과
+
+- 직접 실행: public **140**, supplement **117**, extraction **146**, palm-evidence **76**, patterns **74**, identity-selection **97**, catalog-v3 **23**, saved-context **14**, evidence-trace **218** 개별 PASS. 최종 요약 PASS 줄은 assertion 수에 포함하지 않았다.
+- golden v1/v2/v3 각 7 cases PASS. baseline 파일 변경 없음. diagnostic selection **25ab43b8**, full **dab19aab** 일치.
+- 새 테스트의 실제 실패 주입(hang/reject/stream/QuotaExceededError)과 연결 코드를 검토했다. ingress 테스트는 형식·토큰 입력·fake header만 검증하며 실제 배포 경계와 stale token 누락은 검출하지 못한다. 테스트 전부 PASS가 I-1 종료를 뜻하지 않는다.
+- TypeScript PASS. build는 sandbox의 Google Fonts 다운로드 실패 후 동일 코드로 네트워크 허용 재실행 PASS. diff-check PASS. 이번에는 전체 lint를 다시 실행하지 않았으며 이전 lint 상태가 개선됐다고 주장하지 않는다.
+- 수정 범위와 회귀상 Identity/CoreTag/base 분석·snapshot·공유·기존 저장 의미 불변. Palm A/B 격리 유지. 이미지 영구 저장, 자동 paid retry, OpenAI 입력 범위 확장, analytics에 IP/이미지 추가 없음.
+- 실제 OpenAI 호출 **0**, 실제 Supabase 요청/migration **0**, merge/push 없음. 검수 변경은 CODEX_REVIEW/CURRENT_PHASE 문서뿐이다.
+
+## 정확한 다음 단계
+
+1. Claude가 I-1의 환경 제약·검증 구성 변경 무효화·외부 검증 절차/회귀와 O-1의 OFF 순서를 보완한다. 이번 작업에서 대신 구현하지 않았다.
+2. 해당 diff만 재검수해 IMPORTANT 종료를 확인한다. 그 전에는 migration/configuration/live/public enable을 진행하지 않는다.
+3. 승인 후 별도 실행: public OFF → `supabase/palm-public.sql` → `palm_cleanup()` 매일 이상 예약 → 필요한 서버 env/probe operator secret 설정 및 OFF 배포 → ingress 외부/두 네트워크 검증 → 검증값 적용 후 OFF 배포 → 실제 DB-only 다중 연결 smoke → 실기기 mock → **그 결과를 확인한 뒤 live OpenAI 1회 별도 승인 요청**. 공개 활성화/merge/launch는 별도 결정이다.
+
+---
+
+## 이전 검수 기록 (원문 보존)
+
 # Palm Phase 1C — Production Readiness 한정 검수 (2026-10-01)
 
 **C. BLOCKED — SECURITY / DATA ISOLATION / COST CONTROL ISSUE**

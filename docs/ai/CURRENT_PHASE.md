@@ -1,3 +1,19 @@
+# Palm Phase 1C — Finding Closure 재검수 완료 / I-1 보완 대기
+
+Status: **C. BLOCKER REMAINS — DO NOT MIGRATE** / public OFF 유지
+
+- 검수 HEAD `fceda61`, 수정 `f6fb6ce`/`8e413e2`/`fceda61`을 이전 `63e1750`과 대조했다.
+- 잔여 CRITICAL 0 / IMPORTANT 1 / MINOR 1 / NOTE 1. 새 CRITICAL/IMPORTANT 없음.
+- I-1 OPEN: 토큰이 실제 지원 배포/ingress 구성 변경을 구분하지 못한다. 외부 spoof probe가 증명하는 범위와 토큰 무효화 계약 보완 필요.
+- I-2 및 기존 M-1/M-2/M-3 CLOSED. 새 운영 문서 MINOR: 준비 env의 public=true를 OFF 순서와 일치시키고 실제 DB smoke 단계를 명시한다.
+- public 140 / supplement 117 및 기존 회귀·golden 전부 PASS. digest selection `25ab43b8`, full `dab19aab`. TypeScript/build/diff-check PASS. 실제 OpenAI·Supabase 호출 0.
+- 다음: Claude 한정 수정 → 재검수 → 승인 후 OFF 상태 migration/cleanup/ingress → DB-only 다중 연결 smoke → 실기기 mock → 별도 승인 live 1회. NOTE 자체는 migration 차단 사유가 아니다.
+- 이번에는 검수 문서만 수정·commit. production 코드/SQL/baseline 변경, migration, merge/push 없음. 상세 근거는 CODEX_REVIEW 최상단.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm Phase 1C — Codex 지적 수정 완료
 
 Status: **PHASE 1C CODEX FINDINGS FIXED — AWAITING FOCUSED RE-REVIEW** (승인 아님 · 공개 OFF · Supabase migration 미실행)
