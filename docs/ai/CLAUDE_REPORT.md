@@ -1,3 +1,82 @@
+# Palm Phase 1C — Production Supplementary Analysis 구현 보고
+
+Status: **PHASE 1C IMPLEMENTATION COMPLETE — AWAITING CODEX REVIEW / LIVE SMOKE** (배포 아님, 공개 기본 OFF)
+
+브랜치 `feature/palm-supplement-phase1c`(main `f8d41c7`에서 분기). Codex 설계 `62589d9`를 문서로 가져와(`57bb8f2`) 3단계로 구현했다. `experiment/palm-cv-poc`는 합치지 않았고 CV 코드·모델은 production에 없다. 유료 OpenAI 호출 0회, merge/push 없음.
+
+## Stage 1 — 결정적 도메인 (`fe54e7f`)
+
+- `app/lib/palmSupplement.ts`: supplement v1 계약과 엄격한 parser.
+  - 해석 결과 `PalmInterpretation`(`palm-symbolic-1`), 비교 결과 `SupplementaryComparison`(`palm-comparison-1`), 처리 안내 버전 `palm-processing-1`을 담는다.
+  - 결과 연결 키 `PalmBaseRef`는 snapshot이면 analysisId, legacy면 savedId다.
+- `palmInterpretation.ts`: Codex가 승인한 고정 규칙 **8개만** 구현했다.
+  - 선마다 최대 1개, life/head/heart/fate 순서로 적용한다.
+  - 선이 visible이고, 해당 속성이 observed이며, Evidence가 available일 때만 규칙을 적용한다.
+  - signal마다 `line`, `observedFeature`, `ruleId`, `evidenceIds`(`palm:line:<line>:<attr>`)로 출처를 추적한다.
+- `palmComparison.ts`: 붙이는 결과 자신의 **저장된 coreTags 복사본**만 비교 기준으로 쓴다.
+  - MATCH: trait가 base coreTags에 있을 때.
+  - TENSION: 분석적↔감성적, 창의적↔체계적 두 쌍만. MATCH와 함께 성립할 수 있다.
+  - UNIQUE: 위 둘 다 없을 때.
+  - legacy 결과는 비교 기준을 재구성하지 않고 basis unavailable로 둔다.
+- `palmSupplementStore.ts`: 기본 저장소와 분리된 `destiny_palm_supplements_v1`.
+  - 저장된 base가 있을 때만 쓰고, base 하나당 기록 하나다.
+  - orphan·eviction 정리, 알 수 없는 버전은 'unsupported'로 표시, 저장 실패를 구분해 알린다.
+  - 저장 전 결과는 `savePendingPalmFor`로 "지금 이 결과"에 속할 때만 저장한다.
+- `activeAnalysis.ts`: `activeBaseRef`, `buildPalmSupplementFor`만 추가했다. 기존 save/share 의미는 그대로다.
+- `palmAttempt.ts`: (baseRef, attemptId)를 대조해 늦게 도착한 응답을 버린다.
+
+## Stage 2 — 공개 서버·보안·비용 (`db200a9`)
+
+- `POST /api/palm/session`: 익명 세션을 발급한다.
+  - 정확한 Origin + same-origin 요청만 받는다.
+  - `__Host-palm_session` cookie(HttpOnly, Secure, SameSite=Strict, Path=/, 24시간)에 HMAC 서명한다.
+  - session-bound CSRF token을 응답한다. IP당 시간 10회 발급 제한이 있다.
+- `/api/palm/analyze` 공개 분기: body를 읽기 전에 다음을 검증한다.
+  - kill switch, Origin/Sec-Fetch-Site, 서명 세션, CSRF, UUID 요청 ID, 처리 안내 버전, 신뢰 단일 IP 헤더
+  - 이후 기존 업로드 검증·준비를 공통 함수 `readAndPreparePalmUpload`로 재사용한다.
+  - 이미지 중복 판정용 fingerprint는 세션에 묶인 HMAC이다.
+- 공유 Postgres atomic 예약(`supabase/palm-public.sql`, advisory lock):
+  - 세션: 동시 1회, 30초 간격, 일 3회 / IP: 일 10회 / 전체: 동시 2회, 일 100회
+  - 같은 요청 ID 재전송은 상태만 반환하고, ID는 같은데 payload가 다르면 409를 반환한다.
+  - 같은 이미지는 10분 동안 재분석하지 않는다. 실패한 이미지는 1회만 재시도할 수 있다.
+  - 예약 lease는 120초이며, 만료되면 uncertain으로 표시하고 예산을 환불하지 않는다.
+  - 저장소 오류는 provider를 호출하지 않고 503으로 닫는다(fail closed).
+  - 테이블과 RPC는 anon/authenticated 접근이 차단돼 있고, `palm_cleanup()`이 만료 행을 지운다.
+- operator 분기(Phase 1B)는 그대로다. 단, 공개 저장소가 구성된 배포에서는 전역 상한을 함께 소모한다.
+- `/api/palm/events`: 허용 목록의 클라이언트 이벤트(표시/시작/재시도)만 받는다. success/unusable/error는 서버가 기록한다.
+- OpenAI 역할은 관찰 추출뿐이다. 모델·prompt·strict schema·`store:false`·`maxRetries:0`·timeout 20초/30초는 그대로다.
+
+## Stage 3 — 사용자 경험 (`6182771`)
+
+- `PalmSupplementPanel`: DESTINY CODE 요약 바로 아래에 "손바닥 패턴 분석" 카드로 표시한다. 결과마다 key로 새로 mount한다.
+  - 입력: 사진 촬영(`capture="environment"`)과 사진 선택. 짧은 촬영 안내를 둔다.
+  - HEIC는 안내 후 거부한다. JPEG·PNG·WebP, 4MB 이하만 받는다.
+  - 외부 AI 처리 안내를 확인해야 "손바닥 분석하기"가 활성화된다. 자동 업로드나 자동 재시도는 없다.
+  - 실패해도 기본 결과와 이전 성공 결과는 유지되고, 수동으로 재시도한다.
+- 결과 계층은 관찰된 주요 패턴 → 상징적 해석 → 기존 운명 코드와의 교집합(겹치는/다른 방향의/새롭게 살펴볼 관점) → 면책 문구와 공유 범위 안내 순이다.
+- 저장: 결과 저장 시 base를 먼저 저장하고 손바닥 결과를 따로 저장한다. 이미 저장된 결과에는 "손바닥 결과 저장"을 쓴다. 결과를 삭제하면 손바닥 기록도 함께 지운다.
+- 공유는 기본 결과만 포함하며, share/PDF/profile/기존 analytics는 변경하지 않았다.
+
+## 검증
+
+- 신규:
+  - `regression-palm-supplement.ts` **104 PASS**: 규칙 8개, partial/unusable, MATCH/TENSION/UNIQUE, 결정성, **Identity 불변(release blocker)**, **A/B 양방향 격리(release blocker)**, legacy, savedId≠analysisId, eviction, 저장 흐름, 표시 문구, 서버 렌더링 smoke
+  - `regression-palm-public.ts` **93 PASS**: 실제 마이그레이션을 일회용 PGlite Postgres에 적용해 검증
+- 기존: palm-extraction 146, palm-evidence 76, patterns 74, identity-selection 97, catalog-v3 23, saved-context 14, evidence-trace 218, golden v1/v2/v3 모두 PASS. digest selection `25ab43b8` / full `dab19aab` 불변.
+- tsc OK, `npm run build` OK(새 route 3개 dynamic), lint 9(기존 baseline 그대로), diff-check OK.
+- 보호 대상 파일의 diff는 비어 있다: analysis/identity/trace/patterns/conflict/keyword/share/profile/storage, Palm 1A/1B 계약·provider·image·access, golden baseline 3개.
+- security review: secret 리터럴 없음, 브라우저 파일·빌드 번들에 서버 secret 이름·RPC·HMAC 코드 없음, 새 console 호출 없음, 원본 이미지 저장·파일 쓰기 없음, 원문 오류/provider 응답 반환 없음, 새 서버 모듈 전부 `server-only`.
+
+## 한계·후속
+
+- 테스트의 "두 인스턴스 동시성"은 같은 PGlite(단일 연결)를 공유하므로 이벤트 루프 인터리빙이다. 실제 다중 연결 동시성은 운영 DB smoke에서 확인해야 한다.
+- 운영 준비는 `docs/palm-phase1c-operations.md`에 정리했다: SQL 적용, cleanup cron, 신뢰 IP 헤더, APM body capture 해제, 실기기 smoke. 공개는 별도 승인된 live smoke 1회 뒤에 한다.
+- route 동작 변화: 운영자 secret 없이 `/api/palm/analyze`를 호출하면 이제 공개 분기로 간다. 공개가 OFF면 401 대신 503 UNAVAILABLE을 반환한다.
+- 익명 세션은 계정 인증이 아니다. coreTags가 많은 결과에서는 MATCH/TENSION이 흔하다(설계상 수용).
+- devDependency `@electric-sql/pglite` 0.5.8을 추가했다(테스트 전용).
+
+---
+
 # PALM-CV-EVAL-v1 — 공개 데이터셋 최종 스크리닝
 
 Status: **C. STOP PUBLIC DATASET SEARCH — CONSENTED SMARTPHONE CAPTURE IS THE CORRECT NEXT STEP** / DATASET NOT FROZEN / CALIBRATION NOT STARTED

@@ -116,6 +116,8 @@ npx -y tsx scripts/regression-identity-selection.ts     # Identity Selection v2 
 npx -y tsx scripts/regression-identity-catalog-v3.ts    # Identity catalog v3 (must PASS)
 npx -y tsx scripts/regression-palm-evidence.ts          # Palm observation → Evidence adapter (must PASS)
 npx -y tsx --conditions=react-server scripts/regression-palm-extraction.ts  # Palm vision extraction boundary, mock only (must PASS)
+npx -y tsx scripts/regression-palm-supplement.ts        # Palm Phase 1C interpretation/comparison/store, invariance, A/B isolation, UI wiring (must PASS)
+npx -y tsx --conditions=react-server scripts/regression-palm-public.ts  # Palm Phase 1C public session/CSRF/shared quota on a disposable Postgres (PGlite), mock provider (must PASS)
 npx -y tsx scripts/diagnostic-identity-diversity.ts     # characterization + v1/v2/v3 comparison (fails only on integrity errors)
 npx tsc --noEmit -p .
 npm run build
@@ -125,4 +127,6 @@ git diff --check
 
 Never regenerate a golden baseline to make a diff pass. `scripts/golden-baseline.v1.json` (engine v1) and `scripts/golden-baseline.v2.json` (engine v2) are frozen historical baselines and are never rewritten; `scripts/golden-baseline.v3.json` is the current engine v3 baseline. An unexpected golden difference is a finding to report.
 
-Palm vision extraction (`/api/palm/analyze`) is operator-only and disabled by default. Server-only environment variables (never `NEXT_PUBLIC_`): `OPENAI_API_KEY`, `PALM_EXTRACTION_ENABLED` (`true` to enable), `PALM_EXTRACTION_SECRET` (operator header `x-palm-extraction-secret`). Regressions never call the paid API; `scripts/smoke-palm-openai.ts --live` is a manual, optional live check.
+Palm Phase 1C adds an optional public "손바닥 패턴 분석" card (off by default: `PALM_PUBLIC_ENABLED=false`); setup, kill switch and limits are in `docs/palm-phase1c-operations.md`. The Phase 1B operator branch below is unchanged.
+
+Palm vision extraction (`/api/palm/analyze`) operator branch is disabled by default. Server-only environment variables (never `NEXT_PUBLIC_`): `OPENAI_API_KEY`, `PALM_EXTRACTION_ENABLED` (`true` to enable), `PALM_EXTRACTION_SECRET` (operator header `x-palm-extraction-secret`). Regressions never call the paid API; `scripts/smoke-palm-openai.ts --live` is a manual, optional live check.

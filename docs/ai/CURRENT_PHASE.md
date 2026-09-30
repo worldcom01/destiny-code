@@ -1,5 +1,25 @@
 # Palm Phase 1C — Production Supplementary Analysis
 
+Status: **PHASE 1C IMPLEMENTATION COMPLETE — AWAITING CODEX REVIEW / LIVE SMOKE** / 배포 아님 · `PALM_PUBLIC_ENABLED=false` 기본
+
+- 브랜치 `feature/palm-supplement-phase1c`: 설계 문서 `57bb8f2`, Stage 1 `fe54e7f`, Stage 2 `db200a9`, Stage 3 `6182771`, 문서·운영. 상세는 `CLAUDE_REPORT.md` 최상단.
+- 흐름: 결과 화면의 선택 카드 → 사진 → 기존 GPT 관찰(관찰만) → 결정적 8개 상징 규칙 → 저장된 coreTags와 MATCH/TENSION/UNIQUE → 별도 UI/보조 저장.
+- engine '3'/schema 2/Identity/CoreTags/convergence/trace/golden 불변. Identity 불변과 A/B 격리 release blocker 테스트가 PASS다.
+- 공개 경로: 익명 서명 세션, Origin/CSRF, 공유 DB atomic 한도·중복·동시성, fail closed, kill switch. 원본 사진은 저장하지 않는다.
+- 유료 호출 0, merge/push 없음, CV production 통합 없음. PALM-CV-EVAL-v1 기록은 보존한다.
+- 다음 단계:
+  1. Codex 리뷰
+  2. 운영 DB에 SQL 적용, cleanup 예약, env·신뢰 IP 헤더·APM 설정
+  3. 실기기 mock smoke
+  4. 별도 승인된 live smoke 1회
+  5. 공개 여부 결정
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
+# Palm Phase 1C — Production Supplementary Analysis
+
 Status: **A. PHASE 1C ARCHITECTURE READY — CLAUDE MAY IMPLEMENT** / 설계 완료·구현 미착수
 
 - 사용자 지시로 즉시 로드맵을 변경한다. production 선택형 Palm 보조 분석을 먼저 구현하고 CV 평가는 별도로 유지한다. 평가 완료/정확도 승인을 의미하지 않는다.
