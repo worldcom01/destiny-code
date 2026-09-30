@@ -1,3 +1,284 @@
+# PALM-CV-EVAL-v1 — 공개 데이터셋 최종 스크리닝
+
+Status: **C. STOP PUBLIC DATASET SEARCH — CONSENTED SMARTPHONE CAPTURE IS THE CORRECT NEXT STEP** / DATASET NOT FROZEN / CALIBRATION NOT STARTED
+
+`evaluation/PUBLIC_DATASET_SCREENING.md`(`38d67db`)에 기록했다. 조사 대상은 PolyU-IITD v3, IITD v1, MSU PalmDB, X-Palm, BMPD이고, 추가로 Kaggle의 Axon 24K와 "Plam" 데이터셋을 확인했다. 공식 페이지, 라이선스/동의서, 공식 샘플만 사용했다. archive 다운로드, 계약 제출, 계정 생성, 연구자 연락은 하지 않았다. 11K Hands와 HaGRID 증거는 보존했다.
+
+- **기술적으로 가장 적합한 후보:**
+  - PolyU-IITD v3: 손 전체가 나오고 손금이 선명하다.
+  - X-Palm: 실제 스마트폰 사진이고, SF/JF/Far 조건이 해당한다.
+- **권리:**
+  - 둘 다 NOT SUITABLE이다. PolyU는 상업 목적·제품 개발과 어떤 형태의 배포도 사전 서면 승인 없이 금지하고, 기관 법무 담당자 서명이 필요하다. X-Palm은 비상업 학술 전용 EULA다.
+  - IITD v1과 MSU도 연구·학술 전용이고 상업 사용을 금지한다.
+  - BMPD는 라이선스가 "Unknown"으로 모호하고, 샘플도 계정 없이는 확인할 수 없다.
+  - Axon 24K는 CC BY-NC다.
+  - "Plam" 데이터셋은 MIT 표기가 있지만 동의·출처 문서가 없다.
+- **제3자 API 전송:** 어느 후보도 명시적으로 허용하지 않는다.
+- 결정 규칙("자체 수집을 피하려고 데이터셋을 추천하지 않는다")에 따라 **공개 데이터셋 탐색을 중단**하고 동의받은 스마트폰 촬영으로 돌아간다.
+- CV 0, OpenAI 0, 프로토콜 불변, production 불변.
+
+---
+
+# PALM-CV-EVAL-v1 — HaGRID 데이터셋 적합성 검토
+
+Status: HAGRID SUITABILITY CHECK — **C. NOT SUITABLE FOR PALM-LINE EVALUATION** / DATASET NOT FROZEN / CALIBRATION NOT STARTED
+
+11K Hands는 **REJECTED FOR PALM-CV-EVAL-v1 INPUT FRAMING**으로 기록했다. 데이터셋 자체가 나쁘다는 뜻이 아니라, 촬영 구도가 이 실험의 조건과 맞지 않는다는 뜻이다. 기존 증거 파일은 보존했다. HaGRID는 이미지 없이 공식 README, 라이선스 PDF, annotation 중 test/palm.json만(HTTP Range 요청으로 약 3.1 MB 전송), 공식 샘플 모자이크로 판단했다. 상세는 `evaluation/HAGRID_SUITABILITY.md`(`83c0d23`). 모델 실행 0, OpenAI 0, 프로토콜 불변.
+
+- **라이선스:** CC BY-SA 4.0을 고쳐 쓴 비-CC 라이선스다("This license is not a Creative Commons license").
+  - 비상업 조항은 없다.
+  - 제출(배포) 시 출처 표시 의무가 있고, 변형물을 배포하면 share-alike가 적용된다.
+  - **§2(b)(1): 초상권·퍼블리시티·프라이버시 권리는 허가 대상에서 제외된다.** 이미지에는 얼굴이 보이는 사람이 찍혀 있다.
+  - 이 용도에 대해서는 모호하며, 상업 허가로 볼 수 없다.
+- **촬영 특성:** 0.5–4 m 거리에서 찍은 제스처 사진이고 얼굴과 상반신이 함께 나온다. test palm 5,000장 중 한 손만 나온 사진이 79.6%, user_id는 773명이다.
+- **해상도:** FullHD다. 손 bbox 긴 변의 중앙값은 약 318–351 px이고, 512 px 이상은 10–15%, 768 px 이상은 1% 미만이다. 손목→중지 MCP 거리 L의 중앙값은 약 83–140 px로, 손바닥 높이가 약 150–180 px밖에 안 된다. 손금 해상도가 부족하다.
+- **손목:** landmark 기준 100% 프레임 안에 있고, 손목에서 가장 가까운 가장자리까지 거리의 중앙값은 프레임의 0.3이다. 11K와 달리 손목 조건은 충족한다.
+- **다운로드:** palm.zip은 43.9 GB다. 필요할 경우 Range 요청으로 개별 파일만 받을 수 있지만 실행하지 않았다.
+- **판정 C인 이유:** 결정적 질문인 손금 해상도에서 전형적인 이미지가 실패한다(조건 9와 핵심 질문). 사용자 업로드 형태(손바닥 근접 사진)도 대표하지 못한다. 얼굴이 담긴 사진을 GPT에 보내는 것도 라이선스의 프라이버시 제외 조항 때문에 부적절하다. 상위 1% 미만만 고르거나 얼굴을 crop하는 방식은 대표성 훼손이나 프로토콜 변경이 되므로 제안하지 않는다.
+
+---
+
+# PALM-CV-EVAL-v1 — 11K Hands 데이터셋 준비 보고
+
+Status: PALM-CV-EVAL-v1 DATASET PREPARATION — **BLOCKED (DATASET NOT FROZEN, 0/8 accepted)** / CALIBRATION NOT STARTED
+
+Codex `85564ab`(A. FROZEN — READY FOR DATA COLLECTION) 이후 11K Hands를 데이터 출처로 쓰는 작업이다. 선택 알고리즘은 `ca58b00`에서 이미지를 보기 전에 고정했고, 감사 기록은 `a8ab6b6`이다. 모델 추론(CV/GPT/OpenAI) 0건, production 변경 없음, merge/push 없음.
+
+## 확보한 데이터
+
+- 공식 페이지(https://sites.google.com/view/11khands)의 공식 Google Drive 링크에서 받았다.
+  - `Hands.zip` 662,833,682 B, SHA-256 `f15b0d68…4631`
+  - `HandInfo.csv` 11,076행, SHA-256 `5f14f117…9eb9848`
+- 다운로드일은 2026-09-30이고 버전 표기는 없다. 저장 위치는 `~/palm-eval-data/11k-hands/`(저장소 밖)이다.
+- 이용 조건은 "FREE for reasonable academic fair use"와 저작권 가능성 문구뿐이고 명시적 라이선스는 없다. 상업 제품 프로젝트의 엔지니어링 평가가 이 범위에 들어가는지는 **미해결 질문**이다. 기록은 `evaluation/DATASET_PROVENANCE.md`에 있다. RESEARCH / EVALUATION ONLY이며 상업 권리는 없다.
+
+## 선택 절차
+
+- metadata 필터: palmar, accessories 0, irregularities 0. 결과는 3,921장, 참가자 170명이다.
+- 순서: seed `PALM-CV-EVAL-v1/11k-hands/selection`의 SHA-256 순위.
+- 참가자 중복을 금지하고, 좌/우 각 4장 상한을 둔다.
+- 제안된 후보마다 파일 한도를 자동 검사한 뒤, 사전 적격성 판단을 한 장씩 기록한다. 제안되지 않은 이미지에 대한 판단 기록은 오류로 처리한다.
+- 나이·성별·피부색은 사용하지도 기록하지도 않는다.
+
+## 결과: 중단
+
+- 처음 5개 제안이 모두 조건 3(손목/손바닥 경계가 보여야 함)으로 탈락했다. 이 중 2장은 조건 4(손가락이 굽음)도 해당한다.
+- 원인은 손을 위에서 늘어뜨린 채 찍어서 손바닥 아래쪽이 이미지 위 가장자리에 잘리는 데이터셋의 촬영 구도로 보인다. 동결 조건을 유지하면 후보군이 소진될 가능성이 크다.
+- 조건을 완화하는 것은 프로토콜 변경이다. 게다가 자동 ROI는 손목 landmark가 이미지 안에 있어야 하므로 이런 사진은 `hand-truncated`로 실패할 가능성이 높다.
+- 그래서 조건을 바꾸거나 예외 사진을 찾지 않고 중단했다. manifest와 P01–P08은 없다.
+
+## 검증
+
+- `test-select-dataset.ts`: 합성 metadata로 27개 검사 PASS. 결정성, 참가자 고유성, 좌/우 상한, 탈락→사유→다음 순위 교체, 파일 검사 자동 탈락, 후보군 소진, cherry-pick 방지, CSV를 확인했다.
+- 기존 회귀는 모두 PASS다: PoC 77, palm-extraction 146, palm-evidence 76, golden v1/v2/v3, saved-context 14, evidence-trace 218, patterns 74, identity-selection 97, catalog-v3 23. digest `25ab43b8`/`dab19aab`, tsc, lint도 통과했고, `app/`·root package diff는 없다.
+
+---
+
+# PALM-CV-EVAL-v1 — 평가 프로토콜 확정 보고
+
+Status: PALM-CV-EVAL-v1 PROTOCOL PREPARATION COMPLETE — CALIBRATION AND HELD-OUT EVALUATION NOT EXECUTED
+
+Codex 최종 준비 검수(`aa65a84`, B. READY AFTER SMALL FIXES, MINOR 3 / NOTE 1)의 후속이다. 문서와 빈 템플릿만 수정했다(`399e9c8`). CV 코드, 자동 ROI 알고리즘, 모델, production 코드는 변경하지 않았다. 유료/OpenAI 호출 0건, 8장 실험 미실행, merge/push 없음.
+
+## 수정 내용
+
+- **M-1 handedness/mirror:** 개념 다섯 가지를 분리해 기록한다.
+  - 해부학적 손: `anatomical_hand`
+  - 저장 이미지 반전: `stored_image_reflection`. 후면/셀피 카메라만으로 추정하지 않는다.
+  - 좌표계: EXIF-oriented original로 고정한다.
+  - landmark label: `landmark_reported_handedness`. 정보용이며 채점하지 않는다.
+  - 반전 적용 여부: `normalization_mirror_applied`.
+
+  채점 대상은 `canonical_orientation_correct`(yes/no/unreadable) 하나다. 기준은 debug 이미지의 정규화 입력이 손가락 위, 손바닥 쪽, 엄지·검지 왼쪽인지, 그리고 landmark/ROI가 원본 손 위에 있는지다. label과 해부학적 손이 달라도 오류가 아니고, `unknown`도 실패로 세지 않는다.
+- **M-2 선 위치 사전 기록:** R1과 R2는 모델 출력을 보기 전에 원본만 보고 4선 각각을 기록한다.
+  - visibility(visible/not-detected/unreadable)
+  - curvature와 continuity
+  - 위치: `location_points`. EXIF-oriented 원본 픽셀 좌표로 3–7점 ordered polyline을 `x:y;…` 형식으로 적고, 판단할 수 없으면 unreadable로 둔다.
+
+  R1/R2 기록은 보존한다. 불일치와 선택적 adjudication은 별도 `adjudication-template.csv`에 추가 필드로 둔다. 파일 hash는 모델 실행 전에 기록한다. 별도 annotation 도구는 만들지 않았다.
+- **M-2 segmentation 품질:** Life/Head/Heart마다 다음을 기록하고, 종합 점수는 만들지 않는다.
+  - `cv_B_detected`
+  - `cv_C_line_identity`(correct/incorrect/uncertain)
+  - `cv_coverage`(full-enough/partial/poor/unreadable)
+  - `cv_false_extension`(none/minor/major/uncertain)
+  - `cv_F_overlay_alignment`(aligned/misaligned/uncertain, registration만 판단)
+- **M-3 촬영/거절 조건:** 모델 실행 전 적격성 9항목을 확인한다.
+  - 손바닥 쪽, 한 손, 손목부터 손끝까지 전체, 손가락을 편 상태, 초점, 조명, 심한 반사 없음, 큰 가림 없음
+  - Phase 1B `PALM_IMAGE_LIMITS` 안의 파일, 손이 너무 작지 않을 것
+
+  교체는 추론 전에 사유를 기록한 경우에만 허용한다. 추론 후 생긴 실패는 결과로 남긴다.
+- **N-1 calibration:** P01–P02는 calibration, P03–P08은 held-out이다.
+  - letterbox는 지금 고정한다.
+  - calibration 대상은 곡률 임계값 하나다. 후보 0.05/0.08/0.12 가운데 identity가 correct인 선에서 일치 수가 가장 많은 값을 고른다. 동점이거나 사용할 수 있는 선이 3개 미만이면 0.08을 유지한다. 한 번만 결정하고 P03 전에 commit한다.
+  - held-out으로 재조정하면 v2가 된다.
+- **Continuity:** 사람과 GPT만 3상태로 비교한다. CV는 범주 결과가 없으므로 GPT-vs-CV continuity 정확도를 계산하지 않고, 연구 지표만 서술한다.
+- **Fate:** 사람과 GPT만 별도 표로 다룬다. CV는 `unsupported-by-model`이며 3선 비교와 분모에서 제외한다.
+- **공정성:** 같은 원본 SHA에서 GPT(고정 Phase 1B 준비, 1회 호출)와 CV(고정 자동 ROI, 1회 추론)를 실행한다. 결과를 보고 crop하거나 재실행하지 않고, 이미지별로 prompt나 파라미터를 바꾸지 않는다. 수동 crop은 별도 진단군이다.
+
+## FROZEN_CONFIG
+
+`scripts/palm-cv-poc/evaluation/FROZEN_CONFIG.md`에 다음을 기록했다.
+- CV/GPT 설정, 코드 blob hash, lockfile hash
+- 모델 SHA-256 6개
+- runtime 버전, ROI·회전·mirror·실패 규칙, letterbox, 60px 검출 기준, geometry
+- GPT model/prompt/schema/준비/timeout/maxRetries 0, 호출은 이미지당 1회
+- 2+6 split, 재조정 금지 규칙
+
+**PENDING CALIBRATION:** 최종 곡률 임계값과 calibration 근거(후보별 일치 수, 선택 이유).
+
+Evaluation version: **PALM-CV-EVAL-v1** (protocol, 템플릿 5개, FROZEN_CONFIG, README).
+
+## 검증
+
+코드 변경이 없어 새 테스트는 추가하지 않았다. 재실행 결과는 모두 PASS다.
+- PoC 77, palm-extraction 146, palm-evidence 76, golden v1/v2/v3
+- saved-context 14, evidence-trace 218, patterns 74, identity-selection 97, catalog-v3 23
+- digest `25ab43b8`/`dab19aab`, tsc, diff-check
+
+`git diff main..HEAD -- app package.json package-lock.json`는 비어 있다.
+
+---
+
+# Palm CV — Automatic Palm ROI Normalization PoC 보고
+
+Status: AUTOMATIC PALM ROI NORMALIZATION POC — IMPLEMENTED (evaluation only, not production) / 8장 비교 NOT EXECUTED
+
+브랜치 `experiment/palm-cv-poc`: 구현 `c50f510`(hand.jpg 실행 **전** commit), 프로토콜 `c3ad842`, 이 보고 commit. Codex 판정 B(`dbe3968`)의 후속. **RESEARCH / EVALUATION ONLY — COMMERCIAL RIGHTS NOT YET CLEARED.** production 경로와 연결하지 않았다. 유료/OpenAI 호출 0건, main merge·push 없음.
+
+## Landmark 기술
+
+| 항목 | 값 |
+| --- | --- |
+| 모델 | MediaPipe Hands **full** detector + landmark, Google TF.js graph model (Kaggle `mediapipe/handpose-3d` tfJs `detector-full`/`landmark-full` v1), Apache-2.0 |
+| Runtime | `@tensorflow-models/hand-pose-detection` 2.0.1 (tfjs runtime) + `@tensorflow/tfjs-backend-wasm` 4.22.0, 로컬 전용. PoC 폴더 `package.json`에만 추가 (앱 dependency 불변) |
+| 무결성 | 모델 5개 파일 SHA-256을 `landmarks.ts`에 고정, 로드 시마다 검증. `.models/`(git-ignored) |
+| 역할 | 입력 정규화 전용. 손금 추론에 사용하지 않음 |
+
+MediaPipe Tasks Vision(`@mediapipe/tasks-vision`, upstream과 같은 계열)은 Node에서 이미지 입력이 WebGL canvas(`_addBoundTextureAsImageToStream` → `getContext('webgl2')`)를 요구해 사용할 수 없었다. headless-gl 같은 네이티브 우회나 Python 서비스는 만들지 않았다. upstream 저장소의 `hand_landmarker.task`는 Google 공식 float16 v1 파일과 SHA-256 동일(`fbc2a300…`)함을 확인했다. TF.js CPU backend는 1장당 약 4초, WASM backend는 약 0.2–0.5초였고 landmark 좌표는 동일했다.
+
+## 정규화 규칙 (`normalize.ts`, 모든 이미지 동일, 이미지별 조정 없음)
+
+upstream `pipeline/hand_preprocess.py`·`generate_pseudo_labels.py`와 공개 model-input 예시(`docs/example1-4_input.png`)를 근거로 정했다.
+
+1. **검출:** EXIF 방향 정정 후 긴 변 ≤ 1024 px 사본(antialiased)에서 landmark, 원본 좌표로 환산. 손 정확히 1개, 21점 모두 유한·이미지 내부.
+2. **Rotation:** wrist(0)→middle MCP(9) 벡터 v가 정확히 위를 향하도록 단일 2D 회전. α = −90° − atan2(v.y, v.x), (−180°, 180°]로 정규화, 화면 시계방향 양수, 원점 기준. bilinear. upstream의 fingers-up 회전과 같은 축.
+3. **ROI:** 회전된 21 landmark bbox ± `0.12 × L` (L = |wrist→middle MCP|), 정수로 바깥쪽 반올림. 손가락 포함(upstream과 동일). 0.12는 upstream 공개 예시 4장의 면별 여백/L 16개 값의 중앙값이다. upstream은 해상도 의존적인 고정 100 px를 썼다. hand.jpg 실행 전에 확정했다. 이미지 밖 영역은 검정(upstream `warpAffine`과 동일).
+   - left/right boundary = 회전 좌표 min/max x of 21 landmarks ∓ 0.12L, top/bottom = min/max y ∓ 0.12L.
+4. **Handedness / mirror:** upstream 모델 입력은 손바닥이 보이는 왼손이며 검지 쪽이 왼쪽이다. 회전 후 x(index MCP 5) > x(pinky MCP 17)이면 mirror한다. 분류기 Left/Right label은 기록만 하고 사용하지 않는다. TF.js 분류기는 upstream 기준 예시 4장을 모두 "Right"로 표시하지만 upstream Tasks pipeline은 이를 "Left"로 맞췄다. runtime마다 label 규칙이 다르고 selfie를 가정하기 때문이다(Codex M-1 반영).
+5. **Model input:** `letterbox` — 균일 축척 + 중앙 검정 padding. upstream pseudo-label 경로의 `resize_with_padding`과 동일하다(공개 예시 입력에도 좌우 검정 띠가 보임). `--fit stretch`는 프로토콜 calibration 비교용으로만 남긴다.
+6. **Perspective warp 미사용:** rotation·crop·mirror·resize만 사용. perspective 변환은 측정 대상인 선 곡률을 바꿀 수 있다. 통제 실험에서 필요성이 확인될 때만 재검토한다. nonlinear 보정·enhancement·생성형 처리도 없다.
+
+## 좌표 변환
+
+- 연속 픽셀 좌표(픽셀 k = [k, k+1), 중심 k+0.5). original(EXIF 정정) → rotated = R(α)·p → roi = rotated − (roi.x, roi.y) → mirror x → roi.width − x → model = pad + roi·scale.
+- `originalToModel` / `modelToOriginal`는 정확한 역함수다(왕복 오차 < 1e-9 px, 테스트).
+- Overlay: 원본 각 픽셀을 model grid로 forward mapping(nearest)해 **원본 사진 좌표**에 그린다. letterbox padding은 선으로 취급하지 않는다.
+- Curvature 좌표계: main path를 역변환해 **original-image-pixels**에서 계산한다. rotation·mirror·translation은 길이를 보존하고, 보고 비율(arc/chord, deviation, residual)은 scale 불변이다. `continuityResearch`의 gap 비율만 512-mask 단위로 남는다(연구 지표).
+
+## 실패 상태 (fallback 없음)
+
+`no-hand`, `multiple-hands`, `insufficient-landmarks`, `hand-truncated`, `rotation-undefined`, `chirality-ambiguous`(|dx| < 0.2L), `roi-too-small`(< 128 px), `invalid-roi`(정수 아님/빈 영역/이미지 내부 < 50%). 실패하면 `outcome: normalization-failed`와 debug 이미지만 쓰고 segmentation을 하지 않는다(exit 3). 수동/전체 frame crop으로 자동 대체하지 않는다. PalmObservation으로 변환하지 않는다. 수동 `--crop/--mirror`는 `mode: manual-diagnostic`으로 구분 기록된다.
+
+## Whole-hand 로컬 테스트 (`~/palm-test/hand.JPG`, case HT01, 1회)
+
+로컬 실행, 네트워크·OpenAI 없음, 이미지 복사/업로드 없음. 규칙은 실행 전 commit `c50f510`로 고정했고 실행 후 파라미터를 바꾸지 않았다.
+
+| 항목 | 값 |
+| --- | --- |
+| Oriented image | 3024 × 4032 |
+| Normalization | ok — 손 1개(score 0.99), classifier label "Right"(미사용) |
+| Rotation | −3.46° |
+| Mirror | false (회전 후 index MCP가 pinky MCP보다 1178 px 왼쪽) |
+| ROI (rotated frame) | x 15, y −41, 3061 × 3876 (이미지 내부 97%), L = 1927 px, margin 231 px |
+| Model input | letterbox, content 404 × 512, padLeft 54 |
+
+| 선 | mask px | 결과 | experimental curvature | maxChordDeviationRatio | components |
+| --- | --- | --- | --- | --- | --- |
+| Life | 1084 | **non-zero, detected** | straight | 0.0549 | 1 |
+| Head | 1427 | **non-zero, detected** | curved | 0.1001 | 1 |
+| Heart | 1357 | **non-zero, detected** | straight | 0.0463 | 1 |
+| Fate | — | `unsupported-by-model` | — | — | — |
+
+- Timing(ms, 모두 cold): landmark model load 362, landmark detection 483, normalization plan 2, normalization+preprocess 1202, ONNX session 306, inference 164, postprocess 222, overlay 2736, debug 1138, total 6627. overlay/debug는 12MP PNG 인코딩 비용이 크며 평가 산출물 생성 시간이다.
+- 산출물(git-ignored): `scripts/palm-cv-poc/.output/HT01/{result.json, overlay.png, normalization-debug.png}`.
+- **해석 범위:** non-zero 검출은 "모델이 각 class에 픽셀을 할당했다"는 뜻일 뿐이다. 올바른 주름 위에 있는지(line identity)는 **아직 검증하지 않았다**. 개인정보 보호를 위해 Claude는 이 사진에서 나온 overlay/debug 이미지를 열어 보지 않았다. 사용자가 원본과 나란히 시각 확인해야 한다. 곡률 라벨(0.08 미검증)은 GPT smoke #1(life curved, head straight, heart curved)과 다르지만, 두 결과 모두 ground truth가 없어 어느 쪽도 정답으로 보지 않는다.
+- 개발 검증은 upstream 공개 예시만 사용했다: 기준 예시 자동 모드(회전 −1.36°, mirror false, 3선 검출), 같은 예시를 좌우 반전+35° 회전한 합성본(회전 −35.22°, mirror true로 복원, 3선 검출, 원본 좌표 overlay 정위치 확인), 수동 모드 결과가 이전 EX02와 동일(1634/1511/1308 px).
+
+## 테스트
+
+- `test-cv-poc.ts` **77 PASS** (기존 38 + 신규 39). 신규: 합성 landmark ROI 규칙·결정성, 회전 4각도, chirality 4조합, label 무시, 실패 코드 10종(no-hand, multiple-hands, 20점, NaN, truncated, rotation-undefined, chirality-ambiguous, roi-too-small, invalid-roi 2종), 변환 왕복 5조합(crop / +rotation / +mirror / +rotation+mirror / stretch), 수동 forward mapping, letterbox 배치, 실제 이미지 warp로 표시 픽셀 위치 4조합, EXIF orientation 6 + rotation + mirror, overlay 역매핑 위치·색, letterbox padding 무시, fallback 부재·perspective 부재 정적 검사, 로컬 landmark runtime의 no-hand 실패. 테스트 요약이 실패 시에도 PASS를 출력하던 문제를 수정했다.
+- 기존: palm-extraction 146, palm-evidence 76, patterns 74, identity-selection 97, catalog-v3 23, saved-context 14, evidence-trace 218, golden v1/v2/v3 PASS, digest selection `25ab43b8` / full `dab19aab`, tsc OK, build OK, lint 9(기존 동일, PoC 0).
+
+## 프로토콜 (M-2 반영, 실행 안 함)
+
+`evaluation/PROTOCOL.md` v2: 같은 원본 → GPT(기존 고정 준비 + 1회) / CV(자동 ROI + 1회). stage A 정규화, B 검출, C 선 identity, D curvature, E continuity(CV 미채점), F overlay, G latency(계측 범위 명시), H 실패 유형 분리. `unreadable`·ROI 실패·모델 검출 실패 상태를 명시했다. mirror는 촬영자가 기록한 해부학적 손과 대조한다. 수동 crop은 사전 동결 규칙의 진단 대조군으로만 별도 표에 둔다. calibration(P01–P02)에서 fit(letterbox/stretch)과 곡률 임계값만 동결한다. hand.jpg는 채점 사례에서 제외한다. `cases.csv`·`comparison-template.csv`를 갱신했다.
+
+## 불변
+
+PalmObservationBundle, parser, buildPalmEvidence, PalmVisionProvider, OpenAI provider, `/api/palm/analyze`, engine `'3'` / schema `2`, Identity/CoreTag/convergence/해석 규칙 변경 없음(`git diff main..HEAD -- app package.json package-lock.json` 비어 있음). Phase 1C 미착수. continuity 정책 유지, Fate `unsupported-by-model` 유지.
+
+---
+
+# Palm CV Comparison PoC — 구현 보고
+
+Status: PALM CV COMPARISON POC — IMPLEMENTED (evaluation only, not production) / 8장 비교 NOT EXECUTED
+
+브랜치 `experiment/palm-cv-poc` (기준 `main` `f8d41c7`, 미push). 위치 `scripts/palm-cv-poc/`. **RESEARCH / EVALUATION ONLY — COMMERCIAL RIGHTS NOT YET CLEARED.** production 경로(PalmObservationBundle·Evidence·Claim·CoreTag·Identity·convergence·Destiny Code·`/api/palm/analyze`)와 연결하지 않았다. 유료/OpenAI 호출 0건.
+
+## Artifact / runtime
+
+| 항목 | 값 |
+| --- | --- |
+| Source | `samuelwbarber/palm-line-reader` @ `bc48939f4deee6d8ff842bfde499396dab9c4830` |
+| File | `models/student_fp32.onnx` (재학습·양자화·수정 없음) |
+| SHA-256 | `3c02b88b82e54889d0ab2bf2ba108aec554a1b50759f7c7aaa45f2f114ed24ff` (`run.ts`가 매 실행 검증) |
+| 보관 | `scripts/palm-cv-poc/.models/` (git-ignored, 커밋 안 함) |
+| Runtime | `onnxruntime-node` **1.23.2** CPU, PoC 폴더 전용 `package.json` (앱 dependency 불변). 1.24+는 darwin/x64 binding이 없어 Intel Mac에서 실패 |
+| Preprocessing | sharp: EXIF autoOrient → (선택) 수동 crop → (선택) mirror → 512×512 plain bilinear resize(letterbox 없음) → RGB ImageNet mean/std → NCHW |
+| Classes | 0 background, 1 heart, 2 head, 3 life |
+| Fate | **모델 미지원** → `unsupported-by-model`로만 출력, 추론/생성하지 않음 |
+
+## License 상태
+
+- 코드: MIT. Weight: r/PalmReading 스크랩 이미지 + teacher pseudo-label로 학습 → 데이터/weight 권리 불명확.
+- 결론: **RESEARCH / EVALUATION ONLY / COMMERCIAL RIGHTS NOT YET CLEARED.**
+
+## 동작 확인 (로컬, 공개 참조 이미지만 사용)
+
+- 상류 README 예시 palm crop 3장(`docs/example2-4_input.png`): Life/Head/Heart 모두 검출, 각 1 component, overlay가 상류 reference overlay와 시각적으로 일치.
+- 시간(Intel Mac, cold): 전처리 ~28 ms, session 생성 ~340 ms, 추론 ~175–200 ms, 전체 ~1.2 s.
+- **핵심 발견:** crop되지 않은 전체 손 사진(`examples/example_input.png`, 손가락·배경·얼굴 포함)은 **모든 클래스 0 px**. 이 모델은 학습 때와 같은 palm crop(상류는 MediaPipe crop + 오른손 mirror)이 필요하다. PoC는 MediaPipe 없이 `--crop`/`--mirror` 수동 입력을 받고 결과 JSON에 기록한다.
+
+## Curvature (experimental raw metrics)
+
+main component → Zhang–Suen skeleton(+staircase 정리) → 최장 경로 → 원본 crop 픽셀 좌표로 환산 후: `pathLength`, `chordLength`, `arcChordRatio`, `maxChordDeviationRatio`, `meanChordDeviationRatio`, `lineFitResidualRatio`. 잠정 라벨 `experimentalCurvature`: max chord deviation ≥ 0.08 → curved, 너무 짧으면 `insufficient-support`. **미검증 임계값** — 비교 프로토콜에서 2장으로 calibration 후 동결.
+
+## Continuity — 판정하지 않음
+
+모델 학습이 pseudo-label을 단일 연결선으로 정리하고 작은 조각을 억제하므로 **mask가 연결됨 ≠ 실제 주름이 연속**이다. 따라서 연구용 수치만 출력: component 수/크기, 최대 component 비율, main skeleton endpoint/branch, 가장 가까운 조각까지 gap 비율, main path 위 class 확률(mean/min/저신뢰 비율/최장 저신뢰 run). continuous/interrupted 라벨은 만들지 않는다.
+
+## 실행 방법 / 출력
+
+```bash
+cd scripts/palm-cv-poc && npm install     # 모델 다운로드·검증은 README.md 참조
+npx -y tsx scripts/palm-cv-poc/run.ts --image <저장소 밖 경로> --case P01 [--crop l,t,w,h] [--mirror]
+npx -y tsx scripts/palm-cv-poc/test-cv-poc.ts
+```
+
+출력: `scripts/palm-cv-poc/.output/<case>/result.json`, `overlay.png`(legend 포함, PNG라 EXIF 없음). `.output/`·`.models/`·`node_modules/` 모두 git-ignored. 저장소 내부 이미지는 거부(`isRepositoryImagePath`). 네트워크 호출 없음, EXIF 출력 없음.
+
+## 8장 비교 harness — 준비만, 실행 안 함
+
+`scripts/palm-cv-poc/evaluation/`: `PROTOCOL.md`(동의 8장, 사람 2명 blind ground truth 선기록 → ADJ, 2장 calibration 후 동결, CV 로컬 실행, GPT는 별도 승인 후 1회/장), `cases.csv`, `ground-truth-template.csv|json`, `comparison-template.csv`. 채운 파일은 저장소 밖(`~/palm-eval/`)에 둔다.
+
+## 검증
+
+- `test-cv-poc.ts`: 38 PASS (합성 mask·이미지만 사용: empty, 직선, 곡선, 짧은 선, 다중 component, skeleton, 전처리 정규화/crop/mirror/EXIF orientation/잘못된 crop·이미지, malformed logits 5종, 합성 logits 분석, overlay EXIF 없음, 네트워크·production import 없음, 선택적 로컬 ONNX 추론).
+- 기존: palm-extraction 146, palm-evidence 76, patterns 74, identity-selection 97, catalog-v3 23, saved-context 14, evidence-trace 218, golden v1/v2/v3 PASS, diagnostic digest selection `25ab43b8` / full `dab19aab` 불변, `tsc` OK, `npm run build` OK, lint 9 (기존과 동일, 신규 0).
+- production 코드 변경 없음.
+
+---
+
 # Palm Live Smoke #1 — 기록
 
 Status: PALM LIVE SMOKE #1 — PASS (technical integration) / visual accuracy NOT YET EVALUATED

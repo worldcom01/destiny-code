@@ -1,3 +1,523 @@
+# Palm Phase 1C — Production Supplementary Analysis 설계 (2026-09-30)
+
+**A. PHASE 1C ARCHITECTURE READY — CLAUDE MAY IMPLEMENT**
+
+사용자의 새 로드맵에 따라 production 보조 분석을 먼저 구현한다. 기존 CV 평가 선행 계획을 대체하지만 PALM-CV-EVAL-v1의 동결 설정·검수·데이터 조사 기록은 보존한다. 이번 A는 아래 범위의 구현 승인이다. production 공개는 보안 gate·회귀·수동 검증을 통과한 뒤 별도로 판단하며, 시각 정확도 검증이 완료됐다는 뜻은 아니다.
+
+## 1. 실제 코드에 근거한 결정
+
+검토 기준: `experiment/palm-cv-poc` / `1cdb134`, production `main` / `f8d41c7`. 프로젝트 문서 5개, Palm 관찰/parser/adapter/provider/추출/route/이미지 검증, 분석·패턴·ActiveAnalysis·저장·공유·analytics를 확인했다.
+
+- `analyzeDestiny()`는 engine `'3'`, snapshot schema `2`. `trace`에서 파생한 패턴이 Identity 선택에도 사용되므로 Palm Evidence/Claim을 기존 trace에 추가하는 것도 격리를 깨뜨린다.
+- `buildPalmEvidence()`는 순수 관찰 adapter이며 unavailable 속성에 기본값을 만들지 않는다. 이를 보조 해석 내부에서 재사용하고 역할은 변경하지 않는다.
+- `/api/palm/analyze`는 현재 운영자 전용이다. secret 검증과 in-memory gate는 공개 비용 통제로 충분하지 않다. 사진 검증/준비·provider·parser는 그대로 재사용할 수 있다.
+- 저장은 `destiny_ai_v1` localStorage, 최대 10개. snapshot 저장 ID는 analysisId이며 legacy는 savedId를 쓴다. 기존 항목 재저장은 반환만 하고 덮어쓰지 않는다. Palm을 이 반환 동작에 기대어 저장하면 나중에 추가한 Palm이 유실된다.
+- `ActiveAnalysis`가 결과와 당시 입력 메타데이터를 함께 소유한다. Palm도 이 결과의 안정된 식별자에 연결하며 현재 입력 form, nickname, Destiny Code는 연결 키로 쓰지 않는다.
+- Supabase는 현재 결과 analytics와 운영자 조회에 쓰인다. 사용자 계정 기반 클라우드 결과 보관은 없으며 `analysis_results`의 anon INSERT 정책을 Palm 사진/관찰 저장에 재사용하면 안 된다.
+
+권장 흐름:
+
+```text
+기존 입력 → analyzeDestiny() → 변경 없는 AnalysisSnapshot / Identity / 기존 UI
+                                     ↓ 읽기 전용 비교 기준
+선택 사진 → 기존 이미지 검증 → GPT 관찰 → parser → buildPalmEvidence()
+                                              ↓
+                                결정적 PalmInterpretation
+                                              ↓
+                                SupplementaryComparison → 별도 UI/보조 저장
+```
+
+Palm 경로에서는 analyzeDestiny/selectIdentity/buildAnalysisTrace/buildAnalysisPatterns를 호출하지 않는다. Palm 태그를 result.coreTags나 trace.claims에 push하지 않는다.
+
+## 2. UX: 결과 화면의 선택 항목(C)
+
+기존 결과가 표시된 다음, 결과 요약 아래에 **손바닥 패턴 분석** 카드를 둔다. 기본 분석 흐름은 대기시키지 않는다. 버튼은 **사진 촬영**과 **사진 선택** 두 개다. 촬영 input은 `capture="environment"`, 선택 input은 capture 없이 둔다. accept는 지원 MIME(JPEG/PNG/WebP)로 제한하되 브라우저 힌트일 뿐 서버 검증을 대체하지 않는다.
+
+사진 선택 → 로컬 preview/촬영 안내 → 외부 처리 안내 확인 → 사용자가 **손바닥 분석하기**를 누를 때만 업로드한다. 자동 업로드·mount/refresh 시 자동 요청 없음. camera capture는 기기마다 동작이 다르므로 gallery 버튼을 항상 제공한다. 손바닥 한 손, 전체 손, 자연스럽게 편 손가락, 밝은 조명과 초점을 짧게 안내한다.
+
+카드 계층: (1) 관찰된 선 후보와 판독 가능 여부 (2) **상징적 해석** (3) 기존 결과와 **겹치는 관점 / 다른 방향의 관점 / 새롭게 살펴볼 관점**. 기술 JSON·confidence·전체 정확도 점수는 표시하지 않는다. 필요한 경우 '두뇌선(손바닥 중앙 선 후보)'처럼 일상 설명을 병기한다. 생명선으로 수명/건강, 운명선으로 직업 성공/미래를 단정하지 않는다.
+
+카드 입력부 및 결과 하단에 같은 짧은 문구: **“손바닥 분석은 AI 기반의 해석적 콘텐츠이며 과학적·의학적 판단이나 미래 예측을 제공하지 않습니다.”** MATCH는 정확도 인증이 아니라 두 상징적 해석의 겹침이라는 설명을 비교 제목 아래 둔다. 엔지니어링 beta나 미완성 도구처럼 표시할 필요는 없다.
+
+## 3. 해석 계약과 최소 규칙
+
+신규 `app/lib/palmSupplement.ts`에 보조 데이터 계약/엄격한 parser, `palmInterpretation.ts`에 고정 규칙을 둔다. 기존 `InterpretationClaim`은 CoreTag를 필수로 요구하므로 억지로 확장하지 않고 아래 별도 signal을 쓴다. CoreTag 타입은 **비교용 어휘**로만 type import한다.
+
+```ts
+type PalmInterpretationSignal = {
+  id: string;                    // ruleId에서 결정적으로 생성, 난수/시각 없음
+  line: PalmLineKey;
+  observedFeature: {
+    attribute: 'curvature' | 'continuity';
+    value: 'straight' | 'curved' | 'continuous' | 'interrupted';
+  };
+  interpretationKey: string;
+  ruleId: string;                // 예: palm.symbolic.head-straight@1
+  basis: 'symbolic';
+  trait?: CoreTag;               // 실제 result.coreTags에 추가 금지
+  text: string;                  // 고정 저작 문장, GPT 생성 금지
+  evidenceIds: string[];         // 해당 supplement 내부 buildPalmEvidence ID 참조
+};
+type PalmInterpretation = {
+  version: 1;
+  ruleVersion: 'palm-symbolic-1';
+  signals: PalmInterpretationSignal[];
+};
+type SupplementaryComparison = {
+  version: 1;
+  ruleVersion: 'palm-comparison-1';
+  basis: 'snapshot-coreTags' | 'unavailable';
+  baseTraits: CoreTag[];         // 비교 당시 복사본
+  items: Array<{
+    id: string;
+    signalId: string;
+    kind: 'MATCH' | 'TENSION' | 'UNIQUE';
+    counterpart?: CoreTag;
+    ruleId: string;
+    text: string;               // 당시 표시한 완성 문장 보존
+  }>;
+};
+```
+
+초기 rule catalog는 아래 **8개만** 구현한다. 손의 모양으로 실제 성격을 검증한 규칙이 아니라 제품이 저작한 상징적 읽기다. 문장은 질문/탐색 형태로 고정한다. ruleId/key는 각각 `life-continuous`, `life-interrupted`, `head-straight`, `head-curved`, `heart-straight`, `heart-curved`, `fate-continuous`, `fate-interrupted`를 사용한다.
+
+| 판독된 특징 | 비교용 trait | 고정 해석 문장 |
+| --- | --- | --- |
+| life continuity continuous | 없음 | “이어진 선을 일상의 리듬이라는 상징으로 읽어봅니다. 꾸준히 지키고 싶은 습관은 무엇인가요?” |
+| life continuity interrupted | 없음 | “나뉘어 보이는 선을 리듬의 전환이라는 상징으로 읽어봅니다. 잠시 쉬고 다시 시작하는 방식은 어떤가요?” |
+| head curvature straight | 분석적 | “곧은 흐름을 정리와 검토의 상징으로 읽어봅니다. 결정 전에 근거를 차근히 확인하는 편인가요?” |
+| head curvature curved | 창의적 | “굽은 흐름을 탐색의 상징으로 읽어봅니다. 익숙한 답 밖의 가능성도 살펴보는 편인가요?” |
+| heart curvature straight | 없음 | “곧은 흐름을 차분한 표현의 상징으로 읽어봅니다. 마음을 어떤 방식으로 전하고 싶나요?” |
+| heart curvature curved | 감성적 | “굽은 흐름을 감정 표현의 상징으로 읽어봅니다. 느낀 마음을 표현하는 방식은 어떤가요?” |
+| fate continuity continuous | 체계적 | “이어진 흐름을 순서 있게 쌓아가는 과정의 상징으로 읽어봅니다. 계획을 이어가는 방식은 어떤가요?” |
+| fate continuity interrupted | 없음 | “나뉜 흐름을 방향 점검의 상징으로 읽어봅니다. 목표를 다시 살펴보는 때는 언제인가요?” |
+
+순서는 기존 life/head/heart/fate. 최대 1 signal/line, 최대 4개. 위에서 사용하지 않은 curvature/continuity도 관찰 UI에는 표시하되 해석을 억지로 만들지 않는다. visible + 대상 속성 observed + available Evidence에만 rule을 적용한다. not-detected/unreadable/미지원 속성에 부정적 성격이나 보완 기본값을 부여하지 않는다. unusable은 signals 0개. partial은 읽힌 속성만 사용한다. evidenceIds는 해당 `palm:line:<line>:<attribute>`를 참조하며 전역 unique ID로 해석하지 않는다.
+
+## 4. 비교 기준: 저장된 snapshot.coreTags 읽기 전용
+
+CoreTags는 현재 엔진이 이미 확정한 공통 어휘이므로 가장 작은 비교 경계다. trace/AnalysisPatterns를 다시 계산하면 과거 버전 의미와 Identity 경로에 접근하게 되고, convergence만 쓰면 기존 결과의 넓은 관점을 불필요하게 버린다. 현재 병합 CoreTags와 관찰 해석을 비교하되 지지 강도/성격 검증으로 확대하지 않는다. tags가 많아 MATCH가 흔해질 수 있으며 이를 줄이려고 weight나 임의 threshold를 추가하지 않는다.
+
+- MATCH: signal.trait가 저장된 coreTags에 있는 경우. `counterpart`에 같은 tag를 기록한다.
+- TENSION: 고정 저작 쌍 **분석적↔감성적**, **창의적↔체계적**에 한해, signal의 대응 tag가 base에 있으면 생성한다. 이는 논리적 모순/상호 배제가 아니라 다른 관점이다. Identity conflict catalog를 가져오거나 수정하지 않는다.
+- MATCH와 TENSION은 동시에 성립할 수 있다. 각각 별도 item으로 보존한다. 예: 분석적 Palm signal과 base의 분석적/감성적은 두 관점 모두 표시한다. 둘 중 하나를 임의로 덮어쓰지 않는다.
+- 위 두 조건이 모두 없거나 trait 없는 signal은 UNIQUE 한 개. '이 결과에서 별도 비교 항목 없이 살펴볼 관점'이며 다른 사람에게 없는 특성이라는 뜻이 아니다.
+- 순서: signal 순서 → MATCH/TENSION/UNIQUE. 같은 signal/kind/counterpart 중복 제거. 난수·점수·확률·GPT 서술 없음. 문장은 고정 템플릿으로 만든다.
+- legacy AnalysisOutput에는 merged coreTags가 없다. **현재 규칙으로 재구성하지 않는다.** Palm 관찰/상징적 해석은 추가 가능하지만 comparison은 basis unavailable/items []로 저장하고 “이 저장 결과에는 비교 기준이 없어 손바닥 해석만 표시합니다.”라고 안내한다. schema 2의 engine v1/v2/v3 snapshot은 저장된 coreTags가 있으면 그대로 비교한다. trace 부재는 비교를 막지 않는다.
+
+## 5. 별도 저장과 결과 A/B 격리
+
+snapshot에 Palm 필드를 추가하지 않는다. `destiny_palm_supplements_v1`라는 별도 localStorage 키를 `palmSupplementStore.ts`가 소유한다. 사진 없이 bundle/interpretation/comparison/버전을 저장한다.
+
+```ts
+type PalmSupplement = {
+  version: 1;
+  id: string;                    // 완료한 시도 ID, crypto UUID
+  baseRef: { kind: 'snapshot' | 'legacy'; id: string };
+  createdAt: string;
+  bundle: PalmObservationBundle; // extraction metadata 포함
+  interpretation: PalmInterpretation;
+  comparison: SupplementaryComparison;
+  processingNotice: { version: 'palm-processing-1'; acceptedAt: string };
+  retention: 'derived-local-only';
+};
+```
+
+연결 키: snapshot은 **analysisId**, legacy는 **savedId**. kind까지 포함해 충돌 방지. legacy savedId 없는 임시 객체에는 부착을 허용하지 않는다. snapshot savedId와 analysisId가 다른 과거 항목도 baseRef는 analysisId로 유지하며 삭제 연동 시 이 차이를 고려한다. Destiny Code는 여러 분석에서 같을 수 있으므로 사용 금지.
+
+- 새 분석 Palm 성공은 메모리에만 두고 사용자가 결과 저장을 누를 때 `saveActive()`로 base를 먼저 저장한 후 supplement를 별도로 저장한다. base가 이미 저장돼 있어도 supplement 저장을 생략하지 않는다. 서버 사용자 결과 저장이나 Supabase analysis_results row 확장은 없다.
+- 저장된 결과에 Palm을 나중에 추가하면 “손바닥 결과 저장”을 별도로 제공한다. 기존 성공본을 재시도 실패로 지우지 않는다. 새 성공본을 명시적으로 저장할 때만 현재 supplement를 교체한다. 이전 base는 그대로다.
+- 앱 열기/저장 결과 열기는 저장된 interpretation/text/comparison을 그대로 읽는다. 최신 rule로 자동 재해석·backfill하지 않는다. parser가 알 수 없는 supplement version이면 base는 표시하고 보조 결과에만 읽기 제한을 안내한다.
+- 저장 실패/용량 초과 시 base 성공 여부와 Palm 저장 실패를 구분해 안내한다. 원자적 두-key 저장을 가장하지 않는다. base 존재 확인 후 supplement를 쓰며 읽기 때 orphan을 제거한다. base 삭제/10개 제한에 따른 eviction도 보조 기록을 정리한다. 로드 시 saved base 집합과 대조해 최대 10개 유지한다. localStorage 불가면 화면 내 기능만 유지하고 저장 실패를 알린다.
+- `ActiveAnalysis`에 baseRef를 계산하는 helper를 추가하고 `PalmSupplementPanel`은 그 key로 mount한다. request 시작 시 baseRef와 attemptId를 캡처하고 응답 수신 시 둘 다 현재 값과 일치해야 반영한다. A 처리 중 B 열기, 새 분석, 삭제, 더 늦게 도착한 이전 retry 응답은 모두 무시/abort한다. 네트워크 abort가 provider 과금을 취소한다고 보장하지 않는다.
+- 사진/preview URL/File/Buffer/base64/EXIF/image hash를 supplement나 localStorage/sessionStorage/profile/analytics에 넣지 않는다. preview URL revoke, 성공·취소·unmount 후 메모리 참조 해제. 브라우저 GC의 즉시 물리 삭제를 보장하지 않는다.
+- 공유는 Phase 1C에서 기존 `activeShareText()`만 유지한다. “공유에는 기본 운명 코드 결과만 포함됩니다.” 표시. Palm 사진/보조 내용·링크 공개, PDF 확장은 보류한다. compatibility/profile/기존 analytics도 base만 받는다.
+
+## 6. 공개 endpoint와 비용 통제
+
+새 사용자 계정 시스템은 만들지 않는다. `/api/palm/analyze`의 기존 operator 경로는 server-only secret으로 유지하되 공개 경로를 추가한다. operator secret을 브라우저 코드/env/프록시 요청 헤더에 넣거나 내부 HTTP로 endpoint를 다시 호출하지 않는다. 공통 이미지 준비·extract 함수를 직접 재사용한다.
+
+공개 접근:
+
+1. `POST /api/palm/session`: 정확한 허용 Origin을 서버 설정 `PALM_PUBLIC_ORIGIN`과 대조하고 same-origin 요청만 받는다. 랜덤 익명 session ID를 서명한 `__Host-palm_session` cookie(HttpOnly, Secure, SameSite=Strict, Path=/, Domain 없음, 최대 24시간)에 넣는다. 응답에는 session-bound CSRF token과 공개 enabled 상태만 반환한다. cookie 서명 키는 새 server-only secret으로 분리한다. no-store. 세션 발급 자체에도 IP별 제한을 건다.
+2. `/api/palm/analyze` 공개 분기: session 서명/만료, 정확한 Origin, CSRF custom header를 **body 읽기 전** 검증한다. cross-origin CORS 허용 없음. `Sec-Fetch-Site`가 있으면 same-origin만 허용하되 이것만 인증으로 쓰지 않는다. UUID request ID 및 처리 안내 확인 버전을 검증한다. 계정 소유권 인증이 아니라 익명 비용 통제 세션이라는 한계를 문서화한다.
+3. 공유 저장소 기반 atomic gate를 통과한 뒤 기존 MIME/signature/size/dimension/static-image/timeout 검사와 `extractPalmObservation()`을 호출한다. 기존 `PalmRequestGate`는 보조 instance 제한으로 남길 수 있지만 공개 gate를 대신하지 않는다.
+
+구현 선택: 기존 Supabase/Postgres를 재사용해 `supabase/palm-public.sql`에 **요청 ledger + 제한 counter/lease + atomic reserve/finalize RPC**만 추가한다. 서비스 키로 서버에서만 호출한다. anon/authenticated에 테이블 SELECT/INSERT/UPDATE와 RPC EXECUTE를 허용하지 않고 고정 search_path/최소 권한을 설정한다. 기존 공개 analytics table과 분리한다. 새 microservice/Redis/billing 시스템은 없다. 설정·DB 장애 시 공개 호출은 fail closed이며 base 분석은 정상이다.
+
+초기 보수적 기본 한도(통계적 근거/요금 추정이 아니라 운영 상한): session당 동시 1회·30초 간격·UTC 일 3회, 신뢰된 ingress IP의 일 HMAC당 일 10회, 전체 동시 2회·UTC 일 100회. 세션 발급 IP당 시간 10회. 서버 env로만 조정하고 client 값은 무시한다. 신뢰한 배포 proxy가 설정하는 IP만 사용하며 임의 X-Forwarded-For 첫 값은 신뢰하지 않는다. 신뢰 IP를 얻을 수 없는 배포에서는 public enable을 거부한다. NAT 사용자는 한도를 공유할 수 있으므로 429 메시지에 이를 단정하지 않고 나중에 시도 안내를 쓴다.
+
+전체 호출 수 cap과 4MB/2048px 준비/2000 output tokens가 비용 폭주를 제한한다. 세션 재발급/IP 분산을 막는 완전한 봇 인증은 아니며, 전체 cap이 마지막 안전장치다. 계정 인증·CAPTCHA는 초기 필수 아님. 남용이 발생하면 공개 kill switch를 내리고 추가 challenge를 별도 범위로 검토한다. `PALM_PUBLIC_ENABLED=false` 기본값; API key/DB/session secret/허용 origin/상한 설정이 없으면 켤 수 없다. 기존 운영자 분기도 provider 전역 일 cap에 포함해 공개 예산 제한을 우회하지 않게 한다.
+
+### 중복·동시성·재시도의 정확한 의미
+
+- UI는 uploading/processing 중 버튼을 잠그고 자동 retry 없음. 재렌더/refresh/저장 열기로 유료 요청을 실행하지 않는다.
+- ledger key는 session+requestId, 상태 reserved/provider-started/completed/failed/uncertain 및 시간·정규화된 오류 code만. 원본/관찰 응답은 서버 DB에 보관하지 않는다. 같은 ID는 다른 instance에서도 재실행 금지, 다른 payload로 재사용하면 409.
+- 검증/준비 후 `HMAC(serverKey, sessionId + prepared image bytes)` fingerprint를 서버에서 만들고 같은 session의 최근 성공/진행 중 동일 이미지를 차단한다(10분). 일반 raw SHA를 장기 보관하거나 cross-user 조회 키로 쓰지 않는다. 같은 이미지에 새 requestId를 붙여도 우회할 수 없다. 이미지 후보 변경까지 완전히 판별하는 유사도 시스템은 만들지 않는다.
+- 실제 provider 직전 atomic 예약으로 세션/IP/전체 호출 한도를 소모한다. TTL lease는 request 전체 deadline(30초)보다 길게 120초, 잔존 slot은 만료 정리한다. crash/timeout/응답 유실은 과금 가능하므로 consumed budget을 환불하거나 자동 재호출하지 않는다. SDK retry 0/provider deadline 20초/전체 30초/route maxDuration 40 유지.
+- 이 설계는 exactly-once provider 처리나 결과 복구를 보장하지 않는다. 같은 ID 재전송은 상태만 반환하고 다시 추론하지 않는다. 결과 유실이면 “결과를 받지 못했습니다. 재분석하면 새 요청으로 처리됩니다.”라고 안내한다. 사용자의 명시적 재시도만 새 ID로, cooldown/잔여 한도 내 허용한다. terminal failed/uncertain에는 동일 이미지 1회 retry 허용; completed 중복은 10분 이내 재호출하지 않는다. 이미 받은 성공 bundle은 UI 메모리에서 재사용한다.
+- 원본/응답 캐시를 새로 만들지 않는다. ledger/fingerprint는 최대 24시간, IP HMAC은 일별 회전, 주기 cleanup으로 삭제(만료행 접근 거부와 실제 삭제를 둘 다 구현). logs에 IP 원문·cookie·CSRF·이미지·bundle·provider 원문 오류를 남기지 않는다. 요청 ID/오류 code/시간 bucket만 사용한다. body capture/APM 설정도 점검한다.
+
+## 7. 실패·모바일 처리
+
+| 상황 | 동작 |
+| --- | --- |
+| 사진 없음/선택 취소 | idle, API 호출 없음 |
+| 지원 안 되는 형식/HEIC | 로컬 안내 및 서버 415/INVALID_IMAGE, JPEG/PNG/WebP로 다시 선택 |
+| 크기/해상도 상한 초과 | 413/IMAGE_TOO_LARGE 또는 현재 검증 code, 낮은 해상도 촬영/지원 크기 파일 안내 |
+| not-a-palm/unusable | 정상 bundle 200을 unusable UI로 처리, 해석/비교 생성 없음, 새 사진 선택 안내 |
+| partial/일부 unreadable | 읽힌 관찰만 표시·해석, 빈 선에 기본 태그 없음 |
+| provider timeout/error/invalid response | 기본 결과와 이전 성공 Palm 유지, 정규화된 메시지/수동 retry만 |
+| 429/중복/disabled | Retry-After 준수·상태 안내, 자동 반복 없음 |
+| 이동/삭제 중 늦은 응답 | abort + attempt/baseRef 검사로 폐기, 다른 결과에 반영 금지 |
+
+Phase 1C HEIC 선택은 **C: 명시적 안내 후 거부**다. 서버 codec 확장·클라이언트 HEIC 변환은 이번 범위에서 제외한다. 대형 사진도 현재 4MB/20MP/8000px 제한을 유지하며 무제한 브라우저 decode/canvas 변환을 추가하지 않는다. iPhone 호환 형식 촬영/지원 파일 선택 안내를 사진 버튼 옆에 둔다. 이 제한은 실기기 smoke에서 확인해야 하며 지원하지 않는 사진이 자동 변환된다고 약속하지 않는다. Android JPEG/static WebP와 PNG는 현 검증을 재사용한다. MIME/확장자만 믿지 않고 EXIF 정정은 서버에서 한 번 수행한다.
+
+## 8. 처리 안내와 개선 참여
+
+A(서비스 제공 처리)와 B(연구 자료 보관/재사용)는 분리한다. 전송 전 “선택한 사진은 손바닥 관찰을 위해 OpenAI로 전송됩니다. 서비스는 원본 사진을 별도로 저장하지 않습니다. 결과를 저장하면 관찰·해석은 이 기기에 보관됩니다.”와 상세 안내 링크를 제공하고 사용자의 명시적 분석 클릭/안내 확인을 받는다. 처리 notice version/time은 supplement에 남긴다. base 생년월일/MBTI/이름/Identity를 OpenAI에 함께 보내지 않는다.
+
+`store:false`는 OpenAI 측 모든 보관이 0이라는 뜻이 아니다. abuse monitoring 등 별도 보관 정책이 있으므로 “어디에도 저장되지 않음”을 쓰지 않는다. 배포 프로젝트의 실제 데이터 설정과 안내를 맞춘다. [OpenAI 공식 데이터 제어 문서](https://developers.openai.com/api/docs/guides/your-data)(2026-09-30 확인). 이 문구가 별도 개인정보 검토나 책임을 대체한다는 주장은 하지 않는다.
+
+**B의 실제 사진 수집은 연기한다.** Phase 1C에는 `improvementRetentionEnabled=false`로 두고 사진 보관 동의 checkbox를 활성화하지 않는다. 필요하면 상세 안내에 “개선용 사진 보관은 현재 하지 않습니다.”만 표시한다. 아직 수집하지 않으면서 “개선 참여 동의 완료”를 저장하거나 analytics opt-in 이벤트를 발생시키지 않는다. 미체크/기능 이용 여부와 무관하게 원본 보관 없음. 관심 표시를 수집하는 별도 흐름도 이번 범위에 넣지 않는다.
+
+향후 활성화 경로만 기록: 별도 명시적 선택 동의(policyVersion/purpose/grantedAt/withdrawnAt), private object bucket의 random contribution ID, owner deletion token의 hash, expiresAt, 원본/관찰/annotation 파생물 목록. 예시 보관 상한 30일은 출시 시 정책 확정 후 적용한다. 서명 URL·권한 분리·정기 삭제·철회 즉시 접근 차단/삭제 job·백업 보관/삭제 범위까지 준비한 뒤 UI를 연다. 익명 사용자도 삭제 영수증으로 요청할 수 있어야 한다. 재평가/외부 GPT 전송 범위가 동의에 포함돼야 하며 v1 실험에 자동 편입하지 않는다.
+
+## 9. analytics
+
+기존 `saveAnalyticsResult()` payload에는 Palm을 넣지 않는다. 새 `palmAnalytics.ts`의 allowlist 이벤트를 서버 endpoint `/api/palm/events`로 보내고 작은 별도 `palm_events` 테이블에 저장한다. server-only INSERT, payload schema/size·session/Origin·rate 제한, 실패는 UI를 막지 않는다. 기존 공개 anon INSERT 테이블에 추가하지 않는다.
+
+허용: palm_prompt_viewed(결과별 화면 세션 1회), palm_started, palm_success, palm_unusable, palm_error, palm_retry. 필드는 event enum, server timestamp, supplement version, coarse duration bucket, error-code enum, random event ID(중복 제거)만. 실제 API success/error는 서버를 기준으로 기록하고 클라이언트와 중복 집계하지 않는다. session/rate용 키는 이벤트 분석 테이블에 복사하지 않는다. image/line feature/trait/text/bundle/baseId/Destiny Code/닉네임/원본 IP/파일명은 금지한다. `palm_improvement_opt_in`은 미래 수집 기능 활성화 때만 발생한다. 미실시 동의를 성과 지표로 만들지 않는다. rollout 이벤트 보관은 30일 후 삭제, 집계 이후 개인 단위 연결 없음.
+
+## 10. 버전·이력·CV 경계
+
+기존 engine `'3'` / AnalysisSnapshot schema `2` / observation bundle `1` / EvidenceTrace 계약 그대로. 새 supplement version `1`, interpretation rule `palm-symbolic-1`, comparison rule `palm-comparison-1`, processing notice `palm-processing-1`을 분리한다. 해석 문장/비교 의미 변경은 해당 rule version을 올리고 새 결과에만 적용한다. 저장된 내용은 그대로 읽으며 Palm 제거/비활성화가 base를 바꾸지 않는다.
+
+현재 `experiment/palm-cv-poc` 전체를 production으로 합치지 않는다. Claude는 production main에서 별도 `feature/palm-supplement-phase1c` branch/worktree를 만들고 이 설계 문서 commit을 가져와 구현한다. PoC samuel weight/MediaPipe/ONNX/runtime/ROI 코드는 import하지 않는다. 향후 관찰 provider 비교는 별도 과제다. 고정 v1의 GPT 경로가 production 변경에 따라 달라지면 실험은 pinned revision에서 실행하고 protocol을 조용히 갱신하지 않는다.
+
+## 11. 파일별 구현 범위
+
+| 파일 | 필요한 작업 |
+| --- | --- |
+| `app/lib/palmSupplement.ts` (신규) | 위 보조 계약·버전·stored parser; 기존 bundle parser 재사용 |
+| `app/lib/palmInterpretation.ts` (신규) | 8개 authored rules, deterministic signals, available Evidence 참조 |
+| `app/lib/palmComparison.ts` (신규) | frozen coreTags 읽기·2개 저작 tension 쌍·legacy unavailable |
+| `app/lib/palmSupplementStore.ts` (신규) | 별도 localStorage 저장/읽기/삭제·orphan 정리·버전 검증 |
+| `app/lib/activeAnalysis.ts` | baseRef helper만; 기존 공유·save 의미 보존 |
+| `app/components/PalmSupplementPanel.tsx` (신규), `app/page.tsx` | 결과 카드·사진/안내/state·A/B isolation·별도 save; base delete/evict 후 보조 정리 |
+| `app/lib/server/palmPublicAccess.ts`, `palmPublicGate.ts` (신규) | signed anonymous session/CSRF/origin; Supabase atomic gate/ledger |
+| `app/api/palm/session/route.ts` (신규), `app/api/palm/analyze/route.ts` | session 발급·public/operator dispatch·feature gates |
+| `app/lib/server/palmExtraction.ts` | 기존 검증/추출을 작은 공통 함수로 분리해 중복 방지; operator/public 모두 같은 parser·deadline 사용 |
+| `supabase/palm-public.sql` (신규) | ledger/counters/RPC, event table, 접근 권한·만료 cleanup; 기존 analysis_results 정책 불변 |
+| `app/lib/palmAnalytics.ts`, `app/api/palm/events/route.ts` (신규) | 허용 이벤트만, 비차단 전송·제한 |
+| `scripts/regression-palm-supplement.ts`, `scripts/regression-palm-public.ts` (신규) | 아래 focused checks |
+| 배포 env 예시/운영 문서 | public off 기본값, 필요 서버 secret/Origin/DB/limits·삭제 job·kill switch; 값 출력 금지 |
+
+`analysis.ts`/Identity catalog/selection/convergence/evidenceTrace/profile/share/기존 baseline은 변경 대상이 아니다. 기존 storageEngine의 중복 저장 정책도 그대로 두고 연결 정리는 호출부/보조 store에서 한다. 새 UI 코드를 쓰기 전 repository AGENTS.md가 지시하는 설치된 Next.js guide를 읽는다.
+
+**MUST HAVE:** 선택 카드·외부 처리 안내·현재 형식 검증·관찰/상징 분리·결정적 해석/비교·Identity 격리·별도 저장/A-B 보호·공개 세션/atomic quota/dedup/kill switch·최소 이벤트·회귀/실기기 smoke.
+
+**DEFERRED:** 원본 연구 저장/활성 opt-in·HEIC codec/변환·사진 자동 축소·Palm 공유/PDF·클라우드 사용자 결과 저장·계정/결제/일반 plugin framework·GPT 성격 문장 생성·새 Pattern/Relationship Engine·Identity/CoreTag 통합·CV production·정확도 확률.
+
+Claude 구현 순서(최대 3단계):
+
+1. 순수 supplement 계약·8규칙·비교·store/baseRef와 focused 회귀를 구현한다. 앱 엔진 불변을 검증한다.
+2. 기존 관찰 경로를 재사용하는 public session/gate/DB migration/이벤트를 구현한다. public flag off에서 fake provider로 보안·중복·장애 테스트를 통과한다. 실제 인프라 반영이나 secret 발급은 로컬 구현과 구분한다.
+3. 결과 UI·저장/재시도 연결, 안내·모바일 한계를 완성하고 전체 회귀/build와 독립 검수를 받는다. 운영 DB 권한·공통 gate·삭제 job 준비 후 별도 승인된 최소 유료 smoke를 거쳐 공개한다.
+
+## 12. 필요한 검증과 공개 전 gate
+
+- 규칙: 같은 bundle 동일 signal/순서/ID, 8조건, unreadable/not-detected/unusable/partial/미매핑 속성, Evidence 참조 정확성. 숫자 confidence/건강·수명 결론 없음.
+- 비교: match/tension/unique, match+tension 공존, 없는 trait와 legacy unavailable, base 입력 freeze/deep equality. Palm 유무/실패/삭제/재시도 전후 Identity/CoreTags/convergence/trace/narrative/Destiny Code byte equality.
+- 저장/UI: base A 처리 중 B 열기/새 분석/삭제/연속 retry/늦은 응답, savedId≠analysisId, legacy 저장, 나중에 Palm 저장, duplicate base save, failed retry 이전 성공 보존, quota/storage 실패, 10개 eviction/orphan, unknown version, 사진 없음. 공유/profile/compatibility는 기존 결과 그대로.
+- endpoint: feature off/missing config/DB unavailable fail closed, cookie 위조/만료/다른 세션, Origin·CSRF 오류, spoofed IP, body 전 gate, signature/크기/animation/EXIF/HEIC 거부, timeout/parser 오류, unusable 정상응답.
+- 비용: 서로 다른 두 서버 gate 인스턴스가 같은 DB에 동시에 같은 ID/이미지 요청 시 provider 최대 1회, UUID 재사용 payload 충돌, session/IP/global 경계, lease/crash/uncertain, 손상된 ledger·RPC 실패에서 호출 0회, 명시적 retry만 새 예산 소모. 단순 mock Map 테스트만으로 분산 제한을 검증했다고 하지 않는다. disposable DB/transaction 검증을 포함한다.
+- 비저장: localStorage/DB/log/analytics/오류 출력에 사진·base64·EXIF·관찰 원문 없음(사용자가 저장한 local supplement의 검증된 관찰만 허용). opt-in 비활성 확인. ledger/fingerprint/event cleanup 및 RLS/anon 접근 차단 확인.
+- 기존 golden v1/v2/v3와 saved-context/evidence-trace/patterns/identity-selection/catalog-v3/palm-evidence/palm-extraction 회귀 전부, TypeScript/build/변경 lint/diff-check. golden baseline 수정 금지.
+- 수동 smoke: iPhone 카메라·갤러리·HEIC 안내·큰 사진, Android JPEG/WebP, 취소/실패/저장 재열기·A/B·공유·429/disabled를 먼저 mock으로 검사한다. 운영 환경의 Origin/cookie/DB/RLS/cleanup 설정 확인 후 **별도 승인된 동의 사진 1회**로 live end-to-end를 확인한다. retry나 두 번째 사진이 필요하면 호출 수를 따로 명시한다. 시각 결과는 사람 확인 전 정확도 보증으로 쓰지 않는다.
+
+이번 설계 작업은 문서만 작성했다. 앱 코드/테스트/baseline 수정, 유료 API 호출, merge/push 없음. 새 회귀/build를 실행한 것으로 보고하지 않는다. 기존 engine v3에 대한 변경을 승인하지 않는다.
+
+
+---
+
+## 이전 검수 기록 (PALM-CV-EVAL-v1 포함, 원문 보존)
+
+# PALM-CV-EVAL-v1 — 프로토콜 동결 한정 재검수 (2026-09-30)
+
+**A. PALM-CV-EVAL-v1 FROZEN — READY FOR DATA COLLECTION**
+
+이전 검수 `aa65a84`의 MINOR 1~3 및 NOTE 1을 모두 종료한다. 남은 차단 항목 없음. 이는 데이터 수집을 시작할 수 있다는 판정이며 calibration·held-out 평가 완료나 유료 API 호출 승인이 아니다. 최종 곡률 임계값과 calibration 근거는 사전 선언된 유일한 동결 예외다.
+
+## 범위와 확인 증거
+
+- 브랜치 `experiment/palm-cv-poc`, 검수 HEAD `79fdb62`, 수정 `399e9c8` 및 보고 `79fdb62`를 `aa65a84..HEAD` diff로 확인했다. CURRENT_PHASE/CODEX_REVIEW/CLAUDE_REPORT, PROTOCOL/FROZEN_CONFIG 및 평가 템플릿 전부를 읽었다. 새로운 아키텍처 검토로 확대하지 않았다.
+- diff는 문서·빈 템플릿만이다. production 및 CV 실행 코드·모델·테스트·baseline 변경 없음. `git diff main...HEAD -- app package.json package-lock.json`도 비어 있다.
+- 동결된 CV/GPT 코드 blob 10개, root/PoC lockfile SHA-256 2개를 현재 파일과 대조해 모두 일치했다. ONNX 1개와 landmark 5개의 artifact hash가 구현 상수와 일치한다. 모델 파일을 다시 다운로드하거나 추론하지 않았다.
+- CSV 열 개수와 고유 키 검사 PASS: cases 8행, GT 64행(8×2×4), 비교 32행(8×4), adjudication 128행(8×4×4). JSON 파싱 PASS. Fate와 continuity의 사전 입력값이 올바른 열에 있다. `git diff --check aa65a84..HEAD` PASS.
+- 이번은 문서 한정 재검수이므로 회귀/build는 다시 실행하지 않았다. 이전 독립 검수의 통과 기록은 아래에 보존하며 Claude의 재실행 보고를 이번 독립 실행으로 표시하지 않는다.
+
+## 종료 판정
+
+| 항목 | 결과 | 확인 내용 |
+| --- | --- | --- |
+| MINOR 1 | CLOSED | PROTOCOL §3과 cases/비교 템플릿이 해부학적 손·저장 반전·landmark label·mirror 적용·canonical orientation을 분리한다. label 불일치와 unknown은 정규화 실패가 아니다. 원본의 실제 손 및 debug 정규화 입력을 보고 canonical 방향을 채점한다. |
+| MINOR 2 | CLOSED | §4에서 R1/R2는 원본만 독립 판독하고 visible 선마다 EXIF 정정 원본 좌표의 3–7점 polyline 또는 위치 unreadable을 남긴다. R1/R2는 불변, 불일치/ADJ는 별도 파일이다. 모델 실행 전 R1/R2/ADJ 파일 hash를 기록한다. §8 및 비교 템플릿은 검출·identity·coverage·false extension·registration을 분리하며 CV 곡률 일치는 identity-correct에 한한다. |
+| MINOR 3 | CLOSED | §2에 손바닥 한 손·전체 손·펴진 손가락·초점·조명·반사·가림·파일 크기/해상도·영상 내 손 크기를 명시한다. 사전 적격성과 교체 사유를 기록하며 추론 후 실패는 교체·삭제하지 않고 분모에 남긴다. |
+| NOTE 1 | CLOSED | §1/6에서 P01–P02 calibration, P03–P08 held-out을 고정한다. letterbox 등은 조정하지 않는다. 후보 0.05/0.08/0.12 중 GT와 identity-correct 선의 일치 수 최대값을 선택하며 동점 또는 usable 선 3개 미만이면 0.08이다. P03 실행 전 값·근거를 commit하고 held-out으로 재조정하지 않는다. n=8/채점 n=6의 탐색 한계를 명시한다. |
+
+## 동결 설정·공정성 확인
+
+**FROZEN_CONFIG: PASS.** source revision, 모델/코드/lockfile hash, runtime, ROI/회전/mirror/실패 규칙, letterbox/RGB/resize, segmentation, geometry, retry와 GPT 정확한 모델·prompt/schema·이미지 준비·20,000ms timeout·maxRetries 0·이미지당 1회를 고정했다. 최초 파일 추가 commit은 `399e9c8`로 해석되며, 이후 calibration 기록 commit과 구별 가능하다.
+
+`PENDING CALIBRATION`은 (1) 최종 곡률 임계값, (2) 후보별 일치 수/선택 근거뿐이다. 수집할 사진/GT hash와 실제 실행 장치의 로그는 관측 기록이며 알고리즘을 바꾸는 추가 가변 설정이 아니다. P01 이후 다른 설정 변경은 v2로 분리하고 v1 결과를 덮어쓰지 않는다.
+
+calibration은 저장된 raw `maxChordDeviationRatio`로 후보를 비교하므로 ONNX 재실행이 필요 없다. 채점 시 사전 결정한 최종 threshold를 사용하며 기존 코드의 잠정 0.08 라벨과 혼동하지 않는다. 기존 `insufficient-support`를 유효 곡률로 바꾸는 허용도 아니다. 고정 코드에서 추출한 raw metric과 동결된 채점 threshold를 구분해 기록한다.
+
+**공정성: PASS.** 동일 원본 SHA, GPT 고정 준비+1회 / CV 고정 자동 ROI+1회. 결과를 보고 crop·재실행·이미지별 parameter/prompt 변경 금지. 수동 crop은 사전 규칙의 별도 진단군이며 자동 결과를 대체하지 않는다. calibration에서도 fit 비교를 제거해 letterbox를 고정했다.
+
+**continuity/Fate: PASS.** CV categorical continuity accuracy 없음. 사람-GPT continuity만 평가하고 CV 연결성은 연구 지표다. Fate는 사람/GPT 별도 표, CV `unsupported-by-model`, 직접 3선 분모 제외다.
+
+**production isolation: PASS.** production 수정·Phase 1C·merge·push 없음. 유료 API 호출 **0건**, 데이터 수집·calibration·8장 평가 미실행. RESEARCH / EVALUATION ONLY — COMMERCIAL RIGHTS NOT YET CLEARED 유지.
+
+다음 단계: 동의 사진 8장을 수집해 사전 적격성을 기록하고, 블라인드 R1/R2·ADJ와 hash를 준비한 뒤 P01–P02 calibration으로 유일한 보류 값을 확정한다. GPT 호출에는 별도 승인이 필요하다.
+
+---
+
+## 이전 검수 기록 (원문 보존)
+
+# Automatic Palm ROI + CV Evaluation Readiness — 최종 독립 검수 (2026-09-30)
+
+**B. READY AFTER SMALL FIXES**
+
+**CRITICAL 0 / IMPORTANT 0 / MINOR 3 / NOTE 1.** 자동 ROI 구현은 소규모 통제 실험에 사용할 수 있다. 아래 M-1~M-3은 실험 시작 전 필요한 평가 문서·빈 템플릿 수정이다. 알고리즘 재구현이나 production 보강을 요구하지 않는다. 현재 프로토콜을 그대로 실행하는 승인은 아니며, 수정·동결 후 8장 비교로 진행한다. 모델 폐기나 GPT/CV 우열을 결정할 근거는 없다.
+
+## 검수 기준과 독립 실행 결과
+
+- 브랜치 `experiment/palm-cv-poc`, 검수 HEAD `27a12b958c8ec8ced6c129465599869bc0e81b96`. 이전 검수 `dbe3968` 이후 구현 `c50f510`, 프로토콜 `c3ad842`, 보고 `27a12b9`의 실제 diff와 주변 코드를 대조했다. 프로젝트 문서 5개 및 이전 검수 기록을 읽었다.
+- `test-cv-poc.ts`: **77개 개별 검사 PASS**. 마지막 전체 PASS 요약은 별도 assertion으로 세지 않았다. 합성 입력의 실제 로컬 ONNX 추론과 손 없는 이미지의 MediaPipe 실패 검사도 실행됐으며 skip이 아니다.
+- 기존 회귀 직접 실행: golden v1/v2/v3 7 cases, saved-context 14, evidence-trace 218, analysis-patterns 74, identity-selection 97, identity-catalog-v3 23, palm-evidence 76, palm-extraction 146 모두 PASS. baseline 재생성 없음.
+- `tsc --noEmit`, PoC TS 전체 ESLint, `git diff --check` PASS. build 결과는 아래 최종 검증 기록에 기재한다.
+- `git diff main...HEAD -- app package.json package-lock.json` 및 golden baseline 3개 diff 없음. branch 변경은 격리된 PoC와 문서뿐이다. 추적 파일에 원본 사진/model weight/overlay/node_modules 없음.
+- 이번 검수는 실사진 HT01을 열거나 다시 추론하지 않았다. 보고된 non-zero 픽셀·3선 곡률 불일치를 실제 정확도 검증으로 취급하지 않는다. 유료 API 호출 **0건**, 8장 평가 미실행, merge/push 없음.
+
+## 1. 자동 ROI와 mirror
+
+`landmarks.ts`는 EXIF 정정 후 긴 변 최대 1024px에서 로컬 TF.js full 모델로 검출하고 원본 좌표로 환산한다. 2개까지 검출해 다중 손을 실패로 구분한다. `normalize.ts`는 손 1개/21점/유한값/이미지 경계, 회전축, chirality, ROI 크기·내부 비율을 검사한다. 실패 후 manual/full-frame fallback은 없다.
+
+wrist(0)→middle MCP(9)를 위로 회전하고, 회전된 21점 bbox에 `0.12 × L` 여백을 더해 바깥쪽 정수 반올림하는 규칙은 결정적이다. 0.12의 공개 예시 4장 유래는 Claude 보고 근거이며 이번에 16개 측정값을 재측정하지 않았다. 이 규칙을 탐색 실험 전에 고정하는 데 충분하며 일반화 성능을 입증하지는 않는다. 원근 보정·선 생성·이미지별 crop 최적화는 없다.
+
+회전 후 `index MCP.x > pinky MCP.x`이면 반전하는 방식은 손바닥 사진의 **영상상 방향**을 통일하는 데 적절하다. classifier의 Left/Right label을 결정에 쓰지 않는 구현도 맞다. 손등은 이 규칙의 적용 대상이 아니며 프로토콜의 palm-side 조건으로 제외한다. 모델 자체가 손등을 확실히 거부한다고 보장하지 않는다.
+
+### M-1 — MINOR: 해부학적 손과 영상 반전을 혼동한 채점 규칙
+
+- 위치: `scripts/palm-cv-poc/evaluation/PROTOCOL.md:50`, stage A(`:81`), `comparison-template.csv`의 `cv_A_mirror_matches_hand`.
+- 현재 문서는 selfie/unknown 촬영을 허용하면서 `right hand ⇒ mirrored`와 불일치하면 정규화 오류로 처리한다. 동일한 오른손 사진을 저장 단계에서 좌우 반전하면 해부학적 손은 그대로지만 올바른 `mirrored` 값은 반대다. 정상 구현을 오류로 채점할 수 있다.
+- 필수 수정: 해부학적 손과 저장 이미지 반전 여부를 분리 기록한다(`stored_image_reflection = mirrored/non-mirrored/unknown`). 후면/셀피 카메라 구분만으로 저장 반전 여부를 추정하지 않는다. 원본의 엄지·검지/새끼손가락 위치와 fingers-up 정규화 후 canonical index-left 여부를 사람이 확인해 `canonical_orientation_correct = yes/no/unreadable`로 기록한다. unknown은 해부학적 일치 실패로 계산하지 않는다. 검출 landmark의 자기 일치만 검사하지 말고 원본과 debug의 실제 손 위치도 대조한다.
+- 코드의 geometric mirror는 유지한다. 단순화하려면 반전되지 않은 저장 이미지만 사전에 확인해 모집하는 대안도 가능하나, 선택한 입력 범위를 명시해야 한다.
+
+## 2. 변환과 overlay 무결성
+
+EXIF 정정 → 원점 기준 회전 → ROI 원점 이동 → 선택 mirror → letterbox/stretch 순서가 실제 전처리와 좌표 함수에서 일치한다. mirror는 연속 좌표 `width - x`, 픽셀 중심은 `k + 0.5`로 처리한다. letterbox의 정수 content 크기에 따른 실제 x/y scale과 padding을 역산에 사용한다.
+
+`<1e-9 px`는 연속 좌표 정·역함수 합성 오차이며 래스터 이미지 복원 오차가 아니다. 같은 수식의 왕복만으로 검증을 끝내지 않았다. 실제 Sharp 입력/warp의 표식 픽셀 이동(±2px), EXIF orientation 6 + 회전 + mirror, 실제 overlay layer의 위치·색(±1.5px), padding 마스크 제거 검사도 통과했다. 원본 픽셀을 model grid로 보내 nearest mask를 sampling하는 overlay 방식은 역방향 scatter의 빈 구멍을 피하고 올바른 원본 위치에 합성한다. 출력은 EXIF 정정된 원본 크기의 PNG다.
+
+따라서 이번 실험의 변환 기반은 타당하다. 모든 EXIF 방향·모든 실사진의 위치 정확도를 보증하거나 landmark 오차까지 검증한 것은 아니다. 사람이 원본/debug/overlay를 확인하는 stage A/F는 계속 필요하다.
+
+## 3. Segmentation 및 블라인드 ground truth
+
+`maskPixels >= 60`은 모델 검출 여부이며 올바른 선인지의 증거가 아니다. 현재 A~H 분리, 잘못된 주름의 곡률 일치를 정답에서 제외하는 규칙, ROI 실패의 전체 분모 유지, Fate 별도 표는 적절하다. 다만 아래 기록을 추가해야 요청한 평가를 실제로 재현할 수 있다.
+
+### M-2 — MINOR: 선 위치의 사전 기록과 false extension 기록 누락
+
+- 위치: `evaluation/PROTOCOL.md:25` 및 `:83`, `:86`; `ground-truth-template.csv|json`, `comparison-template.csv`.
+- 두 사람이 모델을 보기 전 status/curvature/continuity를 기록하는 과정은 있지만 **선 위치를 남기는 절차가 없다**. 이후 overlay를 보고 선 정체를 판단하면 위치 기준이 출력에 끌릴 수 있다. `correct/wrong-crease/partial/missing`만으로는 올바른 선의 거짓 연장을 별도로 집계할 수 없다. stage F의 “physical crease 위”는 선 선택 오류와 좌표 정합 오류도 섞는다.
+- 필수 수정: R1/R2가 원본의 Life/Head/Heart/Fate 후보 위치를 간단한 polyline 또는 양 끝점+중간점으로 **모델 공개 전에** 저장하도록 한다. 새 annotation 도구는 필요 없다. 저장소 밖 주석 이미지/좌표 파일을 case ID로 연결하고 CSV와 함께 hash를 동결한다. 위치도 합의 불가하면 unreadable로 남긴다. 원본 R1/R2는 보존하고 ADJ는 별도 기록한다.
+- 비교 템플릿에 최소 `false_extension = yes/no/unreadable`과 `partial_detection = yes/no/unreadable`을 추가한다. line identity는 사전에 기록한 후보 위치와 비교하고, false extension은 사람 후보의 끝을 넘어 근거 없이 이어진 부분으로 평가한다. 단순 wrong-crease와 중복 발생할 수 있어 별도 flag로 둔다.
+- stage F는 **모델 입력의 mask가 원본의 대응 위치로 옮겨졌는지**를 평가한다. 틀린 주름을 정확히 원위치에 그렸다면 identity 실패 / registration 성공일 수 있다. landmark/debug/normalized input과 overlay를 대조하고 판독 불가는 별도 기록한다.
+- GPT는 위치 좌표를 출력하지 않으므로 line-localization 정확도는 n/a다. 이름이 있다는 이유로 위치 정답을 부여하지 않는다. 속성 일치는 ADJ와 별도로 계산한다.
+
+두 사람이 독립 판독한 뒤 불일치 flag·속성별 원시 일치율·ADJ를 남기는 현재 구조는 유지한다. Fate는 사람/GPT만 평가하고 직접 3선 비교 분모에서 제외한다. 어떤 시스템이 맞는지는 HT01의 세 라벨 불일치만으로 결정하지 않는다.
+
+## 4. 촬영 조건
+
+### M-3 — MINOR: 수집 전 최소 입력 조건 누락
+
+- 위치: `evaluation/PROTOCOL.md:11`, `cases.csv`.
+- 손바닥/한 손과 다양성은 적혀 있지만 전체 손, 손가락 자세, 초점·조명·가림·최소 해상도의 공통 조건이 없다. 결과를 본 뒤 선별하거나 두 경로의 입력 적격성을 다르게 판단할 여지가 있다.
+- 필수 수정: 손바닥 한 손, 손목부터 손가락 끝까지 프레임 내부, 손가락을 자연스럽게 펴기, 주요 손바닥 영역에 초점, 판독 가능한 조명, 심한 반사·가림 없음으로 수집 전 조건을 고정한다. 옅은 선·다양한 피부색·보통의 조명 편차는 유지하며 완벽한 사진만 고르지 않는다.
+- 해상도/파일 조건은 새 임의 기준 대신 현재 `PALM_IMAGE_LIMITS`를 공통 적격성 기준으로 사용한다: 방향 정정 후 짧은 변 ≥640px, ≤20,000,000 pixels, 긴 변 ≤8,000px, 입력 ≤4,000,000 bytes, JPEG/PNG/WebP. 손이 프레임에서 너무 작지 않은지도 모델 공개 전 사람이 확인한다. 확대·enhancement로 조건을 맞추지 않는다.
+- case별 사전 적격 여부/사유를 기록한다. 사전 부적격은 모집 단계에서 기록하고, 동결 후 발생한 ROI/provider/검출 실패는 실패로 남기며 대체 사진·재시도로 빼지 않는다. 손등은 수집 단계 제외한다.
+
+## 5. 곡률·continuity·공정성
+
+원본 좌표 main path의 chord/path length, normalized maximum chord deviation, line-fit residual은 탐색 지표로 사용할 수 있다. largest component/skeleton 주경로에 의존하므로 관찰한 전체 선의 정답 곡률이라는 보장은 없다. `maxChordDeviationRatio >= 0.08`은 **미검증 임계값**이며 production에 승격하지 않는다. 짧은 chord의 insufficient-support도 실패/보류로 보존한다.
+
+**N-1 — NOTE: calibration 2장으로 검증된 임계값을 얻는 것은 아니다.** 2장은 탐색 설정 선택에는 쓸 수 있지만 정확도 추정 근거가 아니다. P01/P02를 calibration, P03~P08을 held-out으로 사전 지정하고 최종 6장 결과를 본 뒤 임계값·전처리를 변경하지 않으면 다음 개발 여부를 판단할 탐색 실험으로 충분하다. n=8, 채점 n=6으로 모집단 정확도나 GPT 우월성을 주장하지 않는다.
+
+권장 최소 운영은 `letterbox`를 시작 전에 고정하고 두 calibration 사진에서 0.08 유지/1회 조정만 결정하는 것이다. 임계값 후보·선택 기준과 tie 시 0.08 유지 규칙은 calibration 출력을 보기 전에 기록한다. 현재 문서처럼 fit 두 후보를 비교하려면 **P01/P02에 한한 사전 등록된 calibration 예외**라고 명시한다. 각 후보 1회, 별도 case/run ID로 결과 보존, 한 후보 선택 후 재실행 금지이며 P03~P08에는 후보당 반복이 없다. 이는 좋은 결과를 얻기 위한 retry와 구분한다. 후보 선택 기준도 출력 공개 전 정한다. held-out을 보고 재보정하려면 새 실험이다.
+
+CV는 연결 component/gap/path probability를 `continuityResearch`로만 출력한다. `continuous/interrupted` PalmObservation을 만들지 않으며 연결 마스크가 원본의 틈을 보존한다고 가정하지 않는다. 사람 continuity와 GPT continuity만 직접 일치율을 계산한다.
+
+동일 원본 SHA → GPT 고정 Phase 1B 준비/고정 prompt/1회 호출, CV 고정 자동 ROI/1회 ONNX가 주 비교다. SDK `maxRetries: 0`도 확인했다. 수동 crop은 출력 전에 규칙·좌표를 고정한 별도 진단군이며 자동 실패를 대체하지 않는다. GPT에 CV crop을 주는 새 arm이나 이미지별 prompt 변경은 없다.
+
+## 6. 수정 후 동결할 manifest
+
+**현재는 보완 대기이며 아래는 동결 명세다. 실제 동결 완료나 8장 실행 완료로 표시하지 않는다.** M-1~M-3을 프로토콜/빈 템플릿에 반영한 commit과 아래 설정을 첫 모델 출력 전에 기록한다. 원본·GT·동의 자료는 저장소 밖에 보관한다.
+
+| 항목 | 동결할 값/범위 |
+| --- | --- |
+| 구현 | 검수 `27a12b9`의 PoC 코드와 production GPT 경로; 최종 프로토콜 commit, root/PoC lockfile hash, Node/Sharp/runtime 버전 및 실행 장치 기록 |
+| Landmark | TF.js full detector/landmark v1, hand-pose-detection 2.0.1, TF.js core/converter/WASM 4.22.0, WASM backend, maxHands 2, staticImageMode true, flipHorizontal false, 검출 긴 변 최대 1024 |
+| ROI | wrist 0→middle MCP 9 수직 회전; 회전된 21점 bbox ±0.12L; outward floor/ceil; 원점 기준 회전; perspective 없음 |
+| Mirror/실패 | 회전 후 index 5.x > pinky 17.x이면 mirror; label 미사용; chirality separation ≥0.2L, ROI 최소 변 128px, 내부 비율 ≥0.5(현 32×32 샘플 방식), 기존 실패 검사/fallback 없음 |
+| CV 전처리 | EXIF autoOrient, RGB, bilinear crop/resize, 외부 검정, 512²; 기본 letterbox와 현재 정수 content/pad 규칙; calibration fit 비교를 선택하면 P03 전에 최종 하나 기록 |
+| ONNX | student_fp32, upstream revision `bc48939f4deee6d8ff842bfde499396dab9c4830`, onnxruntime-node **1.23.2**, `[1,3,512,512]` float32 /255, mean .485/.456/.406, std .229/.224/.225; classes background/heart/head/life |
+| Mask/geometry | ≥60px 검출, component 연구 기준 20px, 현재 largest component/skeleton/mainPath, 원본 좌표 곡률, 최소 chord 0.1×ROI 대각선; 임계값 초기 0.08 및 calibration 후 최종 값/이유/commit |
+| GPT | `gpt-4.1-2025-04-14`, adapter `openai-responses-1`, prompt `palm-vision-ko-1`; `PALM_VISION_INSTRUCTION`/`PALM_OBSERVATION_JSON_SCHEMA`/parser를 해당 commit 그대로, detail high, max_output_tokens 2000, store false, maxRetries 0; 현재 preparePalmImage/제한·timeout도 그대로 |
+| 데이터/채점 | P01~P08 원본 SHA, calibration/held-out 구분, 수정된 입력 조건·GT 주석·ADJ hash, A~H 분모/보류 정책, cold/warm 측정 범위와 실행 순서; n=8 탐색/n=6 채점 |
+| 실행 | 주 arm 각 1회, 결과별 crop/prompt/threshold 변경 금지, 실패 포함, retry/대체 금지; calibration의 추가 fit 실행은 사전 등록한 경우에만 별도 보존 |
+
+모델 SHA-256(로드 전 검사 구현 확인):
+
+```text
+student_fp32.onnx
+3c02b88b82e54889d0ab2bf2ba108aec554a1b50759f7c7aaa45f2f114ed24ff
+handpose-detector-full/model.json
+846fd959511d3a58501d2c975f0d265824aa2af8d96bfa7d434103b5176022f2
+handpose-detector-full/group1-shard1of1.bin
+42aa34ed1e4d66f40707e4ba8522620ee517093616624cf1cf1ea3a033380d46
+handpose-landmark-full/model.json
+63af90ae19c3b36e96be83d69e723a6b9312772ccc4cbb09a52a61c34a89aca5
+handpose-landmark-full/group1-shard1of2.bin
+f39aafa43217644549dea77b85fc845e2139784b865e81ef4aa26828019dc58e
+handpose-landmark-full/group1-shard2of2.bin
+464523210c22f996b5cb9d8ea775d5077dd442ae3b87833944a2660b50ed2b25
+```
+
+## 7. 결과 보고·권리·production 경계
+
+결과는 정규화 성공/실패, 검출 여부, 선 identity/partial/false extension, GPT·CV 각각의 사람 GT 대비 곡률 일치, GPT continuity 일치, CV continuity 연구 지표, overlay registration, pipeline failure, latency를 분리한다. CV curvature는 identity-correct 조건부 결과와 전체 입력 대비 성공률을 모두 남긴다. human-unreadable은 별도 subset, Fate는 별도 표다. 총괄 accuracy 한 값으로 합치지 않는다. cold/warm은 섞지 않고 CV total에서 overlay/debug 시간을 별도로 구분해 GPT의 prepare+provider+parse와 비교한다.
+
+**RESEARCH / EVALUATION ONLY — COMMERCIAL RIGHTS NOT YET CLEARED.** 기존 권리 미확인 상태를 유지한다. 이번 검수는 새 라이선스 조사나 상업 승인이 아니다. 연구 표시가 사진 동의나 모델/학습 데이터 권리를 대신하지 않는다.
+
+PalmObservationBundle, parsePalmObservationBundle, buildPalmEvidence, PalmVisionProvider, OpenAI provider, `/api/palm/analyze`, engine `'3'`, schema `2`, Identity/CoreTags/convergence/해석·저장 정책은 변경되지 않았다. Phase 1C 미착수. 이번 변경은 CODEX_REVIEW/CURRENT_PHASE 문서만이다.
+
+다음 단계: Claude가 M-1~M-3의 프로토콜·템플릿만 보완 → 동결 manifest 기록 및 재확인 → 동의 사진과 블라인드 GT 준비 → 별도 유료 호출 승인 후 비교. production 코드 수정이나 추가 모델 개발은 필요 없다.
+
+
+## 최종 검증 기록
+
+- `npm run build`: 최초 sandbox 실행은 Google Fonts(Geist/Geist Mono) 다운로드 연결 제한으로 실패했다. 네트워크 접근을 허용한 동일 명령 재실행은 compile/TypeScript/정적 페이지 생성 모두 PASS였다. 이를 앱 코드 결함으로 분류하지 않는다.
+- PoC 77개, golden v1/v2/v3, 기존 회귀 7종, TypeScript, PoC lint, diff-check 모두 통과했다. 문서만 변경했고 실험 프로토콜/템플릿 자체는 고치지 않았으므로 M-1~M-3은 후속 작업으로 남는다.
+- **최종 판정 B. READY AFTER SMALL FIXES.** 구현은 유지하고 평가 문서의 세 항목을 수정·동결한 뒤 진행한다.
+
+---
+
+## 이전 검수 기록 (원문 보존)
+
+# Palm CV Comparison PoC — 독립 검수 (2026-09-30)
+
+**B. POC APPROVED — ADD MINIMAL AUTOMATIC PALM ROI NORMALIZATION BEFORE 8-IMAGE COMPARISON**
+
+**CRITICAL 0 / IMPORTANT 0 / MINOR 2 / NOTE 2.** 격리된 로컬 segmentation/기하 연구 기반으로 승인한다. 8장 본 비교를 지금 수동 최적 crop으로 실행하거나 production에 연결하는 승인이 아니다. 다음 단계는 작은 자동 ROI 실험과 아래 프로토콜 보완이다. 모델을 폐기하거나 GPT 역할을 확정할 근거도 없다.
+
+## 검수 범위와 실행 증거
+
+- 브랜치 `experiment/palm-cv-poc`, HEAD `6e4e927`. `f8d41c7..6e4e927`의 구현 `c66a63f`, 비교 프로토콜 `7ae9110`, 보고 `6e4e927`을 직접 읽었다. 요구된 docs 5개와 이전 아키텍처 검토를 대조했다.
+- `app/`, root package/lock diff 없음. PalmObservationBundle/parser/buildPalmEvidence/PalmVisionProvider/OpenAI/API/Identity/CoreTag/convergence/engine/schema 수정 없음. engine `'3'` / schema `2` 유지.
+- PoC 테스트 **38 PASS** 직접 실행(기존 로컬 모델의 합성 이미지 추론 포함). TypeScript 검사, PoC 4개 TS 파일 ESLint, `git diff --check` 통과. production build/전체 기존 회귀는 이번에 재실행하지 않았으며 Claude 보고값을 독립 실행 결과로 대체하지 않았다.
+- 실제 model SHA-256은 `3c02b88b82e54889d0ab2bf2ba108aec554a1b50759f7c7aaa45f2f114ed24ff`로 상수와 일치. 로컬 installed ORT는 `1.23.2`; PoC package 및 lock pin 확인. 모델을 다시 다운로드하지 않았다. CLI는 session 생성 전 checksum을 검사한다. 이 검사는 로컬 파일이 지정 artifact와 일치하는지 확인하며 upstream의 서명/권리까지 입증하지 않는다.
+- `/tmp` 합성 probe로 비대칭 crop+mirror 입력, offset crop의 overlay 역매핑을 추가 검사했다. 실사진·기존 private overlay는 열거나 추론하지 않았다. 따라서 상류 예시 3장 성공과 full-hand 1장 0-pixel은 Claude 보고 관찰이며 이번 독립 사진 재실험 결과는 아니다.
+- source의 외부 네트워크/OpenAI/Supabase 호출 없음; 합성 ONNX 추론은 네트워크 제한 환경에서 성공했다. 정적 regex가 모든 transitive runtime 통신을 증명하는 것은 아니며 packet capture는 하지 않았다. 유료 API 호출 0건.
+
+## 1. 격리·개인정보·권리
+
+`run.ts`는 입력을 저장소 외부 canonical path로 제한하고, case ID로만 output 경로를 만든다. `.models/`, `.output/`, PoC `node_modules/`의 git-ignore를 `git check-ignore`로 직접 확인했다. `git ls-files`에 model/image/overlay/node_modules 없음. 원본을 복사하거나 base64/EXIF를 로그에 남기는 경로가 없다. `.output/<case>`에 JSON과 overlay를 **의도적으로 로컬 저장**하므로 production Phase 1B의 비저장 정책과 구분한다. ignore는 보관/접근 통제·삭제 정책이 아니며 `git add -f`나 다른 경로에 복사하는 것까지 막는다고 표현하지 않는다. 실제 동의 사진 결과는 접근 제한과 평가 종료 후 삭제 계획이 필요하다.
+
+`renderOverlay`는 새 PNG를 만들고 metadata 보존 옵션을 사용하지 않으며 EXIF 없음 검사가 통과했다. 원본 사진은 저장소 밖에서 그대로 검사 가능하다. 연구 자료를 production Evidence로 전달하지 않는다.
+
+**RESEARCH / EVALUATION ONLY — COMMERCIAL RIGHTS NOT YET CLEARED** 표시는 적절하다. MIT 코드와 Reddit 원본 사진, teacher 학습 데이터/모델, student weight 권리를 분리해야 한다. 상업 사용 전 모델 배포·사용 범위, 수집/학습/재배포 권리, 필요한 notice와 encoder/runtime 의무를 확인해야 한다. 이 검수는 연구 목적이라는 표지만으로 데이터 권리가 해결됐다고 승인하지 않는다.
+
+## 2. 전처리 일치 범위와 whole-hand 0-pixel의 해석
+
+`segment.ts:preprocess/validateLogits`는 RGB, /255, ImageNet mean/std, NCHW float32 `[1,3,512,512]`, 512² plain linear resize, class 순서와 logits `[1,4,512,512]`/finite 검사를 올바르게 적용한다. [고정 revision model metadata](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/models/model_meta.json)의 **tensor 입력/출력 계약과 일치**한다. Sharp linear와 browser canvas/OpenCV의 경계·downsampling pixel까지 bitwise 동일하다는 뜻은 아니다. EXIF 방향 정정은 명시적이고 실제 metadata를 기준으로 crop 좌표를 해석한다.
+
+그러나 **tensor 전처리 일치 ≠ 학습 사진 framing 완전 일치**다. [상류 hand_preprocess.py](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/pipeline/hand_preprocess.py)는 wrist→middle MCP 축을 위로 회전시키고 **21 landmark bbox+여백**을 crop한다. palm-only ROI라고 단정할 수 없으며 손가락이 포함될 수 있다. 원래 VM 구현을 복구하지 못해 재구성한 코드라는 설명도 있다. handedness Left는 미러 입력 convention에 따라 일관성을 맞춘 label이며 해부학적 왼손의 절대 보증이 아니다.
+
+또한 [generate_pseudo_labels.py](https://github.com/samuelwbarber/palm-line-reader/blob/bc48939f4deee6d8ff842bfde499396dab9c4830/pipeline/generate_pseudo_labels.py)는 정규화된 RGB crop을 `resize_with_padding(...1024²)` 후 512²로 저장한다. metadata의 'no letterbox'는 최종 student resize와 맞지만, 저장된 학습 입력에 앞 단계 padding이 없었다는 증거는 아니다. 현재 weight의 실제 학습 manifest가 없어 어느 경로가 얼마나 쓰였는지 확정하지 않는다. 이전 아키텍처 문서의 'crop 필요'도 이 한계를 반영해 읽어야 한다.
+
+따라서 보고된 full-hand 0-pixel은 framing/scale/orientation/chirality 민감성 **가능성과 일치**하지만 palm-only crop이 원인 또는 유일한 해결책임을 입증하지 않는다. crop 예시 성공은 tensor/class 연결이 전반적으로 틀렸을 가능성을 낮추지만 위 변수를 분리하지 않는다. 임의로 letterbox를 production 정답으로 변경할 이유도 아직 없다. 고정 전처리 두 후보의 작은 로컬 진단으로 결정해야 한다.
+
+### M-1 — MINOR: 입력 domain과 좌우 방향의 문서 단정 수정
+
+- 위치: `scripts/palm-cv-poc/README.md` Limitations 1, Run의 --mirror; `segment.ts`/`run.ts`의 'expects LEFT palm' 설명, `docs/ai/CURRENT_PHASE.md`의 'crop이 없으면 검출 0'.
+- 입증 근거: 위 upstream bbox+margin / reconstruction / handedness convention 및 pseudo-label padding 코드. 전체 손 한 장과 여러 crop 예시는 동일 사진 전처리 ablation이 아니다.
+- 조치: '보고된 특정 full-hand 예시에서 0; 전처리 domain 차이를 의심하며 원인은 미분리'로 한정한다. mirror 기준은 known non-selfie/selfie test 이미지로 검증한 canonical rule로 동결한다. 해부학적 right면 무조건 flip이라는 일반화를 자동화에 복사하지 않는다. POC 폐기 사유는 아니다.
+
+## 3. 기하 metric·skeleton 수정
+
+기본 식은 연구용으로 타당하다. pathLength는 인접점 유클리드 거리 합, chord는 endpoint 거리, arc/chord는 그 비율, chord 이탈은 수직거리/C, line-fit residual은 PCA/TLS 직선의 RMS/L이다. 원래 crop의 width/height로 x/y를 각각 환산해 비등방 512 resize를 보정한다. reflection은 길이·곡률을 바꾸지 않는다. 가장 큰 component만 측정한다는 선택 범위는 해석에 반드시 남긴다.
+
+Zhang–Suen 이후 staircase 정리는 대각선에서 불필요한 branch 판정을 줄인다. 38개 중 합성 대각 직선에서 endpoint 2 / branch 0 및 충분한 chord/path가 실제 통과했다. 이전 bug 수정 자체를 모든 형태의 topology 보존 증명으로 보지는 않는다. branch/cycle/교차점 전체에 대한 검증은 없다.
+
+**0.08은 미검증 threshold다.** 현재 experimental 표시는 유지해야 한다. 임계값은 P01–P02에서만 교정하고 P03–P08에서는 바꾸지 않는다. 직선처럼 보이는 가장 큰 fragment만 남은 경우 전체 선의 curvature가 정확하다는 보장은 없다.
+
+### N-1 — NOTE: 경로와 수치의 수학적 한계
+
+`geometry.ts:mainPath()` 주석의 'Longest path'는 일반 graph에 대한 정확한 최장 경로가 아니다. double-BFS는 unweighted tree에서 diameter이며 branch/cycle가 있는 skeleton이나 비등방 좌표에서 기하학적 최장 경로를 보장하지 않는다. mean deviation/RMS는 arc-length 균일 재표본화가 아닌 pixel 점 평균이다. `continuityResearch()` gap 비율은 512 mask 좌표이며 crop-pixel curvature와 좌표계가 다르다. 현재는 raw research metric으로 허용하되 모델 간 정확도 지표나 calibrated physical measure로 승격하지 않는다. 다음 단계에서 branch/cycle는 플래그로 분리하고 similarity transform 불변성·대표 branch 사례를 시험하는 정도면 충분하다.
+
+## 4. Continuity와 Fate
+
+mask component 수/크기, filtered largest share, skeleton endpoint/branch, 가장 가까운 component 간 거리, 선택된 main path의 softmax 통계는 연구 지표로만 출력된다. continuous/interrupted PalmObservation은 생성하지 않는다. 외부 mask에 존재하지 않는 실제 gap은 main-path probability 분석으로 복구할 수 없으며 softmax도 calibrated confidence가 아니다. largestComponentShare의 분모는 최소 20pixel 이상 남은 component 합이지 모든 foreground가 아니다.
+
+Fate는 `unsupported-by-model`로만 출력하며 모델에 가짜 네 번째 선을 추가하지 않는다. human/GPT Fate 결과는 별도 표로 유지하고 세 선 CV 점수의 분모에 넣지 않는다. 향후 Fate를 GPT에 자동 위임하는 정책은 결정하지 않는다.
+
+## 5. Overlay와 테스트 품질
+
+`renderOverlay()`는 512 mask → crop 크기 nearest resize → mirror 해제 → EXIF-oriented 원본의 crop offset composite로 역변환한다. 합성 offset ROI에서 mirror=false는 예상 왼쪽 위치, mirror=true는 예상 오른쪽 위치에만 색이 나타나고 ROI 밖에는 나타나지 않았다. 비대칭 입력의 crop+mirror probe도 예상 색을 유지했다. 원본 크기/legend class 대응은 맞는다. 실제 손금과 일치하는지는 이번 검수에서 사진으로 평가하지 않았다.
+
+legend가 좌상단 원본 일부를 가리고 mask alpha가 세부를 덮으므로 사람은 저장소 밖 원본을 **나란히** 보아야 한다. overlay만으로 정답을 기록하지 않는다. 원본을 추가로 저장소에 복사할 필요는 없다.
+
+38개는 합성 전처리·tensor·malformed logits·기본 geometry·EXIF·실제 ONNX output shape를 확인하는 유용한 최소 테스트다. 단, crop와 mirror는 각각만 검사하고 overlay 검사는 metadata/크기만 본다. 다음 normalization 변경 시 **EXIF+offset crop+mirror의 비대칭 pixel 역매핑**, rotation+inverse overlay, ROI 실패, mirrored/selfie 방향, 짧은/분기 skeleton을 추가한다. 모델 checksum 변경 거부는 문자열 포함 검사보다 CLI 실행 경로에서 한 번 검증하는 편이 낫다.
+
+### N-2 — NOTE: 정적 isolation 검사와 성능 증거 범위
+
+`test-cv-poc.ts`의 network 정규식은 의존성 내부까지 보증하지 않는다. 'tracked 파일 없음' 검사는 실제로 폴더 최상단 목록 검사라 nested Git index 감사를 대신하지 못한다. 이번 검수에서는 별도로 `git ls-files`와 check-ignore를 확인했다. runtime/asset setup의 다운로드와 실제 이미지 추론을 구분한다.
+
+Intel Mac의 전처리 28ms/session340ms/inference180ms/total1.2s는 저자 측 단일 환경 보고다. browser WebGPU/WASM·모바일·Vercel의 성능으로 외삽할 수 없다. CLI total은 checksum과 process startup을 제외하고 postprocess/overlay를 포함한다. geometry의 component 거리 계산은 mask 형태에 따라 커질 수 있다. 재실행 benchmark를 했다고 주장하지 않는다.
+
+## 6. 공정한 비교 프로토콜 보완
+
+### M-2 — MINOR: 비교표가 판독 불가·단계 실패·시간 범위를 혼합
+
+- 위치: `scripts/palm-cv-poc/evaluation/PROTOCOL.md:49`의 'visible vs not'와 `:54`의 provider ms / total ms, `comparison-template.csv`.
+- 재현 가능한 의미 차이: human unreadable인 선을 단순 not-visible로 축약하면 CV mask 없음이 올바른 관찰처럼 집계될 수 있다. CV는 quality-aware 3-state 관찰을 반환하지 않는다. 현 GPT smoke의 elapsed는 prepare+provider+parser이고 provider-only가 아니다. CV total에는 overlay/postprocess가 들어간다. 표대로면 서로 다른 시간을 같은 latency로 비교한다.
+- 최소 조치: human visible/not-detected/unreadable 3상태를 유지한다. CV는 detected/no pixels를 별도 기록하고, GT 판독 가능 subset의 검출 민감도/오검출과 GT unreadable subset의 출력·abstention 부재를 따로 보고한다. 선 ID가 틀린 경우 curvature 수치가 맞아도 올바른 선 관찰로 성공 처리하지 않는다. 속도는 각 pipeline의 end-to-end와 전처리/추론/overlay를 구분하고 계측 범위를 명시한다.
+- ROI 검출/정규화 성공, segmentation 성공, 선 ID, 속성 지원/불충분, overlay 위치, runtime 오류를 각각 기록한다. 실패한 ROI를 제외한 조건부 정확도와 전체 입력 대비 성공률을 함께 제시한다. 이 보완은 normalization PoC와 함께 하고 8장 scoring 전에 동결한다. 현 로컬 추론 기반을 다시 만들 사유는 아니다.
+
+현재의 'crop은 모델 출력 전 결정', 2명 blind GT, 2장 calibration 후 6장 scoring, 재시도 금지, Fate/CV continuity 제외는 유지한다. 그러나 crop의 구체적 영역·여백·회전·좌우 결정 규칙이 없어 사람별 유리한 crop 차이가 남는다. 수동 crop은 다음처럼 제한된 진단 대조군으로만 사용한다: 모델 출력 미열람 상태에서 정해진 손 기준점과 여백 공식 적용 → crop/mirror 좌표와 버전·이미지 hash를 저장소 밖 manifest로 동결 → 실패 포함 1회 실행 → 같은 case 재최적화 금지. 결과를 자동 product pipeline 점수와 합치지 않는다.
+
+주 비교는 동일 원본에서 GPT의 기존 준비 경로와 **자동 정규화 포함 CV**를 각각 1회 실행한다. 각 방식의 고정 전처리가 다른 것은 실제 pipeline 비교로서 허용되지만 사람의 추가 도움은 주 비교에 넣지 않는다. 같은 ROI를 양쪽에 주는 별도 모델-only 비교를 원하면 별도 실험군과 추가 유료 호출 승인이 필요하다. 이번 8회 계획에 묵시적으로 추가하지 않는다. GPT correctness도 같은 ADJ 기준으로 평가한다.
+
+## 7. 다음 구현 단계: 최소 자동 ROI PoC (이번에는 구현 안 함)
+
+[MediaPipe Hand Landmarker](https://developers.google.com/edge/mediapipe/solutions/vision/hand_landmarker)를 첫 후보로 권고한다. 랜드마크는 손금이 아니므로 quality나 line visibility 정답으로 사용하지 않는다. 생산 UI/서버와 격리된 현 실험 폴더 또는 별도 로컬 도구 안에서 진행한다.
+
+1. **전처리 domain 고정:** calibration용 자료에서 upstream과 같은 hand bbox+margin을 기준으로 시작하고 wrist→middle MCP의 2D 회전, chirality 통일을 구현한다. margin 좌표계·원본 해상도 규칙을 기록한다. 원본 해부학적 hand label만으로 mirror하지 말고 selfie convention을 합성/known-hand fixture로 검증한다. 이미지 원본 dimensions, orientation, landmarks, crop bounds, rotation/reflection/scale matrix와 실패 이유를 기록한다. 여러 손·landmark 없음·잘림·너무 작은 ROI는 실패로 보고하며 수동 rescue는 별도 진단만 허용한다.
+2. **transform 검증:** 회전+translation+선택적 reflection+crop까지만 시작한다. perspective homography는 우선 제외한다. 입력 512 resize와 상류의 앞 단계 padding 차이는 2장 calibration에서 고정 후보로 비교한 뒤 한 규칙을 동결한다. 추가 warp로 곡률을 바꾸지 않는다. mask는 inverse transform으로 원본 좌표에 overlay/geometry를 복원한다. 자동 ROI가 palm-only여야 한다고 미리 정하지 않는다.
+3. **8장 비교 준비:** M-1/M-2 문서·표를 보완하고 regression fixtures를 추가한 뒤 자동 ROI 성공률을 확인한다. 동일 원본, 출력 전 고정한 사람 GT, P01–P02 calibration / P03–P08 untouched scoring, 실패와 미지원 분모 보존을 적용한다. 그 후 별도 승인된 GPT 8회만 실행한다. 8장은 feasibility pilot이며 production accuracy 승인 표본이 아니다.
+
+이 방향을 선택하는 이유는 0-pixel 한 건만이 아니라 자동 제품 입력에서 필요한 scale/orientation 처리가 현재 빠져 있고, 수동 조정이 비교의 주관적 변수가 되기 때문이다. 현 segmentation을 유지해 실패가 ROI인지 모델인지 분리할 수 있다. 모델 폐기, full-frame 일반화, 상업 도입, Phase 1C 또는 Palm→해석 연결은 승인하지 않는다.
+
+## 문서 기록
+
+이 문서와 CURRENT_PHASE만 갱신하고 검수 문서를 별도 commit한다. 구현·테스트·모델·사진 수정/추가 없음. 유료 API 호출 0, 실제 8장 비교 실행 0, merge/push 없음. 기존 아키텍처 조사와 Phase 1B 승인 기록은 아래에 보존한다.
+
+---
+
+## 이전 검토 기록 (원문 보존)
+
 # Palm CV 오픈소스 아키텍처 검토 (2026-09-30)
 
 **최종 방향: D. 근거가 아직 부족하므로 통제된 비교 실험을 먼저 한다.**

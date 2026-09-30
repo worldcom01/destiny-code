@@ -1,3 +1,172 @@
+# Palm Phase 1C — Production Supplementary Analysis
+
+Status: **A. PHASE 1C ARCHITECTURE READY — CLAUDE MAY IMPLEMENT** / 설계 완료·구현 미착수
+
+- 사용자 지시로 즉시 로드맵을 변경한다. production 선택형 Palm 보조 분석을 먼저 구현하고 CV 평가는 별도로 유지한다. 평가 완료/정확도 승인을 의미하지 않는다.
+- 결과 화면 선택 카드: 사진 → 기존 GPT 관찰/parser → 결정적 8개 상징 규칙 → 저장된 CoreTags와 보조 MATCH/TENSION/UNIQUE → 별도 UI.
+- engine '3'/snapshot schema 2/Identity/CoreTags/convergence/trace/기존 저장 결과 불변. Palm은 snapshot 밖 supplement v1, snapshot analysisId 또는 legacy savedId에 연결한다. legacy 비교 기준은 재구성하지 않는다.
+- 원본 저장/개선용 수집과 활성 opt-in은 보류. 외부 AI 처리 안내와 명시적 분석 동작, 지원 형식 안내는 필수. HEIC은 이번에는 안내 후 거부한다.
+- 공개 endpoint는 secret 노출 없이 익명 서명 세션·Origin/CSRF·Supabase atomic quota/중복 ledger를 구현한다. public flag off 기본값, 인프라 실패 시 fail closed. 공개 전에 분산 gate·비저장·회귀·별도 승인 smoke 확인.
+- 구체 계약/8개 문구/파일 계획/3단계 구현/테스트는 CODEX_REVIEW 최상단. Claude는 production main의 별도 feature branch에서 설계 문서만 가져와 구현하며 CV 브랜치를 통째로 합치지 않는다.
+- 이번 작업: 문서만, 유료 호출 0, merge/push 없음. 다음 단계는 Claude 구현이다.
+- PALM-CV-EVAL-v1 동결 및 공개 데이터 조사 이력은 아래와 CODEX_REVIEW에 보존한다. 실험 데이터 수집·calibration을 이번 설계가 대신하지 않는다.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
+# PALM-CV-EVAL-v1 — 데이터 출처 결정
+
+Status: **STOP PUBLIC DATASET SEARCH — CONSENTED SMARTPHONE CAPTURE IS THE CORRECT NEXT STEP** / DATASET NOT FROZEN / CALIBRATION NOT STARTED
+
+- 공개 후보는 모두 탈락했다.
+  - 11K Hands: 촬영 구도가 맞지 않는다.
+  - HaGRID: 손바닥 해상도가 낮다.
+  - PolyU-IITD v3, X-Palm: 기술적으로는 적합하지만 권리가 막는다.
+  - IITD v1, MSU: 연구 전용이다.
+  - BMPD: 권리가 모호하고 기하 조건을 확인하지 못했다.
+  - 상세는 `evaluation/PUBLIC_DATASET_SCREENING.md`.
+- 다음 단계:
+  1. 동의받은 스마트폰 사진 8장을 수집한다. 동의서에 로컬 CV 처리와 승인된 GPT 호출을 명시한다.
+  2. PROTOCOL §2 적격성을 사전 기록한다.
+  3. R1/R2가 blind GT를 기록한다.
+  4. P01–P02 calibration을 한다.
+  5. 승인 후 GPT를 호출한다.
+- PALM-CV-EVAL-v1 불변, 곡률 임계값은 PENDING CALIBRATION, P01–P08 미배정, 모델 실행 0, production 불변, merge/push 없음.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
+# PALM-CV-EVAL-v1 — 데이터 출처 탐색
+
+Status: DATASET NOT FROZEN — 11K Hands REJECTED FOR PALM-CV-EVAL-v1 INPUT FRAMING / HaGRID **C. NOT SUITABLE FOR PALM-LINE EVALUATION** / CALIBRATION NOT STARTED
+
+- 11K Hands: 결정적 제안 5장이 모두 조건 3에서 탈락해 이 실험에서 제외했다. 증거는 보존했다(`DATASET_PROVENANCE.md`, `selection-audit.csv`).
+- HaGRID: 손이 작고(손바닥 약 150–180 px) 얼굴이 담긴 제스처 사진이다. 라이선스는 프라이버시·초상권을 제외하는 비-CC BY-SA 변형이다. 판정 C(`HAGRID_SUITABILITY.md`).
+- 프로토콜(PALM-CV-EVAL-v1) 불변, 곡률 임계값은 PENDING CALIBRATION, 모델 실행 0, OpenAI 0, production 불변, merge/push 없음.
+- 다음 단계(오너 결정): 손바닥 근접 촬영을 목적으로 한 공개 데이터셋을 찾는다(권리 조건 포함). 그런 데이터셋이 없으면 동의받은 직접 촬영 사진 8장으로 돌아간다.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
+# PALM-CV-EVAL-v1 — 데이터셋 준비 (11K Hands)
+
+Status: PALM-CV-EVAL-v1 DATASET PREPARATION — **BLOCKED: DATASET NOT FROZEN (0/8 accepted)** / CALIBRATION NOT STARTED
+
+- 11K Hands 공식 이미지와 metadata를 `~/palm-eval-data/11k-hands/`에 확보했다. 출처·hash·이용 조건("reasonable academic fair use", 명시적 라이선스 없음)은 `evaluation/DATASET_PROVENANCE.md`에 기록했다.
+- 결정적 선택(`select-dataset.ts`, `ca58b00`)을 거친 처음 5개 제안이 모두 동결된 촬영 조건 3(손목/손바닥 경계)에서 탈락했다. 데이터셋 구도가 체계적으로 맞지 않는 것으로 보여 중단했다. 감사 기록은 `a8ab6b6`이다.
+- 프로젝트 오너가 결정해야 한다.
+  - (1) 11K를 포기하고 다른 공식 데이터셋이나 동의 사진을 쓴다.
+  - (2) 조건 3을 사전에 수정하고 Codex 재승인을 받는다(PALM-CV-EVAL-v1 수정 또는 v2). `hand-truncated` 위험이 있다.
+  - (3) 11K의 academic-fair-use 조건이 이 프로젝트의 평가 용도에 맞는지 먼저 판단한다.
+- 모델 실행 0, 유료 호출 0, 곡률 임계값은 PENDING CALIBRATION이다. production 불변, Phase 1C 미착수, merge/push 없음.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
+# PALM-CV-EVAL-v1 — 동결 재검수 완료 / 데이터 수집 준비 완료
+
+Status: **A. PALM-CV-EVAL-v1 FROZEN — READY FOR DATA COLLECTION**
+
+- Codex 한정 재검수: `79fdb62` 기준, 수정 `399e9c8` 확인. 이전 MINOR 1/2/3 및 NOTE 1 모두 CLOSED. 남은 차단 항목 없음.
+- FROZEN_CONFIG·공정성·continuity/Fate·production isolation PASS. 문서/빈 템플릿만 변경됐으며 코드/lockfile hash·CSV/JSON 구조를 확인했다. 상세는 CODEX_REVIEW 최상단.
+- 유일한 동결 예외: P01–P02로 결정할 최종 곡률 임계값과 calibration 근거. 후보 0.05/0.08/0.12, 사전 규칙으로 한 번 결정해 P03 전에 commit한다. 나머지 설정은 고정이며 held-out 재조정은 v2다.
+- 다음 단계: 동의 사진 8장 수집·사전 적격성 기록 → 블라인드 R1/R2 및 별도 ADJ/hash → P01–P02 calibration과 결과 동결 → 별도 GPT 호출 승인 후 비교. P03–P08은 held-out이다.
+- 데이터 수집/평가 미실행, 유료 호출 0, production 불변, Phase 1C 미착수, merge/push 없음. RESEARCH / EVALUATION ONLY — COMMERCIAL RIGHTS NOT YET CLEARED.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
+# PALM-CV-EVAL-v1 — 평가 프로토콜 준비 완료
+
+Status: PALM-CV-EVAL-v1 PROTOCOL PREPARATION COMPLETE — CALIBRATION AND HELD-OUT EVALUATION NOT EXECUTED
+
+- Codex MINOR 3건을 문서와 템플릿에 반영했다(`399e9c8`, 브랜치 `experiment/palm-cv-poc`). 반영 항목:
+  - handedness/mirror 개념 분리와 `canonical_orientation_correct` 채점
+  - 모델 출력 전 사람 2명의 선 위치 polyline 기록, adjudication은 별도 파일
+  - 선별 identity/coverage/false extension/overlay alignment 기록
+  - 촬영 적격성·거절 조건
+- `evaluation/FROZEN_CONFIG.md`로 설정을 동결했다. letterbox는 고정했고, **최종 곡률 임계값만 PENDING CALIBRATION**이다(P01–P02, 사전 규칙). P03–P08 held-out은 재조정을 금지한다.
+- Continuity는 사람-GPT만 비교한다. CV는 연구 지표만 낸다. Fate는 별도 표로 다루며 CV는 `unsupported-by-model`이다.
+- 코드·모델·production 변경 없음, 유료 호출 0, Phase 1C 미착수, merge/push 없음. RESEARCH / EVALUATION ONLY — COMMERCIAL RIGHTS NOT YET CLEARED.
+- 다음 단계:
+  1. 동의 사진 8장을 수집하고 적격성을 기록한다.
+  2. R1/R2가 blind GT와 위치를 기록하고 hash를 남긴다.
+  3. CV로 P01–P02 calibration을 하고 FROZEN_CONFIG를 commit한다.
+  4. 별도 승인을 받아 GPT 8회를 호출한다.
+  5. held-out 6장을 채점한다.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
+# Palm CV — 자동 ROI 최종 검수 완료 / 비교 프로토콜 보완 대기
+
+Status: AUTOMATIC PALM ROI REVIEWED — B. READY AFTER SMALL FIXES / 8장 비교 NOT EXECUTED
+
+- 검수 HEAD `27a12b9`, 브랜치 `experiment/palm-cv-poc`. CRITICAL 0 / IMPORTANT 0 / MINOR 3 / NOTE 1.
+- 자동 ROI·기하 mirror·실제 전처리/overlay 변환은 탐색 실험에 적합하다. PoC 77개 검사와 기존 golden/7개 회귀 스크립트, TypeScript·PoC lint 통과. build도 네트워크 제한 해제 후 통과했다. 상세는 CODEX_REVIEW의 최종 검증 기록을 따른다.
+- 실험 전 필수 문서 보완: (1) 해부학적 손과 저장 반전을 구분하는 채점, (2) 블라인드 선 위치 주석·false extension/partial/registration 분리 기록, (3) 촬영 최소 조건과 사전 적격성 기록. 상세·동결 manifest 명세는 CODEX_REVIEW 최상단.
+- 현재 평가 프로토콜은 아직 동결 완료가 아니다. M-1~M-3 수정 후 calibration 2장/held-out 6장으로 분리한다. 0.08은 미검증, CV continuity 판정 없음, Fate 미지원 유지.
+- HT01의 검출과 GPT/CV 곡률 불일치는 정확도 근거가 아니다. 사람 ground truth 확인 전 승자를 정하지 않는다. n=8은 모집단 정확도 검증이 아니다.
+- RESEARCH / EVALUATION ONLY — COMMERCIAL RIGHTS NOT YET CLEARED. production·baseline 불변, Phase 1C 미착수, 유료 호출 0, merge/push 없음.
+- 다음 단계: Claude의 프로토콜/빈 템플릿 보완 → 동결·재확인 → 동의 사진·블라인드 GT → 별도 유료 호출 승인 후 비교.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
+# Palm CV — Automatic Palm ROI Normalization PoC
+
+Status: AUTOMATIC PALM ROI NORMALIZATION POC — IMPLEMENTED ON `experiment/palm-cv-poc` (evaluation only, NOT production) / 8장 비교 NOT EXECUTED
+
+- Codex B 판정 후속. 로컬 MediaPipe Hands(TF.js port, WASM) landmark를 입력 정규화에만 쓴다. wrist→middle MCP 수직 회전, 21점 bbox ± 0.12L ROI, 기하 chirality mirror(index MCP가 pinky MCP 오른쪽이면 반전), letterbox 512² 순서다. perspective warp는 쓰지 않는다. 변환은 정확히 역산 가능해서 overlay와 geometry를 원본 좌표로 되돌린다. 실패 코드는 명시적으로 남기고 fallback은 없다. 상세는 `CLAUDE_REPORT.md` 최상단.
+- hand.jpg 로컬 1회(HT01): 정규화 ok(−3.46°, mirror false), Life/Head/Heart 모두 non-zero. 선 identity와 시각 정확도는 미검증이며 사용자 확인이 필요하다.
+- 테스트 77 PASS, 기존 회귀·build 불변. 유료 호출 0.
+- 프로토콜 v2(stage A–H, 같은 원본, 자동 CV 주 비교, 수동 crop은 별도 진단)를 준비만 했다.
+- RESEARCH / EVALUATION ONLY — COMMERCIAL RIGHTS NOT YET CLEARED. production 계약·API·engine '3'/schema 2 불변. Phase 1C 미착수. merge/push 없음.
+- 다음 단계: Codex 리뷰 → 사용자 HT01 overlay 시각 확인 → 동의 8장·사람 GT 수집 → 승인 시 GPT 8회와 비교.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
+# Palm CV Comparison PoC — Codex 검수 완료
+
+Status: PALM CV COMPARISON POC — REVIEWED / AUTOMATIC ROI POC RECOMMENDED BEFORE COMPARISON
+
+**B. POC APPROVED — ADD MINIMAL AUTOMATIC PALM ROI NORMALIZATION BEFORE 8-IMAGE COMPARISON** (2026-09-30, 검수 HEAD `6e4e927`). CRITICAL 0 / IMPORTANT 0 / MINOR 2 / NOTE 2.
+
+- 격리된 추론·연구용 기하 기반 승인. 38개 테스트·실모델 합성 추론·SHA-256·ORT 1.23.2 확인. TypeScript/변경 TS lint/diff-check 통과.
+- tensor 계약은 upstream과 일치하지만 framing은 미확정이다. 보고된 full-hand 예시의 0-pixel을 모든 전체 손 사진의 한계로 일반화하지 않는다. upstream은 21 landmark bbox+margin·회전·canonical handedness를 사용하며 pseudo-label 생성의 padding도 별도 확인 대상이다.
+- 다음 작업: MediaPipe 기반 최소 자동 ROI/회전/선택 mirror PoC. perspective warp는 제외. inverse overlay 검증 후 프로토콜을 동결해 8장 비교한다. 수동 crop은 출력 전에 동결한 진단 대조군으로만 유지한다.
+- MINOR: framing/좌우 단정 문서(M-1), unreadable·ROI 실패·latency 범위를 혼합한 비교 프로토콜(M-2)을 다음 PoC에서 보완한다. 상세는 `CODEX_REVIEW.md` 최상단.
+- curvature 0.08 미검증 유지, continuity 판정 없음, Fate `unsupported-by-model`. RESEARCH / EVALUATION ONLY / COMMERCIAL RIGHTS NOT YET CLEARED.
+- production Palm 계약·API·해석·저장·engine '3'/schema 2 변경 없음. 유료 호출 0, 8장 실험 미실행, Phase 1C 미착수. 이번에는 검수 문서만 commit하고 merge/push하지 않는다.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
+# Palm CV Comparison PoC
+
+Status: PALM CV COMPARISON POC — IMPLEMENTED ON `experiment/palm-cv-poc` (evaluation only, NOT production) / 8장 비교 NOT EXECUTED
+
+- `scripts/palm-cv-poc/`에 samuel `student_fp32.onnx`(bc48939f, SHA-256 `3c02b88b…`)의 로컬 Life/Head/Heart segmentation PoC를 격리 구현했다. Fate 미지원, continuity 미판정, curvature는 잠정 raw metric. 상세는 `CLAUDE_REPORT.md` 최상단.
+- License: **RESEARCH / EVALUATION ONLY — COMMERCIAL RIGHTS NOT YET CLEARED.**
+- 핵심 발견: palm crop이 없으면 검출 0. 수동 `--crop`/`--mirror` 필요.
+- 8장 비교 harness(`evaluation/`)는 준비만 했다. 실행에는 동의 사진 8장, 사람 2명 ground truth, GPT 8회 유료 호출 승인이 필요하다.
+- 불변: production Palm 경로, PalmObservation 계약, Evidence/Claim/Identity/CoreTag/convergence, engine `'3'` / schema `2`. Phase 1C 미착수. 진단 브랜치 미병합 유지. Palm Visual Accuracy Evaluation(아래)은 여전히 시작 전이며 이 비교 프로토콜로 함께 수행할 수 있다.
+- 다음 단계: Codex 리뷰 → 사람 ground truth 수집 → 승인 시 비교 실행.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm CV 오픈소스 평가 — 아키텍처 검토
 
 Status: PALM CV OPEN-SOURCE EVALUATION — ARCHITECTURE REVIEW
