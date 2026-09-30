@@ -1,3 +1,19 @@
+# Palm Phase 1C — Trusted Ingress 배포 결합 수정
+
+Status: **PHASE 1C TRUSTED INGRESS BLOCKER FIXED — AWAITING FINAL FOCUSED RE-REVIEW** (승인 아님 · 공개 OFF · Supabase migration 미실행)
+
+- Codex `8a7a281`(C: IMPORTANT 1 / MINOR 1 / NOTE 1)를 수정했다(`235e516`).
+  - I-1: 검증 토큰을 Vercel 배포 식별값(환경·프로젝트·커밋·운영자 ingress 세대)에 결합했다. 새 릴리스에서는 이전 토큰이 거부되고 재검증이 필요하다. 식별값이 없으면 fail closed.
+  - O-1: 운영 문서를 공개 OFF를 유지하는 1~8단계로 정리했다. probe는 공개 OFF에서 동작한다.
+- **Trusted ingress verification is deployment-specific and must be repeated after each new production deployment.**
+- N-1(실제 다중 연결 DB smoke)은 migration 후·live 전 운영 단계로 유지한다.
+- 회귀: public 173 / supplement 117 / 기존 전부 PASS, digest 불변, build·tsc OK, lint baseline 9. 유료 호출 0, merge/push 없음.
+- 다음 단계: Codex final focused re-review → 승인 시 운영 문서 1~8단계를 별도 지시에 따라 진행한다.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm Phase 1C — Finding Closure 재검수 완료 / I-1 보완 대기
 
 Status: **C. BLOCKER REMAINS — DO NOT MIGRATE** / public OFF 유지

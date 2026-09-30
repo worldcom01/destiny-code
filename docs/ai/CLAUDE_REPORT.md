@@ -1,3 +1,62 @@
+# Palm Phase 1C — Trusted Ingress 배포 결합 수정 보고 (Codex 8a7a281 후속)
+
+Status: **PHASE 1C TRUSTED INGRESS BLOCKER FIXED — AWAITING FINAL FOCUSED RE-REVIEW** (승인 아님 · 공개 OFF · Supabase migration 미실행)
+
+수정 `235e516`(코드·테스트)과 이 문서. 범위는 I-1 배포 결합과 O-1 운영 순서뿐이다. SQL·비용 gate·이미지·해석·Identity는 바꾸지 않았다. OpenAI 호출 0, merge/push 없음.
+
+**Trusted ingress verification is deployment-specific and must be repeated after each new production deployment.**
+
+## I-1: 토큰의 배포 결합
+
+- 토큰 = HMAC(`PALM_SESSION_SECRET`, `palm-ingress-verified-v2` | 전략 | 헤더 | origin | **배포 결합 값**).
+- 배포 결합 값: Vercel system env `VERCEL_ENV`(production|preview), `VERCEL_PROJECT_ID`, `VERCEL_GIT_COMMIT_SHA`(40 hex)와 운영자 `PALM_INGRESS_GENERATION`의 조합. 모두 서버 env에서만 읽는다.
+- `VERCEL=1`과 `VERCEL_DEPLOYMENT_ID`(dpl_…)는 실제 Vercel 런타임 증거로 존재만 요구한다.
+- 배포 ID를 결합하지 않은 이유: Vercel은 env 변경에 새 배포가 필요하다. 배포 ID에 묶으면 토큰을 env에 넣는 재배포가 그 토큰을 곧바로 무효화한다(Codex가 지적한 순환).
+- 결과:
+  - 새 커밋 릴리스, 다른 프로젝트, preview↔production, 세대 변경, origin·세션 키·전략 변경 → 토큰 무효, 공개 OFF, probe 재실행 필요.
+  - 같은 커밋의 env-only 재배포는 유지된다(토큰 적용 경로).
+  - 식별값이 없거나 형식이 틀리면(Vercel 아님, development, git 아닌 배포, 세대 누락 등) fail closed.
+- probe:
+  - 운영자 전용·비유료(provider·DB·fetch 없음). `PALM_PUBLIC_ENABLED=false`, `PALM_EXTRACTION_ENABLED=false`에서도 동작하며 공개를 켜지 않는다.
+  - 응답은 environment, 7자리 commit, 배포 범위 fingerprint, 토큰뿐이다. secret·세대·프로젝트 ID·전체 커밋·결합 재료·원본 IP는 없다.
+
+## O-1: 운영 순서
+
+`docs/palm-phase1c-operations.md`를 실행 가능한 1~8단계 체크리스트로 다시 썼다.
+
+1. 공개 OFF
+2. OFF 상태 인프라 배포(probe용 operator secret, 세대, 토큰은 빈 값)
+3. 승인 후 DB 적용·cleanup
+4. OFF 상태 probe: 대조 요청, IPv4/IPv6/목록 위조, fingerprint 동일성, 두 네트워크, 배포 URL. 모두 같은 배포·같은 UTC 날짜
+5. 같은 커밋 env-only 재배포로 토큰 적용(여전히 OFF), 재확인
+6. DB-only 다중 연결 smoke
+7. 실기기 MOCK
+8. 모두 통과 후에만 live 1회 승인과 공개 결정
+
+`PALM_PUBLIC_ENABLED=true`를 요구하던 준비 단계를 제거했다. 문서의 curl 예시는 bash 문법 검사를 통과하는 함수 형태로 바꿨다.
+
+## 검증
+
+- `regression-palm-public` **173 PASS**(기존 140 + 33). 신규 배포 결합 테스트 내용:
+  - probe가 배포 A에서 실제 발급한 TA → A 허용, B 거부. B와 A의 env 차이가 `VERCEL_GIT_COMMIT_SHA`, `VERCEL_DEPLOYMENT_ID`뿐임을 확인한다.
+  - B에서 TA로 analyze 503·provider 0, session 비활성.
+  - B probe가 발급한 TB → B 허용, A 거부.
+  - preview/project/세대/origin/전략/세션 키 변경 무효, env-only 재배포 유지.
+  - 식별값 누락·형식 오류 10종 fail closed(config와 probe).
+  - flag OFF 시 paid 503.
+  - 요청 헤더로 식별값 주입 불가.
+  - 검증된 B에서도 fallback 헤더 무시·목록 거부.
+  - probe 출력 최소화, 배포 범위 fingerprint, network 차단 상태에서 fetch 0회, 소스에 provider/DB import 없음.
+- supplement 117, extraction 146, palm-evidence 76, patterns 74, identity-selection 97, catalog-v3 23, saved-context 14, evidence-trace 218, golden v1/v2/v3 PASS. digest `25ab43b8` / `dab19aab`.
+- tsc OK, build OK, lint 9(기존 baseline)·Palm 0, diff-check OK.
+- 번들 검사: secret, ingress/세대/Vercel 식별 env 이름, 토큰 재료, probe 헤더, createHmac 0건.
+
+## 남은 NOTE
+
+N-1(실제 다중 연결 PostgreSQL 동시성 smoke)은 migration 후, live OpenAI 전에 필수로 수행한다(운영 6단계). 코드 차단 항목은 아니다.
+
+---
+
 # Palm Phase 1C — Codex 검수(63e1750) 지적 수정 보고
 
 Status: **PHASE 1C CODEX FINDINGS FIXED — AWAITING FOCUSED RE-REVIEW** (승인 아님, 공개 OFF, migration 미실행)
