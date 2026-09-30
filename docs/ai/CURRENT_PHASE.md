@@ -1,3 +1,21 @@
+# Palm Phase 1B — Vision Extraction Boundary
+
+Status: PALM PHASE 1B — IMPLEMENTED / AWAITING CODEX REVIEW
+
+Codex 설계(판정 A, 커밋 `d57b9a7`)대로 브랜치 `feat/palm-vision-phase1b`에 구현했다. 병합·push하지 않았다.
+
+- 운영자 전용 `POST /api/palm/analyze`: 이미지 한 장 → 서버 검증·준비(sharp) → OpenAI `gpt-4.1-2025-04-14`(Responses API, strict schema, store false, retry 0) → `parsePalmObservationBundle()` → 검증된 bundle
+- 기본 비활성이며, env 3개와 운영자 secret이 있어야 한다. 원본 이미지·응답은 저장하지 않는다. 로그에는 오류 code만 남긴다.
+- Evidence·Claim·CoreTag·Identity·분석·저장·UI는 연결하지 않았다. engine `'3'` / schema `2`.
+- mock 회귀 105 PASS(유료 호출 0). 기존 회귀·golden·digest는 불변이다.
+- **live 호출은 하지 않았다. 실제 손금 판독 정확도는 아직 검증되지 않았다**(수동 8~12장 평가 필요).
+
+상세는 `CLAUDE_REPORT.md` 상단에 있다. Phase 1C는 시작하지 않았다.
+
+---
+
+## 이전 기록: Palm Phase 1B 설계
+
 # Palm Phase 1B — Vision Extraction Design
 
 Status: PALM PHASE 1B — VISION EXTRACTION DESIGN
