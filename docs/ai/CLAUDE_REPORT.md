@@ -1,3 +1,49 @@
+# Palm Live Smoke #1 — 기록
+
+Status: PALM LIVE SMOKE #1 — PASS (technical integration) / visual accuracy NOT YET EVALUATED
+
+운영자가 수동 smoke(`scripts/smoke-palm-openai.ts --live --image <저장소 밖 경로>`)를 실행하고 보고한 결과를 기록한다. Claude Code는 이 기록 작업에서 API를 호출하지 않았다. 기록일은 2026-09-30(KST)이다.
+
+## 결과
+
+| 항목 | 값 |
+| --- | --- |
+| Model | `gpt-4.1-2025-04-14` |
+| Elapsed | 4,132 ms |
+| Prepared image | 1536 × 2048 (JPEG) |
+| Provider call | SUCCESS |
+| Parser / contract validation (`parsePalmObservationBundle`) | SUCCESS |
+| Quality | usability `usable`, palmCoverage `full`, issues `[]` |
+
+| 선 | status | curvature | continuity |
+| --- | --- | --- | --- |
+| life | visible | curved | continuous |
+| head | visible | straight | continuous |
+| heart | visible | curved | continuous |
+| fate | visible | straight | continuous |
+
+## 해석 범위
+
+- 이 결과가 입증하는 것은 **image preparation → OpenAI Responses API → structured output → PalmObservationBundle → strict parser 검증**이 끝까지 동작한다는 것뿐이다. **Technical integration: PASS.**
+- GPT-4.1의 손금 선 시각 관찰이 정확하다는 뜻은 **아니다.** **Visual accuracy: NOT YET EVALUATED.**
+- 이 관찰로 성격 해석, CoreTag, Identity, Destiny Code, 손금 풀이를 만들지 않는다. Palm은 여전히 분석 엔진에 연결되지 않았다.
+- 이미지와 결과는 저장하지 않았다. 재시도는 하지 않았다.
+
+## 앞선 실패 1건
+
+- 이보다 먼저 live 요청 1건이 약 600 ms 만에 `provider-error`로 끝났다.
+- 셸에서 `OPENAI_API_KEY`를 다시 입력한 뒤 같은 smoke가 성공했다.
+- 원인은 **로컬 API 자격 증명·입력 문제였을 가능성이 높다**고만 기록한다. 당시 provider status/code를 수집하지 못했으므로 **입증된 원인은 아니다.**
+- 이 추정을 근거로 production 코드를 바꾸지 않는다.
+- 이 기록 기준으로 live 요청은 총 2건(실패 1, 성공 1)이다.
+
+## Diagnostic branch
+
+- `fix/palm-smoke-diagnostics`(`ad0e656` 진단 기능, `0c6c583` 당시 FAILED 기록)는 **병합하지 않고 검토용으로 남긴다.**
+- 향후 provider 오류 원인 판정에 쓸 수 있으나, 병합 여부는 별도 결정이다. 그 브랜치의 `0c6c583` 문서는 PASS 이전 시점의 기록이다.
+
+---
+
 # Claude Implementation Report — Palm Phase 1B: 마지막 MINOR 수정
 
 Status: PALM PHASE 1B — FINAL MINOR FIX IMPLEMENTED / AWAITING CODEX APPROVAL

@@ -1,3 +1,24 @@
+# Palm Visual Accuracy Evaluation
+
+Status: PALM VISUAL ACCURACY EVALUATION — NOT STARTED
+
+## 직전 결과
+
+**PALM LIVE SMOKE #1 — PASS (technical integration).** 모델 `gpt-4.1-2025-04-14`, 4,132 ms, 준비 이미지 1536×2048, provider 호출과 `parsePalmObservationBundle` 검증 모두 SUCCESS. **Visual accuracy는 NOT YET EVALUATED**다. 앞선 `provider-error` 1건(약 600 ms)은 로컬 API 자격 증명·입력 문제였을 가능성이 높으나 입증되지 않았다. 상세는 `CLAUDE_REPORT.md` 상단에 있다. 진단 브랜치 `fix/palm-smoke-diagnostics`는 미병합 상태로 검토를 기다린다.
+
+## 다음 활동 (시작하지 않음)
+
+동의받은 손바닥 사진 **8~12장**으로, 사람이 관찰한 정답(ground truth)과 AI 관찰을 비교한다.
+
+- 선: life, head, heart, fate
+- 속성: visibility, curvature, continuity
+
+평가 전에는 Palm Phase 1C를 시작하지 않는다. Palm Evidence를 Destiny Code 엔진에 연결하지 않는다. engineVersion(`'3'`)·schemaVersion(`2`)·Identity·CoreTag·convergence·해석 규칙·PalmObservation 계약·production API를 변경하지 않는다. 추가 유료 호출은 별도 승인 후에만 한다.
+
+---
+
+## 이전 기록
+
 # Palm Phase 1B — Vision Extraction Boundary
 
 Status: PALM PHASE 1B — COMPLETED / MERGED
