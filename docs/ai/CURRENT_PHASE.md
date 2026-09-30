@@ -1,3 +1,19 @@
+# Palm Phase 1B — Codex 지적 수정
+
+Status: PALM PHASE 1B — IMPORTANT FIX IMPLEMENTED / AWAITING CODEX RE-REVIEW
+
+Codex 검수(`ad68239`)는 **C — NOT READY**(IMPORTANT 1 / MINOR 1)였다. 검수 원문은 `9a104a2`로 보존했다. 수정 커밋은 `898dac4`다.
+
+- **I-1:** 업로드 deadline·요청 취소 시 본문 reader를 실제로 취소·정리한 뒤에만 반환한다. concurrency slot은 읽기가 끝난 뒤 `finally`에서 해제된다. 30초 전체·20초 provider 예산과 4,000,000 bytes 실제 상한은 유지된다.
+- **M-1:** smoke 사진 경로를 `resolve` + `realpath`로 저장소 root와 비교한다(상대경로·`..`·symlink 모두 거부).
+- Palm 1B 회귀 132 PASS. 기존 회귀·golden·digest는 불변이다. 유료 호출은 0건이다.
+
+상세는 `CLAUDE_REPORT.md` 상단에 있다. Phase 1C는 시작하지 않았다.
+
+---
+
+## 이전 기록
+
 # Palm Phase 1B — Vision Extraction Boundary
 
 Status: PALM PHASE 1B — CODEX REVIEW C / REVISION REQUIRED

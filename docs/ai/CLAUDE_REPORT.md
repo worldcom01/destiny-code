@@ -1,3 +1,71 @@
+# Claude Implementation Report — Palm Phase 1B: Codex 지적 수정
+
+Status: PALM PHASE 1B — IMPORTANT FIX IMPLEMENTED / AWAITING CODEX RE-REVIEW
+
+- Branch `feat/palm-vision-phase1b`. 검수 대상은 `ad68239`, Codex 검수 문서는 `9a104a2`(원문 그대로 커밋), 수정 커밋은 `898dac4`다.
+- Not merged, not pushed. **유료 API 호출은 0건**이다. Phase 1C는 시작하지 않았다.
+
+## I-1 (IMPORTANT) — 업로드 deadline 뒤에도 본문 읽기가 계속됨
+
+- **소유 관계:** route → `handlePalmAnalyze` → `readBoundedBody(req.body)`가 `getReader()`로 lock을 소유 → gate slot은 `handlePalmAnalyze`의 `finally`에서 해제된다.
+- **원인:** 업로드 deadline이 `Promise.race([readBoundedBody(...), deadline])`였다.
+  - deadline이 이기면 400을 반환하고 `finally`에서 slot을 해제했다.
+  - 그러나 `readBoundedBody`는 취소 수단이 없어서 reader가 계속 `reader.read()`를 기다리며 이후 chunk를 소비했다. lock과 누적 chunk 참조도 남았다.
+  - `req.signal`도 본문 읽기에 전달되지 않았다.
+  - 재현(수정 전 코드): `cancelled=false`, `locked=true`인 상태에서 다음 요청이 slot을 얻었다. 요청 취소는 본문 읽기를 멈추지 못했고, 오류로 끝난 stream은 503이 됐다.
+- **수정:** `readBoundedBody(body, limit, signal)`
+  - signal이 abort되면 `reader.cancel()`을 호출한다. 대기 중인 read가 즉시 `done`으로 끝난다.
+  - 루프를 빠져나오며 `upload-failed`를 던지고, 누적 chunk 참조를 비우고, 리스너를 제거한 뒤 `releaseLock()`을 한다. 이 정리가 모두 끝난 뒤에만 함수가 반환된다.
+  - cancel의 source 정리 완료는 기다리지 않는다(무한 대기 방지). 대기 중인 read 종료만으로 소비는 멈춘다.
+  - 상한 초과(too-large)도 같은 cancel 경로로 정리한다.
+  - stream 오류는 `upload-failed` → **400 INVALID_IMAGE**로 매핑한다(기존 오류 코드 목록 안에서).
+- **handler:**
+  - `AbortSignal.any([req.signal, uploadDeadline])`를 전달하고 읽기를 **끝까지 await**한다. race는 제거했다.
+  - 타이머는 `finally`에서 정리한다.
+- **slot 해제 시점:** 본문 수신 → 이미지 검증·준비 → provider 호출 → parser → 응답 생성까지 모두 `try` 안에 있다. slot은 `finally`에서, **읽기가 실제로 끝나고 lock이 풀린 뒤에만** 해제된다.
+  - provider 단계에서는 deadline이 OpenAI SDK 요청의 signal을 abort하고(회귀로 확인), 늦은 결과는 버린다.
+  - access·설정 실패는 slot 획득 전에 끝난다. 형식 거부(415)와 선언 크기 초과(413)는 본문을 읽기 전에 반환한다.
+- **전체 30초 deadline 유지:** 업로드 deadline은 `requestTimeoutMs - 경과 시간`이다. provider에는 `min(20초, 남은 시간)`만 주고, 새 30초 예산을 주지 않는다(회귀로 측정).
+- **4,000,000 bytes 상한 유지:** 실제 누적 byte로 강제한다. Content-Length가 없거나 거짓으로 낮거나(`100`) chunked여도 초과하면 413이고 reader는 정리된다. 압축 Content-Encoding은 계속 415다.
+- **주장 범위:** 애플리케이션 stream 취소와 reader 정리만 보장한다. Vercel·runtime의 socket 종료 시점까지 보장한다고 주장하지 않는다.
+
+## M-1 (MINOR) — smoke 사진 경로의 저장소 검사를 상대경로로 우회
+
+- `scripts/palmSmokePaths.ts`의 `isRepositoryImagePath(path, cwd)`를 추가했다.
+  - 저장소 root를 `realpath`로 구한다.
+  - 요청 경로를 `resolve`(상대·`./`·`..` 정규화)하고 `realpath`(symlink 추적)로도 구한 뒤, 둘 다 root와 경로 구성요소 기준으로 비교한다.
+  - **하나라도 저장소 안이면 거부한다.** 저장소 밖을 가리키는 저장소 안의 symlink, 저장소 파일을 가리키는 밖의 symlink도 포함한다. 존재하지 않는 경로도 거부한다.
+- smoke 스크립트는 이 helper를 사용한다. 파일 시스템 sandbox나 사진 사용 동의 확인이 아니다.
+
+## 회귀 (`regression-palm-extraction.ts`: 105 → **132 PASS**)
+
+기존 105개는 모두 유지된다. bounded read 호출 2곳은 새 signal 인자만 추가했다.
+
+- **G (업로드·slot), 16개:**
+  - deadline → 400·provider 미호출, source 취소, lock 해제, 이후 chunk 거부·pull 없음, 타이머 정리
+  - 읽는 동안에는 다른 요청이 **429**, 정리 뒤에만 slot 재획득
+  - `req.signal` abort 시 정리
+  - 거짓 Content-Length(100) + 4MB 초과 stream → 413과 정리
+  - 오류 stream → 400과 lock 해제
+  - chunked 성공, 정확히 4,000,000 bytes 수용
+  - provider deadline이 OpenAI HTTP 요청을 abort함
+  - provider 예산 ≤ 남은 전체 시간
+  - unhandledRejection 0
+- **hang watchdog:** 정리되지 않은 요청이 settle되지 않으면 조용히 끝나지 않고 FAIL로 보고한다(process exit hook과 호출별 3초 watchdog).
+- **H (smoke 경로), 11개:** 절대·상대·`./`·`subdir/../`·외부 cwd의 상대경로 → 거부 / 외부 파일(절대·상대) → 허용 / 외부 → 저장소 symlink, 저장소 → 외부 symlink(gitignore된 `node_modules` 아래에 임시 생성 후 삭제), 없는 경로 → 거부 / smoke 스크립트가 helper를 사용하는지.
+- **Mutation check:** abort 시 cancel을 제거하면 G 검사들이 FAIL한다("settles (no hang)" 포함). 복구 후 132 PASS다.
+
+## 검증
+
+- Palm 1B **132**, Palm 1A **76**, Pattern **74**, Identity v2 **97**, Identity v3 **23**, saved-context **14**, evidence-trace **218**, golden v1/v2/v3 PASS.
+- 진단: 19,983건, selection `25ab43b8`, full `dab19aab`.
+- TypeScript·`npm run build`·`git diff --check` OK. lint는 기존 9건 그대로이고 신규 0건이다.
+- engine `'3'` / schema `2`.
+- 분석 엔진·Phase 1A 계약·UI·admin API·golden은 main과 동일하다. OpenAI adapter·접근 통제·provider 계약·route·`package.json`은 `c611e05`와 동일하다(모델·SDK·schema·제한·오류 코드·rate 불변).
+- Palm UI·합성·Identity·저장 영향은 없다. route는 설정 전까지 비활성이다.
+
+---
+
 # Claude Implementation Report — Palm Phase 1B: Vision Extraction Boundary
 
 Status: PALM PHASE 1B — IMPLEMENTED / AWAITING CODEX REVIEW
