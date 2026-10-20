@@ -1,3 +1,19 @@
+# Palm Phase 1C — R-2 targeted runbook fix (Codex a6757ed 후속)
+
+Status: **AWAITING CODEX FINAL R-2 REVIEW** (승인 아님 · 공개 OFF · Supabase migration 미실행)
+
+- Codex `a6757ed`(B: MINOR 3 / NOTE 1, R-1 CLOSED·R-2a OPEN·R-2b CLOSED·R-2c OPEN)의 세 MINOR를 운영 문서에만 반영했다. 상세는 `CLAUDE_REPORT.md` 최상단.
+  - FIX 1: sentinel·빈 값 → UNVERIFIED, `env list` 부재 → MISSING-IN-SETTINGS. 승격 없음.
+  - FIX 2: inspect SHA 가정 제거. 도메인 inspect `id` == DPL_ID(전후) + probe `deployment.commit` == EXPECTED_COMMIT, 아니면 STOP. redeploy·rollback 고정 버전·scope·빈 cwd·project 확인.
+  - FIX 3: 엄격한 Set-Cookie·JSON·CSRF 파서, OFF 게이트는 Set-Cookie 0개.
+- 반례 45건: 수정 전 FAIL 33 → 수정 후 FAIL 0. 기존 harness 52 PASS, bash -n 10블록 PASS.
+- 코드·SQL·설정 변경 없음, 유료 호출 0, merge/push 없음.
+- 남은 게이트: N-1(migration 후·live 전), 외부 ingress, 실제 1-B 실행, 실기기 mock, 8단계 별도 승인.
+
+---
+
+## 이전 상태 기록 (아래 판정은 위 최신 기록 이전)
+
 # Palm Phase 1C — R-2 최종 집중 검수 (2026-10-20, 3a66c7f)
 
 **판정: B — MINOR FIXES REQUIRED (경미한 수정 필요)**

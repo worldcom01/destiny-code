@@ -169,8 +169,9 @@ IP당 세션 발급 한도와 IP당 일 한도는 클라이언트 IP가 위조�
 - **로그인**: Vercel CLI는 미리 `vercel login`으로 로그인해 둔다. `--token` 인자는 쓰지 않는다(argv 노출).
 - **CLI 버전 고정**: `npx -y vercel@64.7.0`. 아래 옵션은 이 버전의 `--help`로 확인했다.
   - `env pull --project/--id/--yes`, `env list --environment/--project`, `env add --environment/--project/--type/--force/--yes`
-  - `project inspect`, `inspect`, `redeploy`, `rollback`
-  - 전역 `--scope/--cwd/--non-interactive`
+  - `project inspect`, `inspect <배포 ID|호스트>`, `redeploy <배포 ID> --environment`, `rollback <배포 ID> --yes`
+  - 전역 `--scope/--cwd/--non-interactive/--no-color`
+  - 이 버전의 `inspect` 출력에는 git 커밋 SHA가 **없다**. 이 문서는 inspect에서 배포 `id` 줄만 사용한다.
 
 ### 대상 식별값 (비밀 아님 — 먼저 셸에 설정)
 
@@ -180,13 +181,14 @@ TEAM='your-team-slug'                      # Vercel 팀 slug (--scope)
 PROJECT_ID='prj_xxxxxxxxxxxxxxxx'          # 정확한 프로젝트 ID (이름 대신 ID 사용)
 ORIGIN='https://your-production-origin'    # PALM_PUBLIC_ORIGIN과 같은 값
 DPL_ID='dpl_xxxxxxxxxxxxxxxx'              # 지금 Production 도메인에 연결된 배포 ID
-EXPECTED_COMMIT='abcdef1'                  # 그 배포의 커밋 앞 7자리
+EXPECTED_COMMIT='abcdef1'                  # 그 배포의 커밋 앞 7자리 (probe의 deployment.commit으로 자동 확인)
 ```
 
-### 1단계 — 프로젝트·배포 확인 (잘못 연결된 `.vercel/project.json` 배제)
+### 1단계 — 프로젝트 확인 (사람이 보는 항목, 비밀 없음)
 
-- 모든 CLI 호출은 빈 임시 디렉터리를 `--cwd`로 쓰고 `--scope`·`--project`(또는 대상 ID)를 명시한다. 그래서 저장소나 다른 디렉터리의 프로젝트 연결(link)을 읽지 않는다.
-- 이 단계의 출력에는 비밀값이 없다.
+- 모든 CLI 호출은 빈 임시 디렉터리를 `--cwd`로 쓰고 `--scope`·프로젝트 ID를 명시한다. 그래서 저장소나 다른 디렉터리의 `.vercel/project.json`(link)을 읽지 않는다.
+- 색상 코드가 판정을 방해하지 않도록 `--no-color`를 쓴다.
+- 이 출력에는 비밀값이 없다.
 
 ```bash
 # [palm-1b-inspect]
@@ -196,7 +198,7 @@ EXPECTED_COMMIT='abcdef1'                  # 그 배포의 커밋 앞 7자리
   WORK=$(mktemp -d "${TMPDIR:-/tmp}/palm.XXXXXX") || exit 1
   trap 'rm -rf "$WORK"' EXIT
   trap 'exit 130' INT TERM
-  vc() { npx -y vercel@64.7.0 --non-interactive --scope "$TEAM" --cwd "$WORK" "$@"; }
+  vc() { npx -y vercel@64.7.0 --non-interactive --no-color --scope "$TEAM" --cwd "$WORK" "$@"; }
   vc project inspect "$PROJECT_ID"
   vc inspect "$DPL_ID"
 )
@@ -204,27 +206,44 @@ EXPECTED_COMMIT='abcdef1'                  # 그 배포의 커밋 앞 7자리
 
 눈으로 확인할 것(하나라도 다르면 중단):
 - `project inspect`의 ID가 `PROJECT_ID`와 같고, 프로젝트 이름이 의도한 Destiny Code 프로젝트다.
-- `inspect`의 배포가 Production 대상이고 준비 완료(Ready) 상태다.
-- 그 배포의 alias에 `ORIGIN`의 호스트가 있고(= 지금 실제로 서비스 중인 배포), git 커밋이 `EXPECTED_COMMIT`이다.
-- 배포 생성 시각이 토큰 env를 바꾼 시각보다 **뒤**다. env 변경은 다음 배포부터만 적용된다.
+- `inspect "$DPL_ID"`의 `target`이 `production`이고 `status`가 Ready다.
+- `created`가 토큰 env를 바꾼 시각보다 **뒤**다. env 변경은 다음 배포부터만 적용된다.
+- `Aliases`에 `ORIGIN` 호스트가 있다.
+
+**커밋은 이 출력으로 확인하지 않는다.** CLI 64.7.0의 `inspect`(사람용·`--json` 모두)는 git 커밋 SHA를 출력하지 않는다(출력 필드: id·name·target·status·url·created·Aliases).
+
+커밋은 2단계 스크립트가 자동으로 확인한다. 아래 두 사실이 모두 확인되지 않으면 `STOP-*`으로 중단한다.
+- **서비스 중인 배포가 `DPL_ID`인지**: `vercel inspect <ORIGIN 호스트>`의 `id` 줄이 정확히 `DPL_ID`와 같아야 한다. probe 전후 두 번 확인한다.
+- **그 배포의 커밋이 `EXPECTED_COMMIT`인지**: 이 앱 probe API가 반환하는 `deployment.commit`으로 확인한다. 이 값은 서비스 중인 배포의 `VERCEL_GIT_COMMIT_SHA` 앞 7자리이며, 토큰 결합에 쓰는 바로 그 값이다.
+
+대시보드의 배포 git 정보는 보조 확인일 뿐, 단독 근거로 쓰지 않는다.
 
 ### 2단계 — 재발급 토큰과 설치값의 비공개 대조
 
 이 단계는 두 값을 비교해 상태 하나만 출력한다.
-- **재발급 토큰**: 실행 중 배포의 probe가 발급한 값. `deployment.commit`이 `EXPECTED_COMMIT`과 같을 때만 사용한다.
-- **설치값**: 그 배포(`--id "$DPL_ID"`)에 들어간 `PALM_TRUSTED_INGRESS_VERIFICATION`.
+- **재발급 토큰**: 서비스 중인 배포가 `DPL_ID`이고 커밋이 `EXPECTED_COMMIT`일 때, 그 배포의 probe가 발급한 값.
+- **설치값**: `vercel env pull --id "$DPL_ID"`로 받은 그 배포 스냅샷의 `PALM_TRUSTED_INGRESS_VERIFICATION`.
+
+**CLI 64.7.0의 `env pull --id` 실제 동작**(패키지 구현 `envPullCommandLogic` 확인):
+- 지정 배포의 `buildEnv`를 그대로 쓴다.
+- 이 경로에서는 Secret redaction 판별(`getRedactedSensitiveKeys`)에 프로젝트 ID를 넘기지 않으므로, Secret 여부를 알려 주지 않는다.
+- 배포 스냅샷에 키가 **없으면** 로컬 파일의 값(sentinel)이 그대로 남는다. 키가 **빈 값**이면 빈 문자열로 덮어쓴다.
+
+따라서 sentinel이 남거나 빈 값이 나와도 다음 셋을 **구별할 수 없다**: Secret이라 읽을 수 없음, 그 배포에 변수가 없음, 빈 값이 설치됨. 이런 경우는 모두 `UNVERIFIED`로 처리한다.
 
 출력되는 상태:
 
 | 출력 | 의미 | 다음 행동 |
 |---|---|---|
-| `MATCH` | 설치값이 실행 중 배포의 재발급 토큰과 같다 | 설치 확인 완료. 실행 중 config의 최종 확인은 1-C |
-| `MISMATCH` | 읽을 수 있는 설치값이 다르다(빈 값 포함) | 중단 → 아래 "안전한 재설정" |
-| `UNREADABLE` | 값이 Vercel **Secret**이라 CLI가 읽을 수 없다. Production 기본 type은 Secret이다 | **검증 완료가 아니다** → 아래 "읽기 불가 처리" |
-| `MISSING` | Production scope에 변수가 없다 | 중단 → 설치 후 같은 커밋 재배포 |
-| `ERROR-PROBE` / `ERROR-PULL` / `ERROR-LIST` | probe 실패, `established` 아님, 커밋 불일치, CLI 실패 | **검증 완료가 아니다**. 원인 확인 후 재시도 |
+| `MATCH` | 배포 스냅샷에서 읽은 값이 재발급 토큰과 같다 | 설치 확인 완료. 실행 중 config의 최종 확인은 1-C |
+| `MISMATCH` | 비어 있지 않은 다른 값이 읽혔다(마스킹된 값일 수도 있음) | 중단 → 안전한 재설정 |
+| `UNVERIFIED` | sentinel이 남았거나 빈 값이다. Secret·스냅샷 누락·빈 설치를 구별할 근거가 CLI에 없다 | **검증 완료가 아니다** → 검증 보류 또는 안전한 재설정 |
+| `MISSING-IN-SETTINGS` | **현재 설정**의 Production scope에 변수 이름이 없다(`env list`). 배포 스냅샷에 대한 판정은 아니다 | 중단 → 설치 후 같은 커밋 재배포 |
+| `STOP-DEPLOYMENT-UNVERIFIED` | Production 도메인의 실제 배포 ID를 확인하지 못했거나 `DPL_ID`와 다르다(전후 변경 포함) | 중단. 1단계부터 다시 |
+| `STOP-COMMIT-UNVERIFIED` | probe는 성공했으나 `deployment.commit`이 없거나 `EXPECTED_COMMIT`과 다르다 | 중단. 배포·커밋을 다시 확인 |
+| `ERROR-PROBE` / `ERROR-PULL` / `ERROR-LIST` | probe 실패·`established` 아님, CLI 실패 | **검증 완료가 아니다**. 원인 확인 후 재시도 |
 
-읽기 불가 판정 원리: Vercel 문서상 `vercel env pull`은 읽을 수 없는 Secret이면 **로컬 파일에 이미 있는 값을 유지**한다. 그래서 무작위 sentinel을 미리 써 두고, pull 뒤에도 sentinel이 그대로 남아 있으면 `UNREADABLE`로 판정한다. 변수가 아예 없는 경우도 sentinel이 남으므로, 이 경우는 `env list` 이름 존재 여부로 먼저 가려 `MISSING`으로 분리한다. 읽기 불가를 빈 값이나 불일치로 단정하지 않는다.
+`UNVERIFIED`·`STOP-*`·`ERROR-*`는 MATCH나 설치 확인으로 승격하지 않는다. 8단계 진입 조건은 `MATCH` 또는 `INSTALLED-FROM-PROBE`(아래)뿐이다.
 
 ```bash
 # [palm-1b-compare]
@@ -237,53 +256,70 @@ EXPECTED_COMMIT='abcdef1'                  # 그 배포의 커밋 앞 7자리
   trap cleanup EXIT
   trap 'exit 130' INT TERM
   status() { echo "$1"; exit 0; }
-  vc() { npx -y vercel@64.7.0 --non-interactive --scope "$TEAM" --cwd "$WORK" "$@"; }
+  vc() { npx -y vercel@64.7.0 --non-interactive --no-color --scope "$TEAM" --cwd "$WORK" "$@"; }
+  # Production 도메인이 실제로 가리키는 배포 ID가 정확히 DPL_ID인지 (inspect 출력의 id 줄 하나만 인정)
+  active_is_dpl() {
+    vc inspect "${ORIGIN#https://}" > "$WORK/inspect.txt" 2>&1 || return 1
+    python3 -c '
+import re, sys
+ids = re.findall(r"^\s*id\s+(dpl_[A-Za-z0-9]+)\s*$", open(sys.argv[1], errors="replace").read(), re.M)
+sys.exit(0 if len(ids) == 1 and ids[0] == sys.argv[2] else 1)' "$WORK/inspect.txt" "$DPL_ID"
+  }
 
+  active_is_dpl || status STOP-DEPLOYMENT-UNVERIFIED
   IFS= read -rs -p 'operator secret (입력은 표시되지 않음): ' OP_SECRET; echo >&2
   # 1) 실행 중 배포에서 토큰 재발급 — secret은 stdin curl config로만 전달
   RESP=$(printf 'header = "x-palm-extraction-secret: %s"\nheader = "x-palm-ingress-probe: 192.0.2.77"\n' "$OP_SECRET" \
     | curl -sS --max-time 20 --config - -X POST "$ORIGIN/api/palm/ingress-check" 2>/dev/null) || status ERROR-PROBE
   unset OP_SECRET
-  ISSUED=$(python3 -c '
+  # 출력 첫 줄: established|other, 둘째 줄: commit 일치 여부, 셋째 줄: 토큰 (변수로만 받는다)
+  PARSED=$(python3 -c '
 import json, sys
 try:
     d = json.loads(sys.stdin.read())
 except Exception:
-    sys.exit(0)
-if d.get("ingress") == "established" and (d.get("deployment") or {}).get("commit") == sys.argv[1]:
-    print(d.get("verificationToken", ""))
-' "$EXPECTED_COMMIT" <<<"$RESP")
+    print("bad"); sys.exit(0)
+est = d.get("ingress") == "established" and isinstance(d.get("verificationToken"), str) and d["verificationToken"] != ""
+commit = (d.get("deployment") or {}).get("commit")
+print("established" if est else "bad")
+print("commit-ok" if isinstance(commit, str) and commit == sys.argv[1] else "commit-bad")
+print(d.get("verificationToken", "") if est else "")' "$EXPECTED_COMMIT" <<<"$RESP")
   unset RESP
-  [ -n "$ISSUED" ] || status ERROR-PROBE
+  [ "$(sed -n 1p <<<"$PARSED")" = established ] || { unset PARSED; status ERROR-PROBE; }
+  [ "$(sed -n 2p <<<"$PARSED")" = commit-ok ] || { unset PARSED; status STOP-COMMIT-UNVERIFIED; }
+  ISSUED=$(sed -n 3p <<<"$PARSED"); unset PARSED
+  active_is_dpl || status STOP-DEPLOYMENT-UNVERIFIED   # probe 도중 배포가 바뀌지 않았는지
 
-  # 2) Production scope에 변수 이름이 있는지 (값은 보지 않는다)
+  # 2) 현재 설정(Production)에 변수 이름이 있는지 — 배포 스냅샷 판정이 아님, 값은 보지 않는다
   vc env list --environment production --project "$PROJECT_ID" > "$WORK/list.txt" 2>/dev/null || status ERROR-LIST
-  grep -qw 'PALM_TRUSTED_INGRESS_VERIFICATION' "$WORK/list.txt" || status MISSING
+  grep -qw 'PALM_TRUSTED_INGRESS_VERIFICATION' "$WORK/list.txt" || status MISSING-IN-SETTINGS
 
-  # 3) 실행 중 배포의 설치값 — sentinel을 미리 써 두고 pull (Secret이면 sentinel이 유지된다)
+  # 3) 배포 스냅샷의 설치값 — sentinel을 미리 써 두고 pull
   SENTINEL="__palm_sentinel_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')__"
   printf 'PALM_TRUSTED_INGRESS_VERIFICATION=%s\n' "$SENTINEL" > "$WORK/deploy.env"
   vc env pull "$WORK/deploy.env" --id "$DPL_ID" --project "$PROJECT_ID" --yes > /dev/null 2>&1 || status ERROR-PULL
-  [ "$(grep -c '^PALM_TRUSTED_INGRESS_VERIFICATION=' "$WORK/deploy.env")" = 1 ] || status ERROR-PULL
+  [ "$(grep -c '^PALM_TRUSTED_INGRESS_VERIFICATION=' "$WORK/deploy.env")" = 1 ] || status UNVERIFIED
   INSTALLED=$(sed -n 's/^PALM_TRUSTED_INGRESS_VERIFICATION=//p' "$WORK/deploy.env" | tr -d '"')
-  [ "$INSTALLED" = "$SENTINEL" ] && status UNREADABLE
+  [ "$INSTALLED" = "$SENTINEL" ] && status UNVERIFIED   # Secret·스냅샷 누락 구별 불가
+  [ -z "$INSTALLED" ] && status UNVERIFIED              # 빈 값: redaction·빈 설치 구별 불가
   [ "$INSTALLED" = "$ISSUED" ] && status MATCH
   status MISMATCH
 )
 ```
 
-### 읽기 불가(`UNREADABLE`) 처리 — 검증 완료로 표시하지 않는다
+### `UNVERIFIED` 처리 — 검증 완료로 표시하지 않는다
 
 - Secret을 Config로 낮춰서 비교하지 **않는다**.
 - 두 선택지 중 하나를 운영 기록에 남긴다(토큰 값 없이 상태만).
-  1. **검증 보류(UNVERIFIED-SECRET)**: 설치값을 직접 대조하지 못했다고 기록한다. 실행 중 config는 8단계 1-C session 확인(승인 후)으로만 판정한다. 그 전까지는 "설치 확인됨"으로 보고하지 않는다.
-  2. **안전한 재설정(INSTALLED-FROM-PROBE)**: 아래 `palm-1b-install` 스크립트로 실행 중 배포의 재발급 토큰을 화면을 거치지 않고 stdin으로 곧바로 Production Secret에 다시 설치한다. 그런 다음 **같은 커밋**을 재배포하고(대시보드 Redeploy 또는 `vercel redeploy "$DPL_ID"`), 1단계를 새 배포 ID로 다시 확인한다.
+  1. **검증 보류(UNVERIFIED)**: 설치값을 직접 대조하지 못했다고 기록하고 멈춘다. "설치 확인됨"으로 보고하지 않으며, 이 상태만으로는 8단계 진입 조건(`MATCH` 또는 `INSTALLED-FROM-PROBE`)을 충족하지 않는다. 진행하려면 2번 재설정을 택한다.
+  2. **안전한 재설정(INSTALLED-FROM-PROBE)**: 아래 `palm-1b-install` 스크립트로 서비스 중인 배포(`DPL_ID`, `EXPECTED_COMMIT` 확인 후)의 재발급 토큰을 화면을 거치지 않고 stdin으로 곧바로 Production Secret에 설치한다.
+     - 그다음 `palm-redeploy-same-commit`으로 **같은 커밋**을 재배포하고, 새 배포 ID로 1단계를 다시 확인한다.
      - 이렇게 기록하는 것은 "probe가 발급한 값을 사람이 다루지 않고 설치했다"는 설치 경로 증거다. 값 대조가 아니다.
      - 최종 확인은 여전히 1-C다.
 - 이 스크립트는 `vercel env add --environment production --force`를 쓴다. Production 환경의 값만 추가·교체한다.
   - `vercel env update`는 그 변수가 걸쳐 있는 **모든 환경**을 바꾸므로 쓰지 않는다.
   - 실행 뒤 대시보드에서 이 변수가 Production에만 있는지 확인한다(R-1 Preview 원칙).
-- 같은 스크립트를 5단계 최초 설치에도 쓴다. 출력은 `INSTALLED-REDEPLOY-SAME-COMMIT-NEXT` 또는 `INSTALL-ERROR`뿐이다.
+- 같은 스크립트를 5단계 최초 설치에도 쓴다. 출력은 `INSTALLED-REDEPLOY-SAME-COMMIT-NEXT`, `INSTALL-ERROR`, `STOP-DEPLOYMENT-UNVERIFIED`, `STOP-COMMIT-UNVERIFIED` 중 하나뿐이다.
 
 ```bash
 # [palm-1b-install]  설치·재설정: probe 재발급 토큰 → stdin → Production Secret (화면·argv·history에 값 없음)
@@ -292,27 +328,40 @@ if d.get("ingress") == "established" and (d.get("deployment") or {}).get("commit
   set -u -o pipefail
   umask 077
   WORK=$(mktemp -d "${TMPDIR:-/tmp}/palm.XXXXXX") || { echo INSTALL-ERROR; exit 1; }
-  cleanup() { rm -rf "$WORK"; unset OP_SECRET ISSUED RESP; }
+  cleanup() { rm -rf "$WORK"; unset OP_SECRET ISSUED RESP PARSED; }
   trap cleanup EXIT
   trap 'exit 130' INT TERM
   status() { echo "$1"; exit 0; }
-  vc() { npx -y vercel@64.7.0 --non-interactive --scope "$TEAM" --cwd "$WORK" "$@"; }
+  vc() { npx -y vercel@64.7.0 --non-interactive --no-color --scope "$TEAM" --cwd "$WORK" "$@"; }
+  active_is_dpl() {
+    vc inspect "${ORIGIN#https://}" > "$WORK/inspect.txt" 2>&1 || return 1
+    python3 -c '
+import re, sys
+ids = re.findall(r"^\s*id\s+(dpl_[A-Za-z0-9]+)\s*$", open(sys.argv[1], errors="replace").read(), re.M)
+sys.exit(0 if len(ids) == 1 and ids[0] == sys.argv[2] else 1)' "$WORK/inspect.txt" "$DPL_ID"
+  }
 
+  active_is_dpl || status STOP-DEPLOYMENT-UNVERIFIED
   IFS= read -rs -p 'operator secret (입력은 표시되지 않음): ' OP_SECRET; echo >&2
   RESP=$(printf 'header = "x-palm-extraction-secret: %s"\nheader = "x-palm-ingress-probe: 192.0.2.77"\n' "$OP_SECRET" \
     | curl -sS --max-time 20 --config - -X POST "$ORIGIN/api/palm/ingress-check" 2>/dev/null) || status INSTALL-ERROR
   unset OP_SECRET
-  ISSUED=$(python3 -c '
+  PARSED=$(python3 -c '
 import json, sys
 try:
     d = json.loads(sys.stdin.read())
 except Exception:
-    sys.exit(0)
-if d.get("ingress") == "established" and (d.get("deployment") or {}).get("commit") == sys.argv[1]:
-    print(d.get("verificationToken", ""))
-' "$EXPECTED_COMMIT" <<<"$RESP")
+    print("bad"); sys.exit(0)
+est = d.get("ingress") == "established" and isinstance(d.get("verificationToken"), str) and d["verificationToken"] != ""
+commit = (d.get("deployment") or {}).get("commit")
+print("established" if est else "bad")
+print("commit-ok" if isinstance(commit, str) and commit == sys.argv[1] else "commit-bad")
+print(d.get("verificationToken", "") if est else "")' "$EXPECTED_COMMIT" <<<"$RESP")
   unset RESP
-  [ -n "$ISSUED" ] || status INSTALL-ERROR
+  [ "$(sed -n 1p <<<"$PARSED")" = established ] || { unset PARSED; status INSTALL-ERROR; }
+  [ "$(sed -n 2p <<<"$PARSED")" = commit-ok ] || { unset PARSED; status STOP-COMMIT-UNVERIFIED; }
+  ISSUED=$(sed -n 3p <<<"$PARSED"); unset PARSED
+  active_is_dpl || status STOP-DEPLOYMENT-UNVERIFIED
   # --environment production 만 대상, 같은 환경의 기존 값은 --force로 교체 (값은 stdin)
   printf '%s' "$ISSUED" | vc env add PALM_TRUSTED_INGRESS_VERIFICATION --environment production \
     --project "$PROJECT_ID" --type secret --force --yes > /dev/null 2>&1 || status INSTALL-ERROR
@@ -320,9 +369,25 @@ if d.get("ingress") == "established" and (d.get("deployment") or {}).get("commit
 )
 ```
 
+```bash
+# [palm-redeploy-same-commit]  같은 배포(같은 커밋)를 현재 env로 다시 빌드해 Production에 배포한다 — 고정 버전·scope·빈 cwd·project 확인 포함
+(
+  { set +x +v; } 2>/dev/null
+  set -u
+  WORK=$(mktemp -d "${TMPDIR:-/tmp}/palm.XXXXXX") || exit 1
+  trap 'rm -rf "$WORK"' EXIT
+  trap 'exit 130' INT TERM
+  vc() { npx -y vercel@64.7.0 --non-interactive --no-color --scope "$TEAM" --cwd "$WORK" "$@"; }
+  vc project inspect "$PROJECT_ID" > /dev/null 2>&1 || { echo REDEPLOY-STOP-PROJECT; exit 0; }
+  vc redeploy "$DPL_ID" --environment production > "$WORK/redeploy.txt" 2>&1 && echo REDEPLOY-SUBMITTED || echo REDEPLOY-ERROR
+)
+```
+
+- 재배포가 끝나면 새 배포 ID를 대시보드에서 확인해 `DPL_ID`를 갱신한다. 그다음 1단계와 2단계를 다시 실행한다. 2단계의 자동 확인이 새 `DPL_ID`가 실제로 Production 도메인에 연결됐는지와 커밋을 함께 판정한다.
+
 ### 3단계 — 공개 OFF 게이트 확인 (실제 API 계약)
 
-- 기대값: session `200`, `enabled:false`, `__Host-palm_session` cookie 없음 / analyze 공개 분기 `503`, `error.code=UNAVAILABLE` / events `204`.
+- 기대값: session `200`, `enabled:false`, **Set-Cookie 헤더 없음** / analyze 공개 분기 `503`, `error.code=UNAVAILABLE` / events `204`.
 - cookie·CSRF 값은 출력하지 않고 boolean만 출력한다. 이 확인은 OFF kill switch 확인이며, 토큰 유효성 증명이 아니다.
 
 ```bash
@@ -345,21 +410,20 @@ def load(name):
         with open(os.path.join(work, name), errors="replace") as f:
             return f.read()
     except OSError:
-        return ""
-try:
-    sb = json.loads(load("s.body"))
-except Exception:
-    sb = None
-try:
-    ab = json.loads(load("a.body"))
-except Exception:
-    ab = None
-session_off = s == "200" and isinstance(sb, dict) and sb.get("enabled") is False
-no_cookie = "__host-palm_session=" not in load("s.head").lower()
+        return None
+def as_json(text):
+    try:
+        return json.loads(text) if text is not None else None
+    except Exception:
+        return None
+head = load("s.head")
+sb, ab = as_json(load("s.body")), as_json(load("a.body"))
+session_off = s == "200" and isinstance(sb, dict) and sb == {"enabled": False}
+no_set_cookie = head is not None and not any(l.split(":", 1)[0].strip().lower() == "set-cookie" for l in head.splitlines() if ":" in l)
 analyze_off = a == "503" and isinstance(ab, dict) and (ab.get("error") or {}).get("code") == "UNAVAILABLE"
 events_off = e == "204"
-print(f"session_off={session_off} no_session_cookie={no_cookie} analyze_503_unavailable={analyze_off} events_204={events_off}")
-print("OFF-CONFIRMED" if (session_off and no_cookie and analyze_off and events_off) else "OFF-NOT-CONFIRMED")
+print(f"session_off={session_off} no_set_cookie={no_set_cookie} analyze_503_unavailable={analyze_off} events_204={events_off}")
+print("OFF-CONFIRMED" if (session_off and no_set_cookie and analyze_off and events_off) else "OFF-NOT-CONFIRMED")
 PY
 )
 ```
@@ -374,10 +438,13 @@ PY
 2. **ON 설정과 재배포**:
    - Production scope에서 `PALM_EXTRACTION_ENABLED=true`, `PALM_PUBLIC_ENABLED=true`로 바꾼다. 코드상 둘 다 true여야 공개가 켜진다.
    - `OPENAI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`가 설정돼 있어야 한다.
-   - **같은 커밋**을 재배포한다. 새 커밋이면 토큰이 무효가 되어 공개는 켜지지 않는다.
+   - `palm-redeploy-same-commit`(`DPL_ID`=OFF 배포)으로 **같은 커밋**을 재배포한다. 새 커밋이면 토큰이 무효가 되어 공개는 켜지지 않는다.
    - env 변경만으로는 실행 중인 배포가 바뀌지 않는다.
    - 이 재배포부터 공개 경로가 실제로 열리며 비용 한도가 적용된다.
-3. **1단계(`palm-1b-inspect`)로 확인**: 새 배포가 Production 도메인에 연결됐고 커밋이 같은지 확인한다.
+3. **새 배포 확인**: `DPL_ID`를 새 배포 ID로 바꾸고 `palm-1b-inspect`(사람 확인)와 `palm-1b-compare`를 실행한다.
+   - compare가 Production 도메인의 배포 ID와 커밋(`EXPECTED_COMMIT`)을 자동으로 확인한다.
+   - `STOP-*`·`ERROR-*`·`MISMATCH`·`MISSING-IN-SETTINGS`이면 중단하고 1-D로 간다.
+   - `MATCH`, 또는 1-B에서 `INSTALLED-FROM-PROBE`를 기록한 뒤의 `UNVERIFIED`이면 4번 session 확인으로 최종 판정한다. `UNVERIFIED`는 여기서도 검증 완료가 아니며, 실행 중 config는 4번으로만 판정한다.
 4. **session 확인 — analyze 호출 전**: cookie를 보내지 않는 session POST 한 번으로 판정한다. 이 요청은 OpenAI를 호출하지 않는다. 세션 발급은 DB 한도 1회를 쓴다.
 
 ```bash
@@ -391,31 +458,97 @@ PY
   trap 'exit 130' INT TERM
   CODE=$(curl -sS --max-time 15 -o "$WORK/body" -D "$WORK/head" -w '%{http_code}' -X POST -H "Origin: $ORIGIN" "$ORIGIN/api/palm/session" 2>/dev/null) || CODE=000
   python3 - "$CODE" "$WORK" <<'PY'
-import json, os, sys
+import json, os, re, sys
 code, work = sys.argv[1:3]
 def load(name):
     try:
-        with open(os.path.join(work, name), errors="replace") as f:
-            return f.read()
-    except OSError:
-        return ""
+        with open(os.path.join(work, name), "rb") as f:
+            return f.read().decode("utf-8", "strict")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+# 응답 JSON — 실제 계약: {"enabled": true, "csrfToken": <43자 base64url>, "noticeVersion": "palm-processing-1"}
 try:
-    body = json.loads(load("body"))
+    body = json.loads(load("body") or "")
 except Exception:
     body = None
-enabled = isinstance(body, dict) and body.get("enabled") is True
-csrf_present = isinstance(body, dict) and isinstance(body.get("csrfToken"), str) and len(body["csrfToken"]) > 0
-cookies = [l for l in load("head").splitlines() if l.lower().startswith("set-cookie:") and "__Host-palm_session=" in l]
-c = cookies[0] if len(cookies) == 1 else ""
-cookie_ok = bool(c) and all(x in c for x in ("HttpOnly", "Secure", "SameSite=Strict", "Path=/")) and "domain=" not in c.lower()
-print(f"http_200={code == '200'} enabled_true={enabled} csrf_present={csrf_present} session_cookie_ok={cookie_ok}")
-print("SESSION-PASS" if (code == "200" and enabled and csrf_present and cookie_ok) else "SESSION-FAIL")
+json_ok = isinstance(body, dict) and set(body) == {"enabled", "csrfToken", "noticeVersion"} \
+    and body["enabled"] is True and body["noticeVersion"] == "palm-processing-1"
+csrf_ok = isinstance(body, dict) and isinstance(body.get("csrfToken"), str) \
+    and re.fullmatch(r"[A-Za-z0-9_-]{43}", body["csrfToken"]) is not None
+
+# Set-Cookie — 부분 문자열 검사 없이 이름·값·속성을 하나씩 정확히 파싱한다
+def parse_headers(raw):
+    if raw is None:
+        return None
+    lines = raw.replace("\r\n", "\n").split("\n")
+    if sum(1 for l in lines if l.startswith("HTTP/")) != 1 or not lines[0].startswith("HTTP/"):
+        return None                      # 응답 블록이 하나가 아니면(리다이렉트·1xx 포함) 판정하지 않는다
+    out = []
+    for l in lines[1:]:
+        if l == "":
+            continue
+        if l[0] in " \t" or ":" not in l:
+            return None                  # obs-fold·이름 없는 줄 = 형식 오류
+        name, value = l.split(":", 1)
+        if name != name.strip() or name == "":
+            return None
+        out.append((name.lower(), value.strip(" \t")))
+    return out
+
+def cookie_ok(v):
+    parts = v.split(";")
+    nv = parts[0]
+    if nv.count("=") < 1 or nv != nv.strip():
+        return False
+    name, val = nv.split("=", 1)
+    if name != "__Host-palm_session":
+        return False                     # 대소문자·유사 이름 불허
+    if re.fullmatch(r"[A-Za-z0-9_-]{43}\.[0-9]{1,12}\.[A-Za-z0-9_-]{43}", val) is None:
+        return False                     # 빈 값·형식이 다른 값 불허
+    seen = {}
+    for seg in parts[1:]:
+        seg = seg.strip(" \t")
+        if seg == "":
+            return False                 # 빈 속성(;;) = 형식 오류
+        k, eq, a = seg.partition("=")
+        k = k.strip(" \t").lower()
+        if k in seen:
+            return False                 # 중복 속성
+        seen[k] = (eq == "=", a.strip(" \t"))
+    if set(seen) != {"path", "max-age", "httponly", "secure", "samesite"}:
+        return False                     # Domain·Expires·Foo 등 그 밖의 속성, 필수 속성 누락 모두 실패
+    if seen["httponly"] != (False, "") or seen["secure"] != (False, ""):
+        return False                     # 값 없는 플래그여야 한다 (Secure=1 불허)
+    if seen["path"] != (True, "/") or seen["samesite"] != (True, "Strict"):
+        return False
+    has_eq, age = seen["max-age"]
+    return has_eq and re.fullmatch(r"[1-9][0-9]{0,4}", age) is not None and int(age) <= 86400
+
+headers = parse_headers(load("head"))
+headers_ok = headers is not None
+set_cookies = [v for n, v in (headers or []) if n == "set-cookie"]
+cookie_valid = headers_ok and len(set_cookies) == 1 and cookie_ok(set_cookies[0])
+print(f"http_200={code == '200'} json_contract={json_ok} csrf_format={csrf_ok} headers_well_formed={headers_ok} "
+      f"set_cookie_count_1={len(set_cookies) == 1} session_cookie_strict={cookie_valid}")
+print("SESSION-PASS" if (code == "200" and json_ok and csrf_ok and cookie_valid) else "SESSION-FAIL")
 PY
 )
 ```
 
-- **성공 조건(전부 충족)**: `SESSION-PASS`. 즉 HTTP 200, `enabled:true`, CSRF token 존재, `__Host-palm_session` cookie가 정확히 1개, 속성 `HttpOnly`·`Secure`·`SameSite=Strict`·`Path=/`, `Domain` 없음.
-- **그 밖의 모든 결과는 실패다**: `SESSION-FAIL`, HTTP 429(한도 초과면 `enabled:true`이지만 cookie가 없다), 403·503·000(네트워크 오류·timeout), JSON 파싱 실패, cookie 없음·중복·속성 불일치. → 즉시 1-D. OpenAI 호출 금지.
+- **성공 조건(전부 충족)**: `SESSION-PASS`.
+  - HTTP 200.
+  - JSON 키가 정확히 `enabled`·`csrfToken`·`noticeVersion`이고, `enabled === true`, `noticeVersion === "palm-processing-1"`.
+  - `csrfToken`이 서버 계약대로 43자 base64url(HMAC-SHA256)이다.
+  - 응답 전체의 Set-Cookie 헤더가 **정확히 1개**이고, 이름이 정확히 `__Host-palm_session`, 값이 `<43자>.<만료초>.<43자>` 형식이다.
+  - 속성은 정확히 `Path=/`, `Max-Age=<1~86400>`, `HttpOnly`, `Secure`, `SameSite=Strict` 다섯 개다. 각각 한 번씩만 나와야 한다.
+  - `HttpOnly`·`Secure`는 값 없는 플래그로만 인정한다. `Foo=Secure`, `Secure=1`은 Secure가 아니다.
+  - `Domain` 속성이 있으면 실패다. 다른 속성(`Expires`, 알 수 없는 속성)이 있어도 실패다.
+- **그 밖의 모든 결과는 실패다**:
+  - `SESSION-FAIL`, HTTP 429(한도 초과면 `enabled:true`이지만 cookie가 없다), 403·503·000(네트워크 오류·timeout), JSON 파싱 실패.
+  - cookie 없음·중복·유사 이름·빈 값, `Path=/admin`, 속성 중복·누락, `SameSite` 불일치, 형식이 깨진 헤더.
+  - → 즉시 1-D. OpenAI 호출 금지.
+- 출력은 boolean과 최종 상태뿐이다. cookie·CSRF 값은 출력하지 않는다.
 5. **SESSION-PASS 뒤에만**: 별도로 승인된 live OpenAI 1회 smoke를 진행한다(동의 사진, 결과 기록). 이것도 실패하면 1-D.
 6. **공개 유지 여부는 별도 결정**이다.
 
@@ -423,14 +556,43 @@ PY
 
 1. **가장 빠른 복귀**: 1-C 1번에서 기록한 OFF 배포로 되돌린다. 대시보드 Instant Rollback 또는 다음 명령을 쓴다. 되돌린 배포는 자신이 만들어질 때의 OFF env를 그대로 쓴다.
    ```bash
-   # [palm-rollback]
-   npx -y vercel@64.7.0 rollback "$OFF_DPL_ID" --scope "$TEAM" --yes
+   # [palm-rollback]  고정 버전·정확한 scope·빈 cwd. 대상 배포가 PROJECT_ID 소속인지 먼저 확인한다.
+   (
+     { set +x +v; } 2>/dev/null
+     set -u
+     WORK=$(mktemp -d "${TMPDIR:-/tmp}/palm.XXXXXX") || exit 1
+     trap 'rm -rf "$WORK"' EXIT
+     trap 'exit 130' INT TERM
+     vc() { npx -y vercel@64.7.0 --non-interactive --no-color --scope "$TEAM" --cwd "$WORK" "$@"; }
+     vc project inspect "$PROJECT_ID" > /dev/null 2>&1 || { echo ROLLBACK-STOP-PROJECT; exit 0; }
+     vc rollback "$OFF_DPL_ID" --yes > "$WORK/rollback.txt" 2>&1 && echo ROLLBACK-SUBMITTED || echo ROLLBACK-ERROR
+   )
    ```
-2. **설정도 OFF로 고정**: Production scope의 `PALM_PUBLIC_ENABLED=false`(필요하면 `PALM_EXTRACTION_ENABLED=false`)로 바꾼다. 이후 배포가 다시 ON으로 나가지 않게 하기 위해서다. 1번을 쓸 수 없으면 이 설정 후 **같은 커밋을 재배포**한다. env 변경만으로는 실행 중 배포가 바뀌지 않는다.
+   - 실행 전에 `palm-1b-inspect`(`DPL_ID="$OFF_DPL_ID"`)로 그 배포의 `name`이 이 프로젝트이고 `target`이 production인지 눈으로 확인한다.
+2. **설정도 OFF로 고정**: Production scope의 `PALM_PUBLIC_ENABLED=false`(필요하면 `PALM_EXTRACTION_ENABLED=false`)로 바꾼다. 이후 배포가 다시 ON으로 나가지 않게 하기 위해서다.
+   - 1번을 쓸 수 없으면 이 설정 후 `palm-redeploy-same-commit`으로 **같은 커밋을 재배포**한다. env 변경만으로는 실행 중 배포가 바뀌지 않는다.
 3. **OFF 복귀 완료 확인(둘 다 충족해야 완료)**:
-   - `palm-1b-inspect`(대상 `DPL_ID`를 현재 Production 배포로 바꿔서)로, Production 도메인에 연결된 배포가 OFF 배포(또는 OFF 설정 뒤 새로 만든 배포)인지 확인한다.
+
+```bash
+# [palm-active-deployment]  출력: ACTIVE-IS-EXPECTED 또는 ACTIVE-NOT-EXPECTED — Production 도메인이 EXPECTED_DPL_ID를 가리키는지
+(
+  { set +x +v; } 2>/dev/null
+  set -u
+  WORK=$(mktemp -d "${TMPDIR:-/tmp}/palm.XXXXXX") || { echo ACTIVE-NOT-EXPECTED; exit 1; }
+  trap 'rm -rf "$WORK"' EXIT
+  trap 'exit 130' INT TERM
+  npx -y vercel@64.7.0 --non-interactive --no-color --scope "$TEAM" --cwd "$WORK" inspect "${ORIGIN#https://}" > "$WORK/inspect.txt" 2>&1 \
+    || { echo ACTIVE-NOT-EXPECTED; exit 0; }
+  python3 -c '
+import re, sys
+ids = re.findall(r"^\s*id\s+(dpl_[A-Za-z0-9]+)\s*$", open(sys.argv[1], errors="replace").read(), re.M)
+print("ACTIVE-IS-EXPECTED" if len(ids) == 1 and ids[0] == sys.argv[2] else "ACTIVE-NOT-EXPECTED")' "$WORK/inspect.txt" "$EXPECTED_DPL_ID"
+)
+```
+
+   - `palm-active-deployment`가 `ACTIVE-IS-EXPECTED`를 출력한다. `EXPECTED_DPL_ID`에는 `OFF_DPL_ID`(또는 OFF 설정 뒤 새로 만든 배포 ID)를 넣는다.
    - `palm-off-gate`가 `OFF-CONFIRMED`를 출력한다.
-   - `OFF-NOT-CONFIRMED`이면 1~2번을 반복하고, 확인될 때까지 어떤 Palm 시험·OpenAI 호출도 하지 않는다.
+   - 어느 하나라도 아니면(`ACTIVE-NOT-EXPECTED`, `OFF-NOT-CONFIRMED`) 1~2번을 반복하고, 확인될 때까지 어떤 Palm 시험·OpenAI 호출도 하지 않는다.
 
 ## 2. Kill switch
 

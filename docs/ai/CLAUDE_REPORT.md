@@ -1,3 +1,45 @@
+# Palm Phase 1C — R-2 targeted runbook fix (Codex a6757ed MINOR 3건)
+
+Status: **AWAITING CODEX FINAL R-2 REVIEW** (승인 아님 · 공개 OFF · migration 미실행)
+
+`docs/palm-phase1c-operations.md`만 수정했다. 코드·API·SQL·Vercel 설정 변경, 실제 secret 조회·Production 조작, OpenAI 호출, merge/push 없음. R-1·R-2b 범위(1-0 env scope 표, 1-A, 누출 방지 패턴)는 바꾸지 않았다.
+
+## FIX 1 — Secret 확인의 불확실성 (R-2a)
+
+- CLI 64.7.0 근거: `envPullCommandLogic`은 `--id`가 있으면 `pullResult.buildEnv`를 쓰고, `getRedactedSensitiveKeys`에 프로젝트 ID를 넘기지 않아 Secret 판별·보존이 없다. 로컬에만 있는 키는 유지되고(sentinel 잔존), 빈 값은 빈 값으로 쓴다.
+- 판정 변경: sentinel 잔존·빈 값 → `UNVERIFIED`(Secret·스냅샷 누락·빈 설치 구별 불가). 비어 있지 않은 다른 값 → `MISMATCH`. `env list` 부재 → `MISSING-IN-SETTINGS`(현재 설정 판정이며 스냅샷 판정 아님). 같은 키 줄이 1개가 아니면 `UNVERIFIED`.
+- `UNVERIFIED`는 MATCH·MISSING·검증 완료로 승격하지 않는다. 보류(멈춤, 8단계 진입 불가) 또는 `palm-1b-install` 재설정(INSTALLED-FROM-PROBE) 두 경로를 유지했다. 8단계 진입 조건은 `MATCH` 또는 `INSTALLED-FROM-PROBE` 그대로다.
+
+## FIX 2 — 커밋 SHA와 CLI 일관성 (R-2a)
+
+- CLI 64.7.0 `inspect`(printDetails)는 id·name·target·status·url·created·Aliases만 출력하며 git SHA가 없다. 문서의 "inspect로 커밋 확인" 문구를 제거했다.
+- 자동 확인: compare·install 스크립트가 `vc inspect <ORIGIN 호스트>`(소스상 `getDeployment(..., deploymentIdOrHost)`)의 `id` 줄이 정확히 1개이고 `DPL_ID`와 같은지 probe 전후 두 번 확인한다. 커밋은 probe의 `deployment.commit`(실행 중 배포의 `VERCEL_GIT_COMMIT_SHA` 7자리, 토큰 결합 값)이 `EXPECTED_COMMIT`과 같아야 한다. 실패 시 `STOP-DEPLOYMENT-UNVERIFIED`/`STOP-COMMIT-UNVERIFIED`.
+- 모든 CLI 호출이 `npx -y vercel@64.7.0 --non-interactive --no-color --scope "$TEAM" --cwd <빈 임시 디렉터리>`를 쓴다. 새 `palm-redeploy-same-commit`, 수정된 `palm-rollback`은 `project inspect "$PROJECT_ID"` 확인 후 실행한다. `--token` 미사용. 1-D 복귀 확인에 `palm-active-deployment`(ACTIVE-IS-EXPECTED) 추가.
+
+## FIX 3 — 엄격한 Set-Cookie 파싱 (R-2c)
+
+- 부분 문자열 검사를 제거했다. 응답 블록 1개, 헤더 형식 오류(obs-fold·콜론 없는 줄) 시 실패.
+- Set-Cookie 헤더는 응답 전체에서 정확히 1개, 이름 `__Host-palm_session` 정확 일치, 값 `<43>.<1~12자리>.<43>` base64url.
+- 속성은 정확히 Path·Max-Age·HttpOnly·Secure·SameSite 5개, 중복·빈 속성·Domain·기타 속성 실패. `Path=/`, `SameSite=Strict` 정확 일치, HttpOnly/Secure는 값 없는 플래그, Max-Age 1~86400.
+- JSON 키 정확히 {enabled, csrfToken, noticeVersion}, `enabled === true`, `noticeVersion === "palm-processing-1"`, CSRF 43자 base64url. HTTP 200까지 모두 충족해야 SESSION-PASS. 출력은 boolean뿐.
+- OFF 게이트는 Set-Cookie 헤더가 하나라도 있으면 OFF-NOT-CONFIRMED.
+
+## 검증 (scratchpad harness, 커밋 안 함)
+
+- 반례 fixture 45건: 수정 전(HEAD a6757ed 문서) FAIL 33 / 수정 후 FAIL 0. env pull은 실제 64.7.0 `envPullCommandLogic`을 가짜 fetch로 호출했다(readable/empty/absent/mismatch).
+  - FIX1 5건(전 2 PASS·3 FAIL → 후 5 PASS), FIX2 14건(전 0 PASS → 후 14 PASS), FIX3 26건(전 10 PASS·16 FAIL → 후 26 PASS).
+- OFF 게이트 + 무관한 Set-Cookie: 전 OFF-CONFIRMED → 후 OFF-NOT-CONFIRMED.
+- 기존 harness 52건 PASS(상태명은 새 이름으로 갱신), 누출 0·임시 디렉터리 정리 확인. 대조군: argv secret·정리 누락 검출.
+- 문서 bash 블록 10개 `bash -n` 0 오류.
+
+## 남은 운영 게이트
+
+N-1 실제 PostgreSQL 다중 연결 smoke(migration 후·live 전), migration·DB 권한·cleanup 예약, 외부 ingress 실측(1-A), 실제 1-B 실행, 실기기 mock, 8단계 별도 ON/live 승인. 실제 Vercel API의 `inspect <alias 호스트>` 응답과 `env pull --id` 응답은 가짜 fetch로만 확인했으므로 첫 실행 결과를 운영 기록으로 확인한다.
+
+---
+
+## 이전 보고 (원문 보존)
+
 # Palm Phase 1C — R-2 runbook 보정 (Codex 7f339b6 R-2a/b/c)
 
 Status: **AWAITING CODEX R-2 FINAL REVIEW** (승인 아님 · 공개 OFF · migration 미실행)
