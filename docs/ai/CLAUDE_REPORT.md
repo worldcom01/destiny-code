@@ -1,3 +1,61 @@
+# Palm Phase 1C — R-2 runbook 보정 (Codex 7f339b6 R-2a/b/c)
+
+Status: **AWAITING CODEX R-2 FINAL REVIEW** (승인 아님 · 공개 OFF · migration 미실행)
+
+`docs/palm-phase1c-operations.md`만 수정했다. 코드·API·SQL·Vercel 설정 변경, OpenAI 호출, merge/push 없음. R-1은 CLOSED 그대로다.
+
+## R-2a 프로젝트 지정과 읽기 불가 Secret
+
+- CLI 버전을 `npx -y vercel@64.7.0`로 고정했다. 문서에 쓴 옵션은 모두 이 버전의 `--help`로 확인했다.
+- 모든 호출에 `--scope` 팀, 프로젝트 **ID**, 빈 임시 `--cwd`를 명시한다. 저장소나 다른 디렉터리의 `.vercel/project.json`(link)을 읽지 않는다.
+- `palm-1b-inspect`로 프로젝트 ID·이름, Production 배포·alias·커밋·생성 시각을 확인한다.
+- 설치값은 `env pull --id <실행 중 배포 ID>`로 그 배포의 값을 대상으로 한다.
+- Secret 처리: Vercel 문서상 Production 기본 type은 Secret이다. 읽을 수 없는 Secret이면 `env pull`이 로컬 파일 값을 유지한다.
+  - 그래서 무작위 sentinel을 미리 써 두고, 남아 있으면 `UNREADABLE`로 판정한다. 변수가 없는 경우는 `env list`로 먼저 `MISSING`으로 분리한다.
+  - 출력 상태: MATCH / MISMATCH / UNREADABLE / MISSING / ERROR-PROBE·PULL·LIST.
+  - UNREADABLE은 검증 완료가 아니다. 선택지는 둘이다.
+    1. 검증 보류(UNVERIFIED-SECRET): 1-C session으로만 판정한다.
+    2. 안전한 재설정(INSTALLED-FROM-PROBE): `palm-1b-install`로 probe 재발급값을 stdin으로 Production Secret에 설치(`env add --environment production --type secret --force`)하고 같은 커밋을 재배포한다. 값 대조가 아니라 설치 경로 증거다.
+  - Config로 낮추지 않는다. `env update`(변수가 걸친 모든 환경 변경)는 쓰지 않는다.
+
+## R-2b 누출 방지와 정리
+
+- 모든 비밀 처리 스크립트는 subshell 첫 줄에서 `set -x/-v`를 끈다.
+- operator secret은 `read -rs`로 입력받아 stdin curl config(`--config -`)로만 전달한다. argv·history·화면에 남지 않는다.
+- 토큰은 stdin으로만 CLI에 전달한다(`--value`/`--token` 미사용).
+- 임시 디렉터리는 `umask 077` + 명시 템플릿 `mktemp -d "${TMPDIR:-/tmp}/palm.XXXXXX"`로 만들고, `trap`으로 EXIT·INT·TERM 시 삭제한다.
+- 출력은 상태와 boolean만이다.
+- 1-A probe 함수도 같은 방식으로 바꿨다. 응답에서 `verificationToken`을 지우고 `tokenIssued`만 표시한다.
+- cookie·CSRF가 보이던 `grep` 예시는 모두 제거하고 boolean 판정 스크립트로 교체했다.
+- **가짜 값 harness**(scratchpad, 커밋 안 함): 문서 블록을 그대로 추출해 가짜 `curl`/`npx vercel`로 `bash -x` 실행했다. 50개 검사 PASS.
+  - 모든 상태 판정
+  - pull 실패(파일 작성 후 exit 23)·probe 실패·SIGINT 중단 시 임시 디렉터리 정리
+  - stdout·xtrace stderr·argv에 가짜 secret·토큰·cookie·CSRF 0건
+  - 토큰이 stdin으로만 CLI에 전달됨, Production 한정 `--force`, 1-A 토큰 비표시
+  - ON/OFF 게이트 판정
+- 대조군: 정리 누락·xtrace 토큰·argv secret을 모두 검출했다.
+- 검증 중 발견해 고친 것: macOS `mktemp -d`(인자 없음)는 `TMPDIR`를 무시해, 정리 검사가 처음엔 무효였다. 명시 템플릿으로 고친 뒤 대조군으로 검출력을 확인했다.
+
+## R-2c ON 확인과 OFF 복귀
+
+- 문서 머리말과 8단계를 정합화했다.
+  - 공개 ON은 1~7단계(migration·N-1·mock) 완료와 별도 승인 뒤 8단계 안에서만 한다.
+  - 순서: ON 설정(두 flag 모두 true) + 같은 커밋 재배포 → 1-C session → 별도 승인 live 1회 → 공개 유지 결정.
+- 1-C `palm-on-session`: cookie 없이 session POST 1회를 보낸다.
+  - 성공 조건: `SESSION-PASS` = HTTP 200 + `enabled:true` + CSRF 존재 + `__Host-palm_session` 정확히 1개 + HttpOnly·Secure·SameSite=Strict·Path=/·Domain 없음.
+  - 429(`enabled:true`·cookie 없음)·네트워크·timeout·파싱 실패·속성 불일치 등은 모두 FAIL → OpenAI 금지 → 1-D.
+- 1-D:
+  - 기록해 둔 `OFF_DPL_ID`로 `vercel rollback`(또는 대시보드 Instant Rollback).
+  - Production env를 OFF로 고정한다. rollback이 불가하면 같은 커밋을 재배포한다.
+  - 완료 판정: inspect로 연결된 배포 확인 **그리고** `palm-off-gate`가 `OFF-CONFIRMED`. 그 전까지 어떤 시험·호출도 하지 않는다.
+- 문서 bash 블록 8개 모두 `bash -n` PASS.
+
+## 남은 게이트
+
+N-1 실제 다중 연결 PostgreSQL smoke(migration 후·live 전), 외부 ingress 확인, 1-B 실행, 실기기 mock, 8단계 별도 승인.
+
+---
+
 # Palm Phase 1C — 운영 runbook MINOR 수정 (Codex ee233f3 R-1/R-2)
 
 Status: **AWAITING CODEX FINAL CONFIRMATION** (승인 아님 · 공개 OFF · migration 미실행)

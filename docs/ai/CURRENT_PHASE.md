@@ -1,3 +1,18 @@
+# Palm Phase 1C — R-2 runbook 보정
+
+Status: **AWAITING CODEX R-2 FINAL REVIEW** (승인 아님 · 공개 OFF · Supabase migration 미실행)
+
+- Codex `7f339b6`(B: MINOR 3 / NOTE 1, R-1 CLOSED·R-2 OPEN)의 세 항목을 운영 문서에만 반영했다. 상세는 `CLAUDE_REPORT.md` 최상단.
+  - R-2a: 팀·프로젝트 ID 명시와 CLI 64.7.0 고정, Secret 읽기 불가 판정(UNREADABLE)과 보류·재설정 절차
+  - R-2b: xtrace·argv·history·출력 차단, trap 정리. 가짜 값 harness 50 PASS, 대조군 검출 확인
+  - R-2c: ON 순서 정합화, SESSION-PASS 조건, 모든 실패 시 1-D OFF 복귀와 OFF-CONFIRMED 판정
+- 코드·SQL·설정 변경 없음, 유료 호출 0, merge/push 없음.
+- 남은 게이트: N-1(migration 후·live 전), 외부 ingress 확인, 1-B 실행, 실기기 mock, 8단계 별도 승인.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm Phase 1C — 운영 runbook 최종 재확인 (2026-10-20, 8b64d3c)
 
 **판정: B — 경미한 수정 필요. CRITICAL 0 / IMPORTANT 0 / MINOR 3 / NOTE 1.**
