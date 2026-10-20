@@ -1,3 +1,20 @@
+# Palm Phase 1C — R-2 종료 검수 (2026-10-20, f96e58e)
+
+**판정: A — R-2 CLOSED / APPROVED FOR CONTROLLED OFF-STATE OPERATIONS**
+
+- **CRITICAL 0 / IMPORTANT 0 / MINOR 0 / NOTE 1. R-2a/R-2b/R-2c CLOSED, R-1 CLOSED 유지.** 직전 `a6757ed` 세 MINOR 종료. 아래 이전 상태를 대체한다.
+- Secret sentinel/빈 값은 UNVERIFIED, 현재 설정 부재는 MISSING-IN-SETTINGS로 분리한다. UNVERIFIED 단독으로 8단계 진입 불가. MATCH 또는 설치 경로 증거 INSTALLED-FROM-PROBE와 동일 커밋 재배포·새 배포 확인이 필요하다.
+- 고정 CLI 64.7.0 출력의 id 추출과 실제 probe의 7자리 commit 계약 확인. 7자리 SHA는 충돌 가능한 표시값이며 HMAC은 전체 40자리 SHA 결합이다. 전후 배포 확인은 원자적 잠금이 아니므로 통제된 작업 중 동시 배포/alias 변경 없이 수행하고 변경 시 재검증한다.
+- strict session 파서의 cookie/속성/JSON·CSRF·noticeVersion 계약 확인. 반례 45/45, 기존 harness 52/52, bash 10블록, 실제 CLI 출력 fixture·실제 helper session 응답·SHA 결합·trace/cleanup 추가 검증 PASS. 실제 운영 API 검증은 미실행이다.
+- **N-1 실제 다중 연결 PostgreSQL smoke는 migration 후·유료 사용 전 미완료 운영 게이트. PGlite로 대체하지 않는다.** 실제 Vercel alias/API/system env, 외부 ingress·두 네트워크, 토큰 설치/동일 커밋 재배포/OFF 게이트, DB 권한/cleanup, 실기기 mock도 운영에서 확인한다.
+- 공개 OFF 절차 문서 승인이다. migration/ON/live/launch/merge/push의 실행 승인이 아니다. ON과 live는 운영 증거 확인 뒤 각각 별도 승인이다.
+- 리뷰 문서 두 개만 갱신·로컬 커밋. 코드/API/SQL/Vercel 설정/Supabase migration/OpenAI 호출/public ON/merge/push 없음. 전체 회귀/build/lint 재실행 없음.
+- 다음 단일 권고: 별도 운영 지시 아래 runbook 1~2단계의 대상 확인과 공개 OFF 배포 준비를 진행한다. 상세 검증·한계·게이트는 CODEX_REVIEW 최상단.
+
+---
+
+## 이전 상태 기록 (아래 판정은 위 최신 기록으로 대체됨)
+
 # Palm Phase 1C — R-2 targeted runbook fix (Codex a6757ed 후속)
 
 Status: **AWAITING CODEX FINAL R-2 REVIEW** (승인 아님 · 공개 OFF · Supabase migration 미실행)

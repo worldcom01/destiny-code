@@ -1,3 +1,70 @@
+# Palm Phase 1C — R-2 종료 검수 (2026-10-20, f96e58e)
+
+**판정: A — R-2 CLOSED / APPROVED FOR CONTROLLED OFF-STATE OPERATIONS**
+
+**CRITICAL 0 / IMPORTANT 0 / MINOR 0 / NOTE 1. R-2a CLOSED / R-2b CLOSED / R-2c CLOSED. R-1 CLOSED 유지.** 직전 `a6757ed`의 세 MINOR가 해결됐다. 이 판정은 통제된 공개 OFF 준비 절차의 문서·코드 계약 검수 승인이다. 실제 Vercel 검증 완료, N-1 통과, migration 실행, public ON/live/merge/push 승인이 아니다. 아래 이전 판정은 이 기록으로 대체한다.
+
+## 범위와 독립 검증
+
+검수 HEAD `f96e58e`, 직전 검수 `a6757ed`. 운영 문서, CODEX_REVIEW/CURRENT_PHASE/CLAUDE_REPORT를 먼저 읽고 실제 diff·서버 API 계약·고정 CLI 64.7.0 구현을 대조했다. 대상 변경은 문서 3개뿐이다. 검수 중 production TypeScript/API/SQL, 운영 설정, 테스트/baseline은 변경하지 않았다. 기존 Phase 1C 아키텍처·Identity·I-1 설계를 다시 열지 않았다.
+
+Claude scratchpad fixture/harness를 읽어 외부 명령이 fake로 치환되고 실제 CLI 내부 함수의 fetch도 주입되는지 확인한 후 독립 재실행했다. 보고서 PASS를 증거로 대신하지 않았다. 추가로 실제 CLI 출력 함수, 실제 session/cookie helper, 전체 SHA 결합과 호출 셸 trace를 별도 fixture로 확인했다. 실행 증거는 `/tmp/palm-r2-closure`에 있으며 실제 비밀값은 사용하지 않았다.
+
+## R-2a CLOSED — Secret 판정과 설치 경로
+
+- `docs/palm-phase1c-operations.md:227`~`:246`, `:293`~`:306`: deployment pull은 buildEnv를 쓰며 Secret 전용 보존 판별을 하지 않는다는 설명이 CLI 64.7.0 구현과 일치한다. sentinel 잔존·빈 값·단일 키 판독 불가는 **UNVERIFIED**다. 현재 설정에서 이름이 없는 경우는 **MISSING-IN-SETTINGS**로 분리하며 배포 스냅샷 부재로 단정하지 않는다.
+- `:310`~`:318`, `:50`: UNVERIFIED만으로 8단계에 진입하지 못한다. 보류하거나 안전한 재설정을 완료해야 한다. 승인 조건은 MATCH 또는 INSTALLED-FROM-PROBE이며, 후자는 값 대조가 아니라 설치 경로 증거다. 설치 직후 출력만으로 끝내지 않고 같은 커밋 재배포·새 배포 확인을 수행한다.
+- `:325`~`:386`: 설치는 Production 도메인의 배포 ID와 probe 커밋을 확인하고, 고정 CLI·scope·빈 cwd·명시 프로젝트/Production·Secret 타입·stdin으로 수행한다. 프로젝트 ID와 배포 ID는 운영자가 대시보드 및 사람 확인 단계에서 일치시켜야 한다. `env pull --id --project`는 고정 CLI에서 배포의 프로젝트 일치도 검사한다. 재배포는 기존 DPL_ID와 Production 환경을 사용하므로 토큰 적용을 위해 새 커밋이 필요하지 않다.
+- `:444`~`:447`: ON 승인 후 새 배포 compare가 UNVERIFIED라도 **앞서 INSTALLED-FROM-PROBE를 완료한 기록이 있을 때만** session 최종 확인으로 간다. 이는 준비 단계의 UNVERIFIED 단독 승격이 아니다. STOP/ERROR/MISMATCH/MISSING-IN-SETTINGS는 중단·OFF 복귀다.
+
+## R-2a CLOSED — 배포/커밋 식별 및 정확한 한계
+
+`docs/palm-phase1c-operations.md:193`~`:219`, `:260`~`:291`, `:336`~`:364`, `:373`~`:386`, `:576`~`:595`를 확인했다.
+
+- CLI **64.7.0**의 version/help를 실제 로컬 패키지 entrypoint로 실행했다. inspect/redeploy/rollback/env pull/env add 옵션은 유효하다. 계정·배포 명령은 실행하지 않았다. --no-color·scope·빈 cwd를 사용하고, git SHA가 inspect 출력에 있다는 가정은 제거됐다.
+- 실제 CLI `printDetails`에 가짜 deployment를 넣어 생성한 출력에서 문서와 같은 정규식으로 **id 줄 1개·정확한 DPL_ID**가 추출됐다. CLI의 inspect host는 getDeployment에 host를 넘기는 경로다. 실제 alias API 응답은 이번에 호출하지 않았으므로 첫 운영 실행에서 확인한다.
+- probe `deployment.commit`은 실제 `palmIngressProbe.ts:67`의 `commitSha.slice(0, 7)`과 일치한다. 누락/다른 커밋, inspect 실패/ID 누락/중복/불일치, probe 전후 배포 변경은 STOP으로 중단되고 설치하지 않는다.
+- **7자리 SHA는 식별 보조값이다.** 28비트 prefix이므로 충돌이 가능하며 전체 커밋 동일성의 암호학적 증명으로 취급하지 않는다. 실제 HMAC은 `palmPublicAccess.ts:95`~`:111`의 **전체 40자리 SHA**에 결합한다. 별도 가짜 env 검증에서 앞 7자리가 같고 뒤 33자리가 다른 두 SHA의 토큰은 달랐다. 짧은 표시값 때문에 토큰이 7자리 결합으로 약해지는 것은 아니다.
+- probe 전후의 exact DPL_ID 점검은 관측된 변경을 거부하며, 이후 재배포·새 DPL_ID 확인·compare/session을 다시 거친다. 다만 API 조회 두 번이 원자적 배포 잠금은 아니다. 확인 사이에 배포가 바뀌었다 돌아오는 ABA나 확인 직후 변경까지 증명하지 못한다. 통제된 운영 작업 중 동시 릴리스/alias 변경 없이 수행하고 변경이 있으면 새 DPL_ID로 재검증한다. 플랫폼 attestation이나 모든 TOCTOU 제거를 주장하지 않는다. 이 한계는 기존 운영자 관리 위협 모델 안에서 허용된다.
+
+## R-2c CLOSED — 엄격한 session 응답 파싱
+
+`docs/palm-phase1c-operations.md:451`~`:551`의 실제 파서와 `palmPublicAccess.ts:193`~`:215`, `palmPublicSession.ts:64`~`:68`, `palmSupplement.ts:19`를 대조했다.
+
+- HTTP 200, 정확한 JSON 키·enabled true·noticeVersion `palm-processing-1`·43자 base64url CSRF를 요구한다.
+- Set-Cookie는 전체에서 정확히 하나이며 이름 완전 일치·서명 session 형식·비어 있지 않은 값을 요구한다. 유사 이름/추가 cookie/중복 cookie/중복·누락·알 수 없는 속성/Domain을 거부한다.
+- Path=/, HttpOnly/Secure 값 없는 플래그, SameSite=Strict, Max-Age 1~86400을 검사한다. 직전의 Path=/admin·Foo=Secure·빈 값·유사 이름 오탐이 사라졌다. Max-Age=0, obs-fold, 콜론 없는 header 및 복수 응답 블록도 거부한다.
+- 실제 session/cookie helper로 만든 가짜 서명 cookie·CSRF·정상 JSON/header를 문서 파서에 넣어 **SESSION-PASS**를 확인했다. 서명을 파서가 서버 secret 없이 검증한다는 뜻은 아니며 실제 API가 발급한 응답의 형식/운영 계약 확인이다.
+- 실패 결과는 모두 1-D 및 live 금지로 연결된다. OFF 배포 복귀, **현재 Production 설정도 OFF 고정**, 실제 도메인 연결 ID 및 OFF-CONFIRMED 확인을 구별해 요구하므로 다음 재배포의 ON 재적용 위험을 처리한다. 이번에 rollback을 실행한 것은 아니다.
+
+## 독립 실행 결과 / R-2b 유지
+
+- 반례 **45/45 PASS**: Secret 판정 5, 배포/커밋 14, strict session 26. 실제 고정 CLI `envPullCommandLogic`의 readable/empty/absent/mismatch 응답은 가짜 fetch로 시험했다. 정상 fixture는 PASS, 나열된 부정 fixture는 FAIL로 판정됐다.
+- 기존 harness **52/52 PASS**(최종 요약 PASS 제외). CLI 실패·probe 실패·SIGINT cleanup, stdin 설치, OFF/ON 응답 판정, stdout/stderr/argv 가짜 비밀 누출 검사 회귀 없음.
+- bash 코드 블록 **10/10 구문 PASS**. 실제 고정 CLI 출력 함수로 ID 추출 PASS. 실제 helper 생성값 session 파서 PASS. 같은 7자리·다른 전체 SHA의 HMAC 차이 PASS.
+- 추가로 호출 셸 set -x/set -v를 함께 켠 compare/install/ON-session 실행에서 가짜 operator secret/token/cookie/CSRF 누출 0, 임시 디렉터리 정리 PASS. **R-2b CLOSED 유지**. 실제 비밀값이나 운영 인증정보를 읽지 않았다.
+- 전체 회귀·golden·TypeScript/build/lint는 이번 문서 한정 종료 검수에서 재실행하지 않았다. 과거 검수 결과를 이번 실행 결과로 혼용하지 않는다. `git diff --check` PASS.
+
+## NOTE N-1 및 실제 운영 게이트
+
+**NOTE 1건 N-1 유지:** migration 후·유료 사용 전 **실제 별도 연결 PostgreSQL**에서 중복 ID reserve, 한도 직전 경쟁·동시성, lease 복구, finalize 경합·보수적 회계를 확인해야 한다. 미실행이며 PGlite로 통과 처리하지 않는다. 문서 승인 실패 사유가 아니다.
+
+실제 운영에서 확인해야 할 항목:
+
+1. 대상 팀/프로젝트·Production system env·git SHA·공개/추출 OFF 및 로그/APM 비수집 설정.
+2. 별도 승인 migration·권한·cleanup 및 N-1, 격리 실기기 mock.
+3. 같은 배포/UTC 날짜의 두 네트워크·위조 헤더·공개 도메인/alias ingress 실측.
+4. 실제 Vercel API의 inspect host→DPL_ID, env pull --id 응답·권한, 설치/동일 커밋 재배포·새 도메인 연결 및 OFF 게이트 증거. fixture 통과를 실제 API 검증 완료로 보고하지 않는다.
+5. 위 증거 확인 뒤에만 별도 ON 승인, 승인 후 session 성공, 별도 live 1회 승인. public 유지/launch/merge/push도 별도 결정이다.
+
+이번에는 CODEX_REVIEW/CURRENT_PHASE 리뷰 문서만 갱신·로컬 커밋한다. production TypeScript/API/SQL·Vercel 설정 변경, Supabase migration, OpenAI 호출, public ON, merge/push 없음.
+
+**다음 단일 권고: 별도 운영 지시 아래 runbook 1~2단계의 대상 확인과 공개 OFF 배포 준비를 진행한다.** 이번 문서 승인만으로 운영 설정을 변경하지 않는다.
+
+---
+
+## 이전 검수 기록 (아래 판정은 위 최신 기록으로 대체됨)
+
 # Palm Phase 1C — R-2 최종 집중 검수 (2026-10-20, 3a66c7f)
 
 **판정: B — MINOR FIXES REQUIRED (경미한 수정 필요)**
