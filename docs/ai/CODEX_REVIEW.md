@@ -1,3 +1,81 @@
+# Palm Phase 1C — R-2 최종 집중 검수 (2026-10-20, 3a66c7f)
+
+**판정: B — MINOR FIXES REQUIRED (경미한 수정 필요)**
+
+**CRITICAL 0 / IMPORTANT 0 / MINOR 3 / NOTE 1. R-2a OPEN / R-2b CLOSED / R-2c OPEN. R-1 CLOSED 유지.** 아래 이전 판정을 이 기록으로 대체한다. 기존 I-1 결합 설계·Phase 1C 아키텍처·Identity는 재검토/변경하지 않았다. N-1 미실행은 문서 승인 보류 사유가 아니다.
+
+## 범위와 검증 방법
+
+HEAD `3a66c7f`, 직전 검수 `7f339b6`. 운영 문서와 CODEX_REVIEW/CURRENT_PHASE/CLAUDE_REPORT를 먼저 읽고 변경 diff를 대조했다. 커밋 변경은 문서 3개뿐이다. 실제 서버 session/cookie/config 계약과 **캐시된 Vercel CLI 64.7.0 패키지**의 help·구현을 읽었다. 최신 웹 문서를 고정 버전 구현의 증거로 대신하지 않았다. CLI 실행은 version/help뿐이며 계정 조회·설정 변경·배포·rollback 명령은 실행하지 않았다. CLI 내부 함수 시험은 가짜 client.fetch로 모든 응답을 주입했다.
+
+## MINOR R-2a-1 — deployment pull에서 sentinel 해석이 실제 CLI와 다름
+
+위치: `docs/palm-phase1c-operations.md:215`~`:227`, `:259`~`:270`.
+
+`--id`는 실제 지정 배포의 `buildEnv`를 읽는다. 옵션은 유효하고 `--project`와 함께 쓰면 CLI가 배포의 프로젝트 일치를 확인한다. 다만 이 경로는 **프로젝트별 Secret redaction 처리와 로컬 Secret 보존을 건너뛴다**. 64.7.0 `envPullCommandLogic`은 `records=deploymentId?pullResult.buildEnv:pullResult.env` 다음 `getRedactedSensitiveKeys`에 deploymentId가 있으면 projectId를 넘기지 않는다. 이 함수는 projectId가 없으면 빈 Set을 반환한다.
+
+실제 CLI 함수에 가짜 배포 응답을 넣은 독립 재현(`/tmp/palm-r2-final/cli-pull.mjs`):
+
+- buildEnv에 가짜 토큰 값이 있으면 sentinel을 교체한다(정상 MATCH 가능).
+- 같은 키가 빈 문자열이면 sentinel을 **빈 값으로 교체**한다. 읽기 불가 응답이 빈 값으로 주어져도 이 스크립트는 UNREADABLE이 아닌 MISMATCH다. 실제 API가 항상 이런 응답을 준다고 주장하지 않는다.
+- buildEnv에 키가 없으면 local-only 키 보존으로 sentinel이 남는다. **현재 Production 설정에는 변수가 있지만 기존 실행 배포에는 없을 때**도 문서 스크립트는 UNREADABLE로 분류한다. `env list`는 현재 설정이므로 해당 배포 스냅샷의 누락을 가려 주지 못한다.
+
+따라서 sentinel 잔존만으로 “Vercel Secret이라 읽을 수 없음”을 확정할 수 없다. 다행히 MATCH로 오인하지 않고 중단/재설정하므로 유료 gate 우회는 없다. 실제 운영 Secret 타입이나 실제 API 응답을 이번에 조회했다고 주장하지 않는다.
+
+최소 수정: 배포 스냅샷과 현재 설정의 존재 검사를 구별하고, sentinel/빈 값만으로 Secret 원인을 확정하지 않는다. 추가 metadata로 확정하지 못하면 `UNVERIFIED` 등 보수적 결과로 중단·재설정하도록 명시한다. 실제 64.7.0 병합 함수를 통과하는 absent/empty/readable fixture를 추가한다. Secret을 Config로 낮추지 않는다. UNREADABLE/UNVERIFIED는 완료가 아니며, 현 문서 50행의 MATCH 또는 INSTALLED-FROM-PROBE 운영 진입 조건은 유지한다.
+
+## MINOR R-2a-2 — inspect 출력에 커밋이 없고 재배포 예시는 공통 CLI 선택 규칙을 따르지 않음
+
+위치: `docs/palm-phase1c-operations.md:188`~`:209`, `:280`.
+
+`project inspect "$PROJECT_ID"`와 `inspect "$DPL_ID"`는 유효하지만 기본 inspect 출력에는 git SHA가 없다. 208행의 “그 출력에서 EXPECTED_COMMIT 확인”은 그대로 실행할 수 없다. 실제 64.7.0 `printDetails`를 가짜 배포(meta에 SHA 포함)로 실행했을 때 id/alias는 출력되고 SHA는 출력되지 않았다(`/tmp/palm-r2-final/inspect-fixture.mjs`). 이 버전의 `inspect --json`도 정해진 필드만 내보내며 git metadata를 포함하지 않으므로, 단순히 --json을 붙이라는 수정도 정확하지 않다.
+
+280행의 대안 `vercel redeploy "$DPL_ID"`는 버전·scope·빈 cwd를 지정하지 않아 188행 “모든 CLI 호출” 계약에도 맞지 않는다. 배포 ID는 전역 고유하므로 이것만으로 다른 프로젝트가 변경된다고 단정하지 않는다. 잘못된 현재 팀에서는 조회가 실패할 수 있다.
+
+최소 수정: 커밋은 문서가 이미 사용하는 Vercel 대시보드의 해당 배포 git 정보에서 확인한다고 명확히 분리하거나, 고정 버전에서 검증된 별도 읽기 전용 metadata 조회 방법을 제시한다. 재배포 대안도 같은 pinned/scoped wrapper와 대상 배포 ID/Production 환경을 사용하도록 적는다. rollback 후에는 Production 도메인을 인자로 inspect하여 실제 연결 ID를 비교하면 확인 대상이 더 명확하다. 존재하지 않는 inspect 응답 필드를 가정하지 않는다.
+
+## MINOR R-2c-1 — cookie 부분문자열 검사로 잘못된 응답을 SESSION-PASS 처리
+
+위치: `docs/palm-phase1c-operations.md:408`~`:412`, `:417`~`:418`.
+
+성공 조건은 정확한 cookie 이름 1개 및 정확한 속성을 요구하지만 구현은 부분문자열 포함 여부만 본다. 문서 블록 그대로에 HTTP 200/가짜 enabled·CSRF와 다음 header를 넣으면 모두 **SESSION-PASS**다(`/tmp/palm-r2-final/extended.py`).
+
+- `unrelated__Host-palm_session=COOKIE; Path=/; HttpOnly; Secure; SameSite=Strict` — 정확한 cookie 이름이 아님.
+- `__Host-palm_session=COOKIE; Path=/admin; HttpOnly; Secure; SameSite=Strict` — root Path가 아님.
+- `__Host-palm_session=; Path=/; HttpOnly; Secure; SameSite=Strict` — 비어 있는 cookie.
+- `__Host-palm_session=COOKIE; Path=/; HttpOnly; Foo=Secure; SameSite=Strict` — Secure 속성이 없음.
+
+현재 실제 API가 이런 header를 반환한다는 주장은 아니다. “malformed/missing cookie 등 모든 실패를 거른다”는 운영 검증기가 이 fixture들을 거르지 못한다는 재현이다. 실제 API는 `palmPublicAccess.ts:213`의 정확한 cookie 및 `palmPublicSession.ts:64`의 session/CSRF를 반환한다.
+
+최소 수정: Set-Cookie를 cookie-pair/세미콜론 속성으로 파싱하여 cookie 이름 완전 일치, 비어 있지 않은 값, HttpOnly/Secure의 독립 속성 존재, Path 값 정확히 `/`, SameSite 값 정확히 Strict, Domain 부재 및 중복 cookie/모호한 속성을 확인한다. 잘못된 fixture는 SESSION-FAIL로 처리하고 기존 1-D OFF 복귀·live 금지로 연결한다.
+
+## R-2b CLOSED 및 통과한 부분
+
+- 문서 bash 블록 **8개 `bash -n` PASS**.
+- Claude scratchpad harness를 읽어 실제 외부 도구를 호출하지 않는지 확인한 뒤 그대로 재실행: **개별 검사 52개 PASS, 실패 0**(최종 요약 PASS 제외). 보고서의 “50개”보다 현재 harness의 실제 check 호출 결과는 52개다. 수치 차이 자체를 보안 finding으로 분류하지 않는다.
+- 독립 확장으로 호출 셸 **set -x와 set -v 동시 활성** 상태에서 1-A/compare/install/ON-session/OFF-gate를 실행했다. stdout/stderr/수집한 argv에서 가짜 operator secret/HMAC token/cookie/CSRF 누출 0. 스크립트 바깥의 1-A read/call도 포함했다. 실제 비밀값은 사용하지 않았다.
+- 실제 curl 8.7.1의 `--config -` 파싱은 --version과 가짜 header 입력으로 검증(네트워크 0). 고정 CLI 구현의 stdin 읽기 및 `env add --environment production --type secret --force --yes` 옵션/대상 처리도 확인했다. env update나 secret 인자 전달은 없다.
+- umask 077, 명시적 mktemp 템플릿, EXIT/INT/TERM trap은 정상·pull 파일 작성 후 실패·설치 실패·probe 실패·SIGINT 경로에서 정리됐다. 추가로 install/ON-session/OFF-gate SIGINT도 정리 및 성공 표시 없음 확인. Git/저장소에 secret 파일을 만들지 않는다. SIGKILL/전원 중단까지 trap이 보장한다는 뜻은 아니다.
+
+## CLI·rollback·OFF 검증 및 운영 게이트
+
+- cached CLI 64.7.0의 version 및 env pull/list/add, project inspect, inspect, redeploy, rollback help를 실행해 문서의 주 옵션을 확인했다. npx 네트워크 설치 없이 정확한 패키지의 node entrypoint를 사용했다. env 명령은 `--scope`/빈 `--cwd`/`--project`를 사용하고, deployment pull은 ID·project 일치를 검사한다. `--id` 조회에서는 기본 environment 표기가 development여도 실제 fetch 경로는 `/v3/env/pull/dpl_*`이므로 프로젝트 Development 설정을 읽는 것은 아니다.
+- rollback의 명시적 OFF deployment ID와 --scope/--yes는 유효하다. 이 경로는 로컬 link가 아니라 대상 배포에서 프로젝트를 찾으므로 --project 옵션을 추가할 필요가 없다. 실제 rollback은 실행하지 않았다.
+- 1~7단계(migration/N-1/mock) 완료 및 별도 승인 → 두 flag ON/같은 커밋 재배포 → session 확인 → 별도 live 승인 순서로 정정됐다. 429/timeout/network/JSON 오류/없는 cookie/중복/Domain 등 기존 fixture는 FAIL이며 즉시 1-D·OpenAI 금지다. 위 cookie 유사값 fixture만 보완이 필요하다.
+- 1-D는 빠른 OFF 배포 rollback과 **현재 Production env OFF 고정**을 구별하고, 실패 시 OFF env로 재배포·inspect 연결 확인·OFF-CONFIRMED까지 시험/live 금지를 요구한다. 이후 재배포가 ON 값을 재사용하지 않도록 429행의 설정 OFF도 필수다. 자동 rollback을 구현한 스크립트는 아니며 운영자가 실행해야 하는 순서다.
+- 실제 exported session/analyze/events POST를 OFF 상태에서만 다시 확인했다: 200/disabled/cookie 없음, 503/UNAVAILABLE, 204 및 fetch 0회 PASS. ON 배포·실제 DB·계정 호출은 없다.
+- **NOTE N-1 유지:** 실제 다중 연결 PostgreSQL smoke는 migration 후·유료 호출 전 미완료 운영 게이트다. PGlite로 통과 처리하지 않는다. 외부 ingress/두 네트워크/도메인·alias, 실제 설치·동일 커밋 재배포, DB 권한/cleanup, 실기기 mock 및 별도 ON/live 승인도 남는다. N-1은 이번 문서 승인 보류 원인이 아니다.
+
+이번 변경은 CODEX_REVIEW/CURRENT_PHASE 리뷰 문서만이다. production 코드/API/SQL/migration/Vercel 설정 변경, Supabase migration, 유료 호출, Palm 공개 ON, merge/push 없음. 전체 회귀/build/lint는 문서 한정 변경이므로 재실행하지 않았다. `git diff --check` PASS.
+
+**다음 단일 권고: runbook의 배포 pull 판정·커밋 확인/재배포 명령·정확한 cookie 파싱 세 곳을 문서만으로 보완한다.**
+
+참고: [고정 CLI 패키지](https://www.npmjs.com/package/vercel/v/64.7.0), [공식 rollback 계약](https://vercel.com/docs/cli/rollback), [공식 inspect 사용법](https://vercel.com/docs/cli/inspect). 옵션·내부 동작 판정은 위 로컬 64.7.0 구현을 우선했다.
+
+---
+
+## 이전 검수 기록 (아래 판정은 위 최신 기록으로 대체됨)
+
 # Palm Phase 1C — 운영 runbook R-1/R-2 최종 재확인 (2026-10-20, 8b64d3c)
 
 **판정: B — 경미한 수정 필요**

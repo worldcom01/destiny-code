@@ -1,3 +1,20 @@
+# Palm Phase 1C — R-2 최종 집중 검수 (2026-10-20, 3a66c7f)
+
+**판정: B — MINOR FIXES REQUIRED (경미한 수정 필요)**
+
+- **CRITICAL 0 / IMPORTANT 0 / MINOR 3 / NOTE 1. R-2a OPEN / R-2b CLOSED / R-2c OPEN. R-1 CLOSED 유지.** 이 상태가 아래 이전 기록을 대체한다.
+- R-2a 잔여: 실제 CLI 64.7.0의 deployment pull은 Secret 전용 병합을 건너뛰므로 sentinel 잔존만으로 Secret/배포 내 누락을 구별할 수 없다. 기본 inspect(이 버전 JSON도 포함)는 git SHA를 내보내지 않는다. 커밋 확인 방법과 bare redeploy 예시를 보완해야 한다.
+- R-2b 종료: 가짜 값 harness 개별 52 PASS(요약 제외), 호출 셸 xtrace+verbose·argv·출력 누출 0, 정상/실패/SIGINT cleanup 통과. 실제 secret/계정/네트워크 사용 없음.
+- R-2c 잔여: cookie 부분문자열 검사에서 비슷한 이름·Path=/admin·빈 값·Foo=Secure가 SESSION-PASS로 오탐됨. 정확한 cookie-pair/속성 파싱 필요. 승인 후 ON/session/live 순서와 OFF 배포+Production env OFF 고정+OFF-CONFIRMED 절차는 적절하다.
+- bash 8블록 syntax/실제 OFF exported POST/diff-check PASS. CLI version/help와 실제 CLI 내부 함수는 가짜 fetch로 확인했다. 실제 설정/배포/rollback 명령은 실행하지 않았다. 전체 회귀/build/lint 재실행 없음.
+- **N-1 실제 다중 연결 PostgreSQL smoke는 migration 후·유료 호출 전 미완료 운영 게이트. 문서 승인 보류 이유가 아니다.** 외부 ingress·실제 설치/재배포·DB 권한/cleanup·실기기 mock·별도 ON/live 승인도 남는다.
+- 리뷰 문서 두 개만 변경·로컬 커밋. production 코드/API/SQL/migration/Vercel 설정/공개 ON/유료 호출/merge/push 없음. I-1·아키텍처·Identity 재설계 없음.
+- 다음 단일 권고: runbook의 배포 pull 판정·커밋 확인/재배포 명령·정확한 cookie 파싱을 문서만으로 보완한다. 행·재현·최소 수정안은 CODEX_REVIEW 최상단.
+
+---
+
+## 이전 상태 기록 (아래 판정은 위 최신 기록으로 대체됨)
+
 # Palm Phase 1C — R-2 runbook 보정
 
 Status: **AWAITING CODEX R-2 FINAL REVIEW** (승인 아님 · 공개 OFF · Supabase migration 미실행)
