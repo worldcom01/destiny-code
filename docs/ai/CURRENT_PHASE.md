@@ -1,3 +1,15 @@
+# Palm Phase 1C — 운영 runbook MINOR 수정
+
+Status: **AWAITING CODEX FINAL CONFIRMATION** (승인 아님 · 공개 OFF · Supabase migration 미실행)
+
+- Codex `ee233f3`(B: MINOR 2 / NOTE 1) 중 R-1(Preview/Production scope, `NEXT_PUBLIC_SUPABASE_URL` 예외, system env)과 R-2(probe 성공 ≠ 설치 토큰 유효, OFF 상태 비공개 대조·게이트 확인, 승인 후 session 확인)를 운영 문서에 반영했다. 상세는 `CLAUDE_REPORT.md` 최상단.
+- 코드·SQL·설정 변경 없음, 유료 호출 0, merge/push 없음.
+- 남은 게이트: N-1 실제 다중 연결 PostgreSQL smoke(migration 후·live 전), 외부 ingress 검증, 실기기 mock, live/공개 별도 승인.
+
+---
+
+## 이전 상태 기록 (원문 보존)
+
 # Palm Phase 1C — 최종 집중 보안 재검수 (2026-10-20)
 
 **판정: B — MINOR FIXES REQUIRED (경미한 수정 필요)**

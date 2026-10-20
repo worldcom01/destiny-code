@@ -1,3 +1,39 @@
+# Palm Phase 1C — 운영 runbook MINOR 수정 (Codex ee233f3 R-1/R-2)
+
+Status: **AWAITING CODEX FINAL CONFIRMATION** (승인 아님 · 공개 OFF · migration 미실행)
+
+문서만 수정했다(`docs/palm-phase1c-operations.md`). production 코드·API·SQL·Vercel 설정 변경, OpenAI 호출, merge/push는 없다.
+
+## R-1 환경변수 scope
+
+- 새 "1-0 환경변수와 Vercel scope" 표: 실제 코드가 읽는 변수만 나열하고, 각각 비밀 여부·Production·Preview 설정과 코드 위치를 적었다.
+  - PALM 11개 + `PALM_LIMIT_*` 8개
+  - `OPENAI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`
+  - Vercel system 변수 5개
+- 공개 경로 대상은 Production 하나다. 토큰은 `VERCEL_ENV`에 묶이므로 Production 토큰은 Production probe로 발급해 Production scope에 설치한다. Development는 fail closed.
+- Preview는 공개 OFF·격리 mock에만 쓰고 Production secret을 복사하지 않는다. branch별 override가 일반 Preview 값보다 우선함을 명시하고 점검 항목으로 넣었다.
+- env 변경은 다음 배포부터 적용된다. Enable access to System Environment Variables는 필수이며, system 변수를 수동 복제하지 않는다.
+- `NEXT_PUBLIC_SUPABASE_URL` 예외: 기존 브라우저 analytics가 쓰는 공개 가능 URL이며 비밀이 아니다. 서버 Palm gate도 같은 URL을 읽는다. 비밀은 service role key뿐이다.
+- "모두 서버 전용, NEXT_PUBLIC_ 금지" 모순 문구를 제거하고 secret 5종을 명시했다.
+- 요청문의 `PALM_INGRESS_VERIFIED_TOKEN`은 코드에 없는 이름이다. 문서는 실제 이름 `PALM_TRUSTED_INGRESS_VERIFICATION`만 사용한다.
+
+## R-2 설치 토큰 확인
+
+- 5단계와 새 "1-B": probe는 설치값을 읽지 않으므로, 잘못된 토큰을 설치해도 probe는 성공한다고 명시했다.
+- (가) 지금 가능(OFF·OpenAI 0·migration 불필요):
+  1. 실행 중 Production 배포가 env 변경 이후·같은 커밋인지 확인한다.
+  2. probe가 재발급한 토큰과 `vercel env pull`(읽기 전용, 임시 디렉터리 후 삭제)로 받은 설치값을 셸 변수 안에서만 비교해 MATCH/MISMATCH만 출력한다.
+  3. OFF 게이트를 실제 응답 계약대로 확인한다: session 200 `{"enabled":false}`, analyze 503 `UNAVAILABLE`, events 204.
+- (나) 승인 후만: 공개 ON 직후 analyze 전에 session 응답(`enabled:true` + `__Host-palm_session`)으로 토큰 유효성을 확인한다. 실패 시 즉시 OFF로 되돌린다. DB migration이 전제이며 cookie 출력은 공유 금지다.
+- 순서는 그대로다: OFF → (승인 시 DB) → probe → 같은 커밋 토큰 재배포 → 1-B 확인 → N-1 DB smoke → mock → live/공개 별도 승인.
+- 문서 내 bash 블록 4개 모두 `bash -n` 통과.
+
+## 남은 게이트
+
+N-1 실제 다중 연결 PostgreSQL smoke(migration 후, live 전), 외부 ingress·두 네트워크 확인, 실기기 mock, live 1회와 공개 ON 별도 승인.
+
+---
+
 # Palm Phase 1C — Trusted Ingress 배포 결합 수정 보고 (Codex 8a7a281 후속)
 
 Status: **PHASE 1C TRUSTED INGRESS BLOCKER FIXED — AWAITING FINAL FOCUSED RE-REVIEW** (승인 아님 · 공개 OFF · Supabase migration 미실행)

@@ -14,19 +14,13 @@
 - 아래 1~7단계 동안 `PALM_PUBLIC_ENABLED`는 **계속 `false`**다. 8단계 이전에는 켜지 않는다.
 
 1. **공개 OFF로 시작**: `PALM_PUBLIC_ENABLED=false`로 둔다. 이미 켜져 있으면 먼저 끄고 배포한다.
-2. **서버 인프라 배포 (공개 OFF)**: 아래 값은 모두 서버 전용이다. `NEXT_PUBLIC_`를 붙이지 않고, 값을 출력하거나 로그에 남기지 않는다.
-   - `PALM_PUBLIC_ENABLED=false`
-   - `PALM_EXTRACTION_ENABLED`: 준비 중에는 `false`를 권장한다(probe와 무관).
-   - `PALM_EXTRACTION_SECRET`: probe 호출용 운영자 secret.
-   - `PALM_SESSION_SECRET`: 32자 이상. 운영자 secret과 다른 값이어야 한다.
-   - `PALM_PUBLIC_ORIGIN`: 정확한 https origin.
-   - `PALM_TRUSTED_INGRESS=vercel`
-   - `PALM_INGRESS_GENERATION`: 예 `g1`. 도메인·proxy·ingress 구성을 바꿀 때마다 올린다.
-   - `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`: 준비해 둔다.
-   - `PALM_TRUSTED_INGRESS_VERIFICATION`: 이 단계에서는 **비워 둔다**.
-   - Vercel 프로젝트 설정에서 **Enable access to System Environment Variables**를 켠다. 필요한 값은 `VERCEL`, `VERCEL_ENV`, `VERCEL_PROJECT_ID`, `VERCEL_GIT_COMMIT_SHA`, `VERCEL_DEPLOYMENT_ID`다.
+2. **서버 인프라 배포 (공개 OFF)**: 아래 **1-0 환경변수와 Vercel scope** 표대로 설정하고, 대상 환경(아래 1-0 참고)을 배포한다.
+   - 이 단계에서 `PALM_PUBLIC_ENABLED=false`를 유지하고, `PALM_TRUSTED_INGRESS_VERIFICATION`은 비워 둔다.
+   - Vercel 프로젝트 설정에서 **Enable access to System Environment Variables**를 켠다(필수). 이것이 꺼져 있으면 `VERCEL_*` 값이 없어 fail closed된다.
    - **git 연동 배포**여야 한다. CLI 등 커밋 SHA가 없는 배포는 지원하지 않으며 fail closed된다.
+   - Vercel env 변경은 **다음 배포부터** 적용된다. 값을 바꿨다면 반드시 재배포한다.
    - 로그/APM: 요청 body와 헤더 capture를 끈다. cookie, `x-palm-csrf`, IP, 이미지가 로그에 남지 않게 한다.
+
 3. **DB (별도 승인 후)**: 공개 OFF 상태에서 진행한다.
    - Supabase SQL Editor에서 `supabase/palm-public.sql`을 transaction으로 적용한다. 기존 `analysis_results`와 그 정책은 바꾸지 않는다.
    - anon/authenticated의 테이블 접근과 RPC 실행이 거부되는지 확인하고, service role 동작을 확인한다.
@@ -34,10 +28,10 @@
 4. **ingress probe (공개 OFF, 비유료)**: 아래 1-A 절차를 모두 수행한다.
    - 대조 요청, 여러 형태의 위조값, 두 네트워크 비교, 배포 URL 비교를 모두 포함한다.
    - 모든 확인은 **같은 배포**, **같은 UTC 날짜**에 한다.
-5. **배포 결합 검증값 적용 (여전히 공개 OFF)**:
-   - 4단계 토큰을 `PALM_TRUSTED_INGRESS_VERIFICATION`에 넣고, **같은 커밋을** env만 바꿔 재배포한다(`PALM_PUBLIC_ENABLED=false` 유지).
+5. **배포 결합 검증값 설치와 확인 (여전히 공개 OFF)**: 아래 **1-B** 절차를 따른다.
+   - 4단계 토큰을 Production scope의 `PALM_TRUSTED_INGRESS_VERIFICATION`에 설치하고, **같은 커밋을** env만 바꿔 재배포한다(`PALM_PUBLIC_ENABLED=false` 유지).
    - 같은 커밋의 env-only 재배포는 배포 식별값이 같으므로 토큰이 유효하다.
-   - 재배포 뒤 probe를 한 번 더 실행해 같은 `deployment.commit`에서 `established`인지 확인한다.
+   - **probe가 `established`인 것만으로는 설치 확인이 아니다.** probe는 `PALM_TRUSTED_INGRESS_VERIFICATION`을 읽지 않는다. 그래서 빈 값·오타·다른 환경 토큰을 설치해도 probe는 계속 성공한다. 1-B로 설치값을 따로 확인한다.
    - 새 커밋을 배포했다면 4단계부터 다시 한다.
 6. **DB-only 다중 연결 동시성 smoke (N-1, live 전 필수)**:
    - 별도 연결로 다음을 검사한다: 같은 요청 ID 동시 reserve, 세션·전체 한도 직전 경합, lease 만료 복구, finalize 경합.
@@ -48,6 +42,46 @@
    - Android JPEG/WebP
    - 취소·실패·재시도, 저장 후 다시 열기, A/B 결과 격리, 삭제 중 늦은 응답, 공유, 429·비활성 안내
 8. **여기까지 모두 통과한 뒤에만**: 별도 승인을 받아 live OpenAI 1회 smoke를 하고, 공개 활성화 여부를 따로 결정한다.
+
+## 1-0. 환경변수와 Vercel scope (코드가 실제로 읽는 값만)
+
+Vercel 환경변수는 **Production / Preview / Development** scope별로 따로 설정한다.
+- Preview에는 branch별 override를 둘 수 있으며, override가 일반 Preview 값보다 우선한다.
+- 값 변경은 해당 scope의 **다음 배포**부터 적용된다.
+
+**Phase 1C 공개 경로 대상은 Production 하나다.**
+- 토큰은 `VERCEL_ENV`에 묶인다. Preview에서 발급한 토큰은 Production에서 거부되고, 그 반대도 마찬가지다.
+- 따라서 Production 토큰은 반드시 Production 배포에서 probe로 발급하고, Production scope에 설치한다.
+- Development(`vercel dev`, `VERCEL_ENV=development`)는 지원하지 않으며 fail closed된다.
+
+| 변수 | 비밀 여부 | Production | Preview | 코드 위치 |
+|---|---|---|---|---|
+| `PALM_PUBLIC_ENABLED` | 아님 | `false` (8단계 별도 결정 전까지) | `false` 또는 미설정 | palmPublicAccess |
+| `PALM_EXTRACTION_ENABLED` | 아님 | 준비 중 `false` (probe와 무관) | `false` 또는 미설정 | palmAccess / palmPublicAccess |
+| `PALM_EXTRACTION_SECRET` | **secret** | probe·operator용 | 미설정 권장. 필요하면 Production과 **다른** 값 | palmAccess / palmIngressProbe |
+| `PALM_SESSION_SECRET` | **secret** | 32자 이상, 운영자 secret과 다른 값 | 미설정 권장. 필요하면 Production과 **다른** 값 | palmPublicAccess |
+| `PALM_PUBLIC_ORIGIN` | 아님 | 정확한 Production https origin | 미설정 | palmPublicAccess |
+| `PALM_TRUSTED_INGRESS` | 아님 | `vercel` | 미설정 | palmPublicAccess |
+| `PALM_INGRESS_GENERATION` | 아님 | 예 `g1` (ingress 구성 변경 시 올림) | 미설정 | palmPublicAccess |
+| `PALM_TRUSTED_INGRESS_VERIFICATION` | **secret 취급** | 2단계에서는 빈 값. 5단계에서 Production probe 토큰 설치 | 미설정 | palmPublicAccess |
+| `PALM_LIMIT_*` (8개, 선택) | 아님 | 미설정이면 기본 상한 | 미설정 | palmPublicAccess |
+| `OPENAI_API_KEY` | **secret** | 준비만 한다(8단계 전 provider 사용 없음) | **미설정** | palmAccess / palmPublicAccess |
+| `SUPABASE_SERVICE_ROLE_KEY` | **secret** | migration 승인 후 설정 | **미설정**, 또는 production이 아닌 별도 DB의 key | palmPublicAccess(서버 전용 RPC) |
+| `NEXT_PUBLIC_SUPABASE_URL` | 아님 (**예외**, 아래 참고) | 운영 Supabase 프로젝트 URL | 기존 앱 설정 그대로 | palmPublicAccess(서버), supabaseClient(브라우저, 기존 analytics) |
+| `VERCEL`, `VERCEL_ENV`, `VERCEL_PROJECT_ID`, `VERCEL_GIT_COMMIT_SHA`, `VERCEL_DEPLOYMENT_ID` | 아님 | Vercel system env. **수동으로 만들거나 복제하지 않는다** | 동일(자동) | palmPublicAccess(배포 식별) |
+
+- **secret 규칙**:
+  - `PALM_EXTRACTION_SECRET`, `PALM_SESSION_SECRET`, `PALM_TRUSTED_INGRESS_VERIFICATION`, `OPENAI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`는 서버 전용이다. `NEXT_PUBLIC_` 접두사를 붙이지 않는다.
+  - 값을 출력하거나 로그·문서·티켓·Git에 남기지 않는다.
+  - 브라우저 코드는 이 이름들을 참조하지 않는다(회귀 테스트와 빌드 번들 검사로 확인).
+- **`NEXT_PUBLIC_SUPABASE_URL` 예외**:
+  - 이 이름은 기존 앱(브라우저 analytics)이 이미 쓰는 **공개 가능한 프로젝트 URL**이다. 빌드 때 브라우저 번들에 들어가며 비밀이 아니다.
+  - Phase 1C 서버 코드도 같은 URL을 서버에서 읽어 service role로 RPC를 호출한다. 이름을 바꾸거나 `PALM_` 복제본을 만들지 않는다.
+  - 비밀인 것은 `SUPABASE_SERVICE_ROLE_KEY`뿐이다.
+- **Preview 원칙**:
+  - Preview는 공개 OFF와 격리 mock(7단계)에만 쓴다. Production secret을 Preview scope에 복사하지 않는다.
+  - Preview에서 ingress를 시험한다면 Production과 다른 secret을 쓰고, Preview에서 발급한 토큰은 Preview에서만 쓴다(Production에서는 거부된다).
+  - branch별 Preview override가 `PALM_PUBLIC_ENABLED`나 secret을 켜지 않는지 확인한다.
 
 ## 1-A. 신뢰 ingress (클라이언트 IP) — TRUSTED INGRESS CONFIGURED / TRUST NOT ESTABLISHED
 
@@ -89,6 +123,59 @@ IP당 세션 발급 한도와 IP당 일 한도는 클라이언트 IP가 위조�
    - fingerprint는 비교에만 쓰고, 제품 analytics나 DB에 저장하지 않는다.
 5. **우회 경로 없음 확인**: 공개 도메인과 배포 URL(`*.vercel.app`) 모두에서 3번 절차가 통과해야 한다. Vercel 외의 다른 origin이나 proxy에서 같은 앱을 서비스하지 않는다.
 6. **지원하지 않는 형태**: Vercel 외 배포, Vercel 앞단의 별도 proxy/CDN, git이 아닌 배포. 새 전략 추가는 별도 설계·검수 대상이다.
+
+## 1-B. 설치된 토큰 확인 (probe 성공 ≠ 설치 토큰 유효)
+
+공개 OFF 동안에는 `PALM_PUBLIC_ENABLED=false` 때문에 토큰과 무관하게 공개 config가 비활성이다. 따라서 **설치된 토큰이 맞는지를 공개 경로의 동작으로는 확인할 수 없다.** 확인을 두 시점으로 나눈다.
+
+### (가) 지금 가능 — 공개 OFF · OpenAI 0회 · migration 불필요
+
+1. **실행 중 배포 확인**: Vercel 대시보드에서 현재 Production 배포가 다음을 만족하는지 확인한다.
+   - 토큰 env를 바꾼 **뒤에** 만들어졌다.
+   - 4단계와 **같은 커밋**이다.
+   - Vercel env 변경은 다음 배포부터만 적용되므로, 이 순서가 맞지 않으면 설치값은 실행 중 배포에 들어 있지 않다.
+2. **재발급 토큰과 설치값의 비공개 대조**: 같은 배포·같은 설정이면 probe가 다시 발급한 토큰은 설치값과 같아야 한다. 아래 명령은 두 값을 화면에 출력하지 않고 `MATCH`/`MISMATCH`만 출력한다.
+   - 설치값은 Vercel CLI의 `vercel env pull`(설정 **읽기 전용**, 로그인 필요)로 저장소 밖 임시 디렉터리에 받아 곧바로 지운다.
+   - `vercel env pull`은 현재 설정값을 보여 준다. 실행 중 배포에 반영됐는지는 1번으로 확인한다.
+   ```bash
+   # 토큰·secret은 이 셸 변수 안에서만 다룬다. echo하지 않는다.
+   ISSUED=$(curl -sS -X POST \
+     -H "x-palm-extraction-secret: $PALM_EXTRACTION_SECRET" \
+     -H "x-palm-ingress-probe: 192.0.2.77" \
+     "$ORIGIN/api/palm/ingress-check" \
+     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("verificationToken", "") if d.get("ingress") == "established" else "")')
+   TMP_ENV_DIR=$(mktemp -d)
+   vercel env pull "$TMP_ENV_DIR/prod.env" --environment=production --yes >/dev/null 2>&1
+   INSTALLED=$(sed -n 's/^PALM_TRUSTED_INGRESS_VERIFICATION=//p' "$TMP_ENV_DIR/prod.env" | tr -d '"')
+   rm -rf "$TMP_ENV_DIR"
+   if [ -n "$ISSUED" ] && [ "$ISSUED" = "$INSTALLED" ]; then echo MATCH; else echo MISMATCH; fi
+   unset ISSUED INSTALLED TMP_ENV_DIR
+   ```
+   - `MISMATCH`이면 원인을 확인하기 전까지 다음 단계로 가지 않는다(빈 값, 오타, Preview 토큰 설치, 다른 커밋, 재배포 누락 등).
+   - 토큰 값은 터미널 출력·문서·로그·Git에 남기지 않는다. secret을 명령줄에 직접 타이핑하지 말고 환경변수로만 전달한다.
+3. **공개 OFF 게이트 확인**: 실제 API 계약 그대로다. 사진·OpenAI·DB 없이 확인한다.
+   ```bash
+   # 세션: 공개 OFF → 200 {"enabled":false}, Set-Cookie 없음
+   curl -sS -i -X POST -H "Origin: $ORIGIN" "$ORIGIN/api/palm/session" | grep -iE '^HTTP/|^set-cookie|enabled'
+   # 유료 analyze 공개 분기(operator 헤더 없음): 본문을 읽기 전에 503 {"ok":false,"error":{"code":"UNAVAILABLE"}}
+   curl -sS -i -X POST -H "Origin: $ORIGIN" -H "content-type: image/jpeg" "$ORIGIN/api/palm/analyze" | grep -iE '^HTTP/|UNAVAILABLE'
+   # 이벤트: 공개 OFF → 204
+   curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H "Origin: $ORIGIN" -H "content-type: application/json" -d '{}' "$ORIGIN/api/palm/events"
+   ```
+   - 세 가지가 모두 기대값이면 공개 경로가 닫혀 있다는 뜻이다. 토큰의 유효성을 증명하지는 않으며, 그것은 2번이 담당한다.
+
+### (나) 운영 승인 후에만 — 8단계에서 공개 ON이 별도로 승인된 경우
+
+이 단계는 공개 ON을 전제로 하고, migration이 적용된 DB가 필요하다(세션 발급이 DB 한도를 쓴다). 지금 수행하지 않는다.
+
+- 공개를 켠 직후, **analyze를 한 번도 호출하기 전에** 세션 응답을 확인한다.
+  ```bash
+  curl -sS -i -X POST -H "Origin: $ORIGIN" "$ORIGIN/api/palm/session" | grep -iE '^HTTP/|^set-cookie|enabled'
+  ```
+- `"enabled":true`와 `__Host-palm_session` cookie가 나와야 토큰·배포 식별·config가 모두 유효한 것이다. 이 요청은 OpenAI를 호출하지 않는다.
+- `"enabled":false`가 나오면 즉시 `PALM_PUBLIC_ENABLED=false`로 되돌리고 1-B (가)를 다시 수행한다.
+- 출력에 cookie 값이 보이므로, 이 출력을 문서·티켓·로그에 붙이지 않는다.
+- live OpenAI 1회 smoke는 이 확인 뒤에 별도 승인으로만 진행한다.
 
 ## 2. Kill switch
 
