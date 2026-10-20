@@ -1,3 +1,19 @@
+# Palm Phase 1C — 운영 runbook 최종 재확인 (2026-10-20, 8b64d3c)
+
+**판정: B — 경미한 수정 필요. CRITICAL 0 / IMPORTANT 0 / MINOR 3 / NOTE 1.**
+
+- **R-1 CLOSED:** 실제 변수명, Production/Preview scope, branch override, 공개 가능한 `NEXT_PUBLIC_SUPABASE_URL` 예외, system env/서버 secret 구분, 토큰 이름과 기존 deployment binding 설명이 맞다.
+- **R-2 OPEN(부분 해결):** probe 성공과 설치 검증 구분·OFF 응답 계약은 수정됐다. 잔여 R-2a: CLI 대상 프로젝트/팀 고정 및 Secret readback 불가 처리. R-2b: trace·argv·임시 파일 실패 정리 및 session cookie/CSRF 출력 보호. R-2c: 승인 후 ON/session/live 순서와 429·네트워크 오류 등 모든 실패의 OFF 재배포 조건.
+- 가짜 값 shell 검증: 정상 MATCH, Secret placeholder MISMATCH, xtrace에서 가짜 secret/token 노출, pull 실패 시 임시 env 잔존 재현. 실제 CLI/계정·외부 서비스는 호출하지 않았다.
+- 실제 exported POST를 OFF로만 검증: session 200/disabled/cookie 없음, analyze 503/UNAVAILABLE, events 204, fetch 0회 모두 PASS. bash 구문 4블록/diff-check PASS. 전체 회귀·build/lint는 문서 변경이므로 재실행하지 않았다.
+- **N-1 실제 다중 연결 PostgreSQL smoke는 migration 후·유료 사용 전 미완료 운영 게이트로 유지. 문서 승인 실패 이유가 아니다.** 외부 ingress/토큰 설치 후 배포 확인/DB 권한·cleanup/실기기 mock/live·public 별도 승인도 남는다.
+- 검수 문서 두 개만 갱신·로컬 커밋. 코드/API/SQL/migration/Vercel 설정/public ON/유료 호출/merge/push 없음. I-1 재설계나 전체 아키텍처 재검토 없음.
+- 다음 단일 권고: 운영 문서 1-B의 R-2a/R-2b/R-2c를 문서만으로 보완한다. 정확한 행·재현·최소 수정안은 CODEX_REVIEW 최상단.
+
+---
+
+## 이전 상태 기록 (아래 판정은 위 최신 기록으로 대체됨)
+
 # Palm Phase 1C — 운영 runbook MINOR 수정
 
 Status: **AWAITING CODEX FINAL CONFIRMATION** (승인 아님 · 공개 OFF · Supabase migration 미실행)

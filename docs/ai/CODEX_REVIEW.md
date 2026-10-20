@@ -1,3 +1,66 @@
+# Palm Phase 1C — 운영 runbook R-1/R-2 최종 재확인 (2026-10-20, 8b64d3c)
+
+**판정: B — 경미한 수정 필요**
+
+**CRITICAL 0 / IMPORTANT 0 / MINOR 3 / NOTE 1. R-1 CLOSED / R-2 OPEN(부분 해결).** 아래 이전 판정을 이 기록으로 대체한다. N-1 미실행 때문에 문서 승인을 보류한 것이 아니다. 이번 보류 사유는 새 1-B 실행 절차의 세 가지 문서 문제다. production 코드·API·SQL·I-1 결합 설계는 재검토하거나 변경하지 않았다.
+
+## 범위 및 R-1 종료 근거
+
+HEAD `8b64d3c`의 diff와 CODEX_REVIEW/CURRENT_PHASE/CLAUDE_REPORT/운영 문서를 읽고, 실제 `palmPublicAccess`, `palmIngressProbe`, `palmPublicSession`, `palmPublicAnalyze`, API POST 연결 및 `supabaseClient`를 대조했다. 변경 커밋은 문서 3개뿐이다.
+
+R-1은 **CLOSED**. `docs/palm-phase1c-operations.md:46`~`:84`의 변수명은 실제 코드와 일치한다. Production 발급·Production 설치, Preview OFF/격리 mock·별도 secret·branch override 확인, Development fail closed 설명이 적절하다. `NEXT_PUBLIC_SUPABASE_URL`은 기존 브라우저 analytics의 공개 URL이며 서버도 같은 이름을 사용한다(`app/lib/supabaseClient.ts:7`, `app/lib/server/palmPublicAccess.ts:149`). service role 및 다른 secret을 NEXT_PUBLIC로 만들지 않는다. Vercel system env 다섯 개는 자동 제공값으로 구분되어 있다. 실제 토큰 이름은 `PALM_TRUSTED_INGRESS_VERIFICATION`이고 환경/프로젝트/커밋/generation/origin/전략·헤더/세션 키 결합 설명이 기존 코드와 같다. 같은 커밋·같은 설정 재배포의 토큰 공유 한계도 보존되어 있다.
+
+## R-2 잔여 발견 사항
+
+### MINOR R-2a — Production 선택만으로 프로젝트가 지정되지 않으며 Secret readback을 가정함
+
+위치: `docs/palm-phase1c-operations.md:133`~`:151`, 특히 `:148`.
+
+`--environment=production`은 환경 선택은 맞지만 **프로젝트/팀 선택이 아니다**. 현재 디렉터리의 link 또는 CLI 프로젝트 선택 환경에 의존하며, 문서에는 대상 프로젝트/팀 일치 확인이 없다. 이 checkout에는 `.vercel/project.json`도 없다(내용/secret은 읽지 않음). 공식 CLI는 프로젝트 선택 옵션/환경변수/link 우선순위를 사용하므로, 다른 프로젝트에 연결된 디렉터리에서 그대로 실행하면 그 프로젝트의 Production 설정을 읽는다. unlinked 상태에서는 실패할 수 있고 stderr가 전부 숨겨진다.
+
+더 직접적인 실행 문제는 Vercel Secret/Sensitive 타입이다. 공식 문서상 저장 후 write-only이고 `env pull`은 읽을 수 없는 값에 placeholder를 쓴다. 새 임시 파일에는 보존할 이전 값도 없으므로, 올바른 토큰을 Secret으로 설치해도 이 비교는 MATCH를 만들 수 없다. 운영 표는 토큰을 secret 취급한다고 쓰지만 이 플랫폼 제한이나 대체 확인 경로를 설명하지 않는다. 실제 설정 타입을 확인하지 않았으므로 현재 운영 값이 읽힌다/안 읽힌다고 단정하지 않는다.
+
+재현: 실제 CLI/계정 호출 없이 문서 블록의 `curl`/`vercel`을 shell 함수로 대체했다. 같은 가짜 토큰이면 MATCH, pull 결과를 읽기 불가 placeholder로 바꾸면 MISMATCH. 프로젝트 선택 문제는 공식 CLI 계약·구현과 명령의 옵션 부재로 확인했다.
+
+최소 수정: 대상 팀/프로젝트 ID와 ORIGIN의 일치를 명시적으로 확인하고, 검증된 프로젝트 선택 방식과 CLI 버전을 고정한다. CLI 종료 실패·값 누락·placeholder를 단순 토큰 불일치와 구별해 중단한다. Secret readback 불가 분기를 명시하고, OFF에서는 보관한 발급값·정확한 설치 대상/성공 증거·설치 후 동일 커밋 재배포를 확인하되 **설치값을 직접 읽어 검증한 것으로 주장하지 않는다**. 실제 runtime config 확인은 별도 ON 승인 후 session gate로 남긴다. 비교 편의를 위해 secret을 Config로 낮추도록 안내하지 않는다.
+
+출처: [Vercel CLI 프로젝트 선택](https://vercel.com/docs/cli/global-options#project), [env pull의 Secret 처리](https://vercel.com/docs/cli/env#how-vercel-env-pull-merges-into-an-existing-file), [Config/Secret 구분](https://vercel.com/docs/environment-variables/sensitive-environment-variables).
+
+### MINOR R-2b — 비공개 비교 예제의 trace·오류 정리·출력 보호 부족
+
+위치: `docs/palm-phase1c-operations.md:140`~`:155`, `:173`~`:177`.
+
+정상 경로는 mktemp 디렉터리를 지우고 비교값을 unset하지만, `set -x`가 켜진 셸에서는 operator header와 ISSUED/INSTALLED 할당·비교가 stderr에 그대로 나타난다. “echo하지 않는다”만으로 방지되지 않는다. `curl -H`의 환경변수도 확장 후 argv로 전달되므로 “환경변수로만 전달”이라는 문구가 argv 비노출을 보장하지 않는다. pull은 토큰 하나가 아니라 읽을 수 있는 Production env 전체를 파일로 쓴다. trap이 없으므로 실패/중단 시 파일이 남을 수 있다. 승인 후 session 예제도 cookie뿐 아니라 `enabled`가 포함된 같은 JSON 줄의 csrfToken을 출력한다.
+
+재현(모두 가짜 값): 문서 블록을 `bash -x`에서 실행하면 MATCH만 stdout에 나오지만 stderr에는 operator secret 및 두 토큰이 포함된다. `bash -e`에서 가짜 pull이 파일 작성 후 exit 23으로 실패하면 rm에 도달하지 않아 prod.env가 남는다. 테스트 임시 디렉터리는 harness가 삭제했다. 실제 비밀값·외부 호출은 사용하지 않았다.
+
+최소 수정: 비밀값을 읽기 전에 trace/verbose를 비활성화하고 기록되는 셸/CI에서 실행하지 않도록 명시한다. 제한 권한 임시 디렉터리와 EXIT/INT/TERM cleanup을 설정하고 실패를 명시적으로 처리한다. 환경 파일을 source하지 않고 필요한 값만 파싱하는 원칙은 유지한다. operator header는 stdin 기반 curl 설정 등으로 argv 노출을 피한다. session 확인은 HTTP 상태/enabled/cookie 존재만 파싱해 표시하고 cookie/CSRF 값은 출력하지 않는다. mktemp의 기본 디렉터리 격리는 정상 동작하며, 실제 유출이 발생했다고 주장하는 것은 아니다.
+
+### MINOR R-2c — ON 확인 순서 및 모든 실패의 OFF 복귀 조건 불완전
+
+위치: `docs/palm-phase1c-operations.md:3`, `:44`, `:167`~`:178`; `app/lib/server/palmPublicSession.ts:40`~`:68`.
+
+3행은 live smoke 전에 public을 켜지 말라고 읽히지만 1-B (나)는 public ON 후 session 확인 다음 live smoke를 요구한다. 8단계 내부의 별도 승인 순서를 한 문장으로 정합화해야 한다. 준비 중 `PALM_EXTRACTION_ENABLED=false`에서 두 flag를 어떻게 승인된 설정으로 전환하는지도 이 확인의 전제로 명확히 해야 한다(`palmPublicAccess.ts:145`: 두 flag 모두 true 필요).
+
+OFF 복귀 조건은 enabled:false에만 한정된다. 실제 session은 한도 초과 시 **429 enabled:true지만 cookie 없음**을 반환한다(`palmPublicSession.ts:61`). 네트워크 오류/잘못된 JSON/기대하지 않은 응답도 false 필드를 주지 않을 수 있다. 따라서 문서의 성공 조건에 못 미치는데도 명시한 복귀 조건에는 해당하지 않는다. curl/grep 파이프라인은 이 성공 조건을 기계적으로 검증하지 않는다.
+
+최소 수정: 1~7단계와 migration/N-1/mock 완료 → 8단계의 별도 승인된 설정 전환/재배포 → cookie를 보내지 않는 session POST에서 **HTTP 200 + enabled:true + 신규 cookie 존재** → 별도 승인 live 1회 순서를 명시한다. 이는 지금 ON하라는 지시가 아니다. 성공 조건 중 하나라도 실패하면(429/네트워크/파싱 오류 포함) 즉시 OFF 설정으로 재배포하고 OFF 응답을 재확인하도록 적는다. env 변경만으로 기존 실행 배포가 즉시 바뀐다고 표현하지 않는다. token bootstrap 자체는 같은 커밋 재배포를 허용하므로 순환 문제가 없다.
+
+## 독립 확인 결과와 유지되는 운영 게이트
+
+- 문서 bash 블록 4개 모두 `bash -n` PASS. 문법 PASS가 안전성·계정/프로젝트 연결·실행 성공을 증명하지는 않는다.
+- 전역 fetch를 차단하고 **실제 exported POST**를 import하여 OFF 상태만 실행했다: session 200/`enabled:false`/Set-Cookie 없음, analyze 503/UNAVAILABLE, events 204 모두 PASS. 네트워크 0회. production 환경값을 가져오거나 출력하지 않았다.
+- probe가 설치 토큰을 읽지 않는다는 새 설명(`:34`, `:129`)은 실제 코드와 일치한다. OFF 응답은 토큰 유효성 증명이 아니라 kill switch 검증이라는 설명도 맞다. DB/provider 없이 OFF 검증 가능하다.
+- 이번 변경은 문서뿐이므로 전체 회귀/build/lint는 재실행하지 않았다. 이전 검수 수치를 이번 실행 결과로 재사용하지 않는다. `git diff --check` PASS.
+- **NOTE N-1 1건 유지:** 실제 별도 연결 PostgreSQL smoke는 migration 후·유료 사용 전 미완료 운영 게이트다(`docs/palm-phase1c-operations.md:24`~`:44`). PGlite 통과로 대신하지 않는다. N-1은 이번 문서 승인 실패 원인이 아니다.
+- 실제 DB migration/권한·cleanup, 외부 ingress의 두 네트워크/위조값/도메인·alias, 설치 후 재배포 확인, 실기기 격리 mock, live와 공개 ON 별도 승인 게이트는 유지한다.
+
+이번 작업은 CODEX_REVIEW/CURRENT_PHASE 검수 문서만 갱신·로컬 커밋한다. runbook/생산 코드/API/SQL/migration/Vercel 설정 변경, 공개 ON, 유료 호출, merge/push 없음. **다음 단일 권고: 운영 문서 1-B의 R-2a/R-2b/R-2c를 문서만으로 보완한다.**
+
+---
+
+## 이전 검수 기록 (아래 판정은 위 최신 기록으로 대체됨)
+
 # Palm Phase 1C — 최종 집중 보안 재검수 (2026-10-20)
 
 **판정: B — MINOR FIXES REQUIRED (경미한 수정 필요)**
