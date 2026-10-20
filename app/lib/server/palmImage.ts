@@ -1,5 +1,5 @@
 import 'server-only';
-import sharp, { type Metadata } from 'sharp';
+import type { Metadata } from 'sharp';
 import type { PreparedPalmImage } from './palmVisionProvider';
 
 // ── Palm Phase 1B: 업로드 이미지 검증·준비 ─────────────────────────────────
@@ -121,6 +121,8 @@ export async function preparePalmImage(input: Uint8Array, declaredMime: string):
   if (mime !== declaredMime) throw new PalmImageError('unsupported'); // signature와 MIME이 일치해야 한다
   if (hasAnimationChunk(input, mime)) throw new PalmImageError('invalid');
 
+  // 네이티브 모듈은 실제 이미지 처리 때만 로드한다 — 본문 읽기만 쓰는 session/events 경로가 sharp 로드 실패에 묶이지 않게
+  const { default: sharp } = await import('sharp');
   const options = { limitInputPixels: L.maxPixels, failOn: 'warning' as const, animated: false };
   let meta: Metadata;
   try {
