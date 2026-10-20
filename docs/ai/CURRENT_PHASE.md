@@ -1,3 +1,20 @@
+# Palm Phase 1C — 최종 집중 보안 재검수 (2026-10-20)
+
+**판정: B — MINOR FIXES REQUIRED (경미한 수정 필요)**
+
+- CRITICAL 0 / IMPORTANT 0 / MINOR 2 / NOTE 1. 검수 시작 HEAD `10b8730`; 대상 `235e516`/`8058ae8` 실제 코드·테스트·문서를 독립 확인했다. 이 상태가 아래 2026-10-01 상태를 대체한다.
+- I-1 코드 결합·fail closed 적절. 같은 커밋/환경/프로젝트/generation/보안 설정의 재배포는 토큰을 공유한다. 매 deployment ID별 폐기는 보장하지 않으며, 인프라 변경은 OFF·generation 증가·재검증이 필요하다.
+- O-1 핵심 OFF 순서 충족. 잔여 MINOR: R-1 Preview/Production scope·branch override·공개 가능한 Supabase URL 예외 명시; R-2 재배포 probe 성공과 실제 설치 토큰 일치/OFF 검증 구별. 실행 runbook 보완 전 운영 준비 완료로 보지 않는다.
+- 독립 회귀 public 173/supplement 117 및 기존 회귀·golden PASS, digest `25ab43b8`/`dab19aab`. TypeScript/build PASS(폰트 네트워크 허용 재실행). 전체 lint 기존 8 errors+1 warning 실패, 변경 파일 lint PASS.
+- 추가 실제 exported POST 검증: SHA만 다른 A→B/B→A 503, B→B는 config gate 통과 후 Origin 403, OFF/불량 identity 거부, operator probe 인증, OFF session disabled, fetch 0회. 유료 성공 시험은 하지 않았다.
+- N-1은 **migration 후·유료 호출 전 실제 별도 연결 PostgreSQL smoke** 필수. PGlite PASS로 대체하지 않는다. 외부 두 네트워크/도메인·alias ingress 검증, 토큰 적용 재배포, DB 권한/cleanup, 실기기 mock도 미실행 게이트다.
+- 문서 두 파일만 갱신. 실제 OpenAI/Supabase/migration/Vercel 변경/public ON/merge/push 없음. 코드 검수 결과는 운영·공개 승인과 별개다.
+- 다음 단일 권고: `docs/palm-phase1c-operations.md`의 R-1/R-2 문서 누락을 보완한다. 상세 재현·라인·출처는 CODEX_REVIEW 최상단.
+
+---
+
+## 이전 상태 기록 (아래 판정은 위 최신 기록으로 대체됨)
+
 # Palm Phase 1C — Trusted Ingress 최종 한정 재검수 완료
 
 Status: **A. TRUSTED INGRESS CLOSED — READY FOR CONTROLLED OPERATIONAL SETUP**

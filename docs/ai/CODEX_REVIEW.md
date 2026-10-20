@@ -1,3 +1,85 @@
+# Palm Phase 1C — 최종 집중 보안 재검수 (2026-10-20)
+
+**판정: B — MINOR FIXES REQUIRED (경미한 수정 필요)**
+
+**CRITICAL 0 / IMPORTANT 0 / MINOR 2 / NOTE 1.** 코드 검수상 I-1 수정은 적절하다. 운영 절차의 두 누락을 정정해야 하므로 운영 준비 완료로 판정하지 않는다. 이 기록이 아래 2026-10-01 판정을 대체한다. public ON·live 호출·migration·merge·push 승인과는 별개다.
+
+## 범위와 독립 검증
+
+검수 시작 HEAD는 `10b8730`. `235e516` 코드/테스트와 `8058ae8` 문서, 이후 `10b8730` 문서 정정을 확인했다. CODEX_REVIEW/CURRENT_PHASE/DECISIONS/CLAUDE_REPORT/운영 문서를 읽고 실제 서버 모듈, API route 연결, SQL, 이미지/provider 경계, supplement 저장 및 회귀를 대조했다. 기존 보고의 PASS를 증거로 대신하지 않았다. 설치된 Next.js 16.2.6의 route/env 가이드도 확인했다. 생산 코드·테스트·SQL·golden baseline 변경은 없다.
+
+## 발견 사항
+
+### MINOR R-1 — Preview/Production 설정 적용 범위 누락
+
+위치: `docs/palm-phase1c-operations.md:17`, `:25`, `:27`, `:38`.
+
+실제 필수 변수명과 system env 활성화, git 연동, generation은 나열되어 있으나 Vercel **Production/Preview scope와 Preview branch override** 선택이 없다. Production에만 준비한 변수를 Preview 배포에서 사용할 수 없고, Preview에서 발급한 토큰은 `VERCEL_ENV` 결합 때문에 Production에서 거부된다. 문서 17행의 “모두 서버 전용, NEXT_PUBLIC_를 붙이지 않는다”도 25행의 실제 이름 `NEXT_PUBLIC_SUPABASE_URL`과 모순된다. URL은 공개 가능한 값이며 service/API/session/operator secret과 구별해야 한다.
+
+재현 근거: public 회귀의 preview→production 토큰 거부 및 `app/lib/server/palmPublicAccess.ts:89` 환경 결합 로직. Vercel 공식 문서상 변수는 선택한 환경의 **다음 배포**에만 적용되고 branch별 Preview 설정이 일반 Preview 값을 덮어쓴다. 최소 보완: 대상 scope를 명시하고 Preview는 격리 mock/OFF 및 별도 값, Production 토큰은 Production에서 발급·설치한다고 적는다. `NEXT_PUBLIC_SUPABASE_URL` 이름은 그대로 쓰되 공개 가능 URL 예외를 명시한다. 시스템 식별값을 수동 복제하거나 NEXT_PUBLIC로 만들지 않는다.
+
+### MINOR R-2 — 재배포 후 probe 성공은 설치 토큰 검증이 아님
+
+위치: `docs/palm-phase1c-operations.md:38`~`:40`; `app/lib/server/palmIngressProbe.ts:39`~`:69`; `app/lib/server/palmPublicAccess.ts:124`~`:126`.
+
+운영 5단계는 같은 커밋에서 `established`인지 확인하지만 probe는 `PALM_TRUSTED_INGRESS_VERIFICATION`을 읽지 않는다. 따라서 빈 값·오타·다른 환경 토큰을 설치해도 같은 성공 응답을 받는다. 이는 public gate 우회가 아니라 잘못된 운영 완료 판정 문제다(public은 fail closed).
+
+독립 재현: 가짜 서버 env에서 `PALM_PUBLIC_ENABLED=false`, 설치 토큰 `invalid`로 실제 `/api/palm/ingress-check`의 exported `POST`를 호출하면 여전히 `established`. 실제 analyze POST는 잘못된 토큰에서 503이다. 최소 보완: 대상 환경의 설정값과 재발급 토큰의 비공개 일치 확인 및 새 배포에 해당 설정이 반영됐는지 확인하고, public-OFF analyze 503/session disabled를 확인하도록 체크리스트에 추가한다. 확인 목적으로 public 또는 provider를 켜지 않는다. 토큰·secret을 보고서/티켓에 기록하지 않는다. 이전 검수 본문에는 이 주의가 있지만 실행 runbook에는 빠져 있다.
+
+### NOTE N-1 — 실제 다중 연결 PostgreSQL 검증은 미실행 운영 게이트
+
+위치: `scripts/regression-palm-public.ts:5`~`:8`, `docs/palm-phase1c-operations.md:42`~`:45`, `supabase/palm-public.sql:64` 이후.
+
+PGlite의 단일 연결 이벤트 루프 중첩은 실제 PostgreSQL 다중 연결 경쟁 검증이 아니다. migration 후·유료 호출 전에 별도 연결로 중복 ID reserve, 세션/IP/전체 cap 직전 경합, global/session 동시성, lease 복구, finalize 경합과 보수적 회계를 확인해야 한다. 이번 검수에서 통과했다고 주장하지 않는다. SQL 설계 변경 요구나 migration 자체를 막는 결함으로 분류하지 않는다.
+
+## I-1 결과 및 위협 모델
+
+`palmPublicAccess.ts:89`~`:126`: HMAC-SHA256 입력은 `palm-ingress-verified-v2|strategy|header|origin|vercel|VERCEL_ENV|VERCEL_PROJECT_ID|VERCEL_GIT_COMMIT_SHA|PALM_INGRESS_GENERATION`. VERCEL은 정확히 `1`, 환경은 production/preview, project/deployment ID는 접두사와 길이/문자, SHA는 40자리 소문자 hex, generation은 1~64 허용 문자로 검증한다. 누락/불량이면 public config가 비활성화된다. origin exact 검사와 각 입력 형식 제한으로 구분자 주입이 차단된다. token은 길이 확인 후 timing-safe 비교하며 session/CSRF/IP/image/probe HMAC과 domain separation이 다르다.
+
+route는 `process.env`를 직접 넘기고 요청 헤더에서 배포 identity를 읽지 않는다. `server-only` 및 클라이언트 번들 검색으로 secret/ingress generation/배포 결합 코드 유출이 없음을 확인했다. Vercel의 관련 다섯 system 변수는 공식 문서상 build/runtime에서 제공되며 **Enable access to System Environment Variables** 및 git SHA가 있는 배포라는 전제와 부합한다. 실제 프로젝트 설정은 열거나 변경하지 않았으므로 운영에서 값 존재·형식을 다시 확인해야 한다. env는 운영자가 통제하는 배포 계약이지 암호학적 플랫폼 attestation이 아니다.
+
+**동일 커밋 재배포 한계:** deployment ID는 검증하지만 HMAC에 넣지 않는다. 같은 환경·프로젝트·커밋·generation·origin·secret·전략이면 서로 다른 재배포가 토큰을 공유한다. 토큰 설치 재배포 순환을 피하는 의도된 릴리스/보안 설정 결합이며, 매 배포별 자동 폐기 또는 단 한 번 재배포 허용 기능은 아니다. 신뢰할 수 있는 운영자가 인프라 변경 전에 OFF·generation 증가·재검증한다는 기존 승인 모델에는 맞는다. 운영자 env 장악이나 generation 미갱신을 방어한다고 주장할 수 없다. 이전 커밋으로 rollback하면 해당 릴리스 토큰도 재사용 가능하므로 OFF 상태 재검증 절차를 적용해야 한다.
+
+## 실제 라우트와 probe 검증
+
+저장소 173개 public assertion은 실제 production handler 함수와 가짜 provider/PGlite를 사용한다. A→B는 analyze/session handler까지 검사하지만 B→A 및 B→B는 config 검사다(`scripts/regression-palm-public.ts:529`~`:542`). Next route exported POST 전체의 E2E 시험이라고 부를 수 없다.
+
+보완 독립 검증은 `/tmp/palm-final-review/routes.ts`에서 실제 analyze/probe/session route의 exported POST를 import하고 가짜 process.env, 전역 fetch 차단으로 수행했다. **SHA만 변경**한 B에서 TA 503, A에서 TB 503, B에서 TB 및 A에서 TA는 Origin 검사 403으로 진입했다. 후자는 config gate 통과 증거이며 유료 분석 성공 시험은 아니다. public OFF 503, 잘못된 deployment ID/누락 VERCEL 503, 요청 헤더 SHA 주입으로 우회 불가, OFF session disabled, probe 운영자 미인증 401 모두 확인했다. 네트워크 0회. 전체 정상 분석 성공과 provider 호출 횟수는 저장소의 fake-provider handler 회귀로 별도 검증했다.
+
+probe는 운영자 secret을 먼저 검사하고 provider/DB/fetch 경로가 없으며 env/flag를 변경하지 않는다. 두 flag OFF·미설치 토큰에서도 작동한다. 원본 IP/secret/project ID/전체 SHA를 반환하지 않으며 fingerprint와 토큰은 저장하지 않는다. probe의 origin 검사는 비어 있지 않은지만 보지만 public config exact-origin 검사가 최종적으로 잘못된 origin을 거부하므로 유료 gate 우회는 없다.
+
+## O-1 및 두 네트워크 절차
+
+OFF 시작 → OFF probe/ingress 검증 → 같은 커밋 토큰 설치 재배포(OFF 유지) → 실제 다중 연결 Postgres smoke → 실기기 mock → 별도 live 승인 → 별도 public ON 결정이라는 핵심 순서는 충족한다(`docs/palm-phase1c-operations.md:16`~`:50`). R-1/R-2 문서 보완은 남는다.
+
+같은 배포·UTC 날짜에서 동일 네트워크의 대조/문서 IPv4/일반 IPv4/IPv6/list 주입 fingerprint 동일성은 해당 샘플에서 공격자 헤더가 quota identity를 바꾸지 않았는지 점검한다. 두 네트워크의 다른 fingerprint는 IP가 고정 proxy 하나로 합쳐지는 구성의 보조 검사다. 공개 도메인과 Vercel alias 모두 시험하며 앞단 별도 proxy/CDN은 지원하지 않는다. 플랫폼 overwrite 설명과 이 조합은 통제된 OFF 준비 검증에 적절하지만, 단일 `established` 응답·두 네트워크 차이만으로 모든 ingress 또는 모든 사용자 IP를 증명하지 않는다. 실제 외부 시험은 이번에 수행하지 않았다. 네트워크 경로/IPv4·IPv6가 도중에 바뀌어 fingerprint가 달라도 실패로 처리하고 동일 경로에서 원인을 확인해야 한다.
+
+## 회귀·빌드 독립 실행 결과
+
+- public **173**, supplement **117**, extraction **146**, palm-evidence **76**, patterns **74**, identity-selection **97**, catalog-v3 **23**, saved-context **14**, evidence-trace **218** 모두 PASS(마지막 요약 PASS 제외).
+- golden v1/v2/v3 각각 7 cases PASS. diagnostic selection **25ab43b8**, full **dab19aab** 일치. baseline 변경 없음.
+- TypeScript PASS. build는 sandbox Google Fonts 접근 실패 후 동일 코드로 네트워크 허용 재실행 PASS(4 Palm routes 포함). lint 전체는 기존 **8 errors + 1 warning**로 실패, 수정 서버 2개/회귀 파일 한정 lint PASS. 해당 lint 위치는 수정 커밋의 변경 범위 밖이다.
+- tsx CLI의 sandbox IPC listen 실패는 캐시된 tsx loader를 Node `--import`로 사용하여 해소했다. public/extraction만 `--conditions=react-server`, supplement는 일반 React 조건으로 실행했다. 외부 의존성 설치나 소스 우회 수정 없음.
+- 빌드 `.next/static`에서 secret 이름, `VERCEL_PROJECT_ID`, generation, token separator, probe 헤더 검색 0건. `git diff --check` PASS.
+- 변경 diff 및 실제 회귀에서 Identity/CoreTags/convergence/과거 golden 불변, deterministic 해석·비교, saved A/B 격리, 삭제/늦은 응답 및 저장 실패 격리, raw image 비저장, 공유 DB 기반 비용/속도/동시성, provider 실패/finalize timeout의 보수적 처리 유지 확인. 이 결과는 실기기 UI 또는 실제 DB 동시성 시험을 대신하지 않는다.
+
+## 남은 운영 게이트 및 변경
+
+1. R-1/R-2 runbook 문서 보완 후 확인.
+2. 별도 지시에 따른 대상 scope/system env 확인 및 public/extraction OFF 배포. 실제 적용값은 비공개로 확인.
+3. 별도 승인 migration transaction, anon/authenticated 거부·service_role 권한 확인, cleanup 예약, body/header/APM 로그 비수집 확인.
+4. 동일 배포/UTC 날짜 두 네트워크·위조 헤더·공개 도메인/alias 외부 검증. 동일 커밋 토큰 설치 재배포 후 설정 일치/OFF 검증.
+5. **N-1 실제 다중 연결 PostgreSQL DB-only smoke**, 실기기 격리 mock.
+6. 증거 확인 후 live 1회 별도 승인. public ON은 이후 별도 승인.
+
+이번 작업은 CODEX_REVIEW/CURRENT_PHASE 문서만 갱신한다. OpenAI 유료 호출·실제 Supabase 접근·migration·Vercel 설정 변경·public 활성화·merge·push는 하지 않았다. **다음 단일 권고: 운영 runbook의 R-1/R-2 문서 누락 두 곳을 보완한다.**
+
+공식 확인 출처(2026-10-20): [Vercel system env](https://vercel.com/docs/environment-variables/system-environment-variables), [변수 scope와 재배포 적용](https://vercel.com/docs/environment-variables), [request header 계약](https://vercel.com/docs/headers/request-headers).
+
+---
+
+## 이전 검수 기록 (아래 판정은 위 최신 기록으로 대체됨)
+
 # Palm Phase 1C — Trusted Ingress 최종 한정 재검수 (2026-10-01)
 
 **A. TRUSTED INGRESS CLOSED — READY FOR CONTROLLED OPERATIONAL SETUP**
