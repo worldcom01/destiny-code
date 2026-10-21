@@ -24,6 +24,11 @@ import type { PalmSupplement } from '@/app/lib/palmSupplement';
 import { deletePalmSupplement, prunePalmSupplements, savedBaseRef, saveBaseThenPalm } from '@/app/lib/palmSupplementStore';
 import { shouldResetPalmOnDelete } from '@/app/lib/palmAttempt';
 import PalmSupplementPanel from '@/app/components/PalmSupplementPanel';
+import PalmPhotoInput, { type PalmPhoto } from '@/app/components/PalmPhotoInput';
+import { CorePatternSummary, IntersectionDetail, PalmReadingCard } from '@/app/components/IntegratedResult';
+import { ensurePalmSession, requestPalmObservation } from '@/app/lib/palmClient';
+import { palmErrorMessage } from '@/app/lib/palmPresentation';
+import type { PalmReading } from '@/app/lib/palmReading';
 import { shuffleCards } from '@/app/lib/tarotEngine';
 import { generateDestinyCode } from '@/app/lib/destinyCode';
 import { saveProfile } from '@/app/lib/profileStore';
@@ -318,6 +323,10 @@ export default function Home() {
   const [palmSaveNote, setPalmSaveNote] = useState<string | null>(null);
   // 활성 결과를 삭제하면 증가 → Palm 카드를 remount해 진행 중 요청·미저장 결과·미리보기를 버린다
   const [palmGeneration, setPalmGeneration] = useState(0);
+  // Palm V2: 입력 단계에서 고른 손바닥 사진(분석 후 즉시 놓는다)과 손금 분석 상태 안내
+  const [palmPhoto, setPalmPhoto] = useState<PalmPhoto | null>(null);
+  const [palmPending, setPalmPending] = useState(false);
+  const [palmNotice, setPalmNotice] = useState<string | null>(null);
 
   useEffect(() => {
     prunePalmSupplements(); // 삭제·10개 제한으로 사라진 결과의 보조 기록 정리
@@ -342,14 +351,30 @@ export default function Home() {
     setActive(null);
     setPendingPalm(null);
     setPalmSaveNote(null);
+    setPalmNotice(null);
     setSaveStatus('idle');
     setShuffledCards(shuffleCards(9));
     setAppStep('picking');
   };
 
+  // 손금은 카드 선택 직후 바로 요청해 로딩 단계와 겹쳐 진행한다. 실패해도 기존 분석은 그대로 진행한다.
+  const requestPalm = async (blob: Blob): Promise<{ reading: PalmReading } | { error: string }> => {
+    const session = await ensurePalmSession();
+    if (!session.enabled) return { error: 'UNAVAILABLE' };
+    let outcome = await requestPalmObservation(blob, session.csrfToken, crypto.randomUUID(), AbortSignal.timeout(70_000));
+    if (!outcome.ok && outcome.code === 'SESSION_REQUIRED') {
+      const fresh = await ensurePalmSession(true);
+      if (fresh.enabled) outcome = await requestPalmObservation(blob, fresh.csrfToken, crypto.randomUUID(), AbortSignal.timeout(70_000));
+    }
+    return outcome.ok ? { reading: outcome.reading } : { error: outcome.code };
+  };
+
   const handleCardPicked = async (card: TarotResult) => {
     setAppStep('analyzing');
     setLoadingStep(0);
+    const photo = palmPhoto;
+    const palmPromise = photo ? requestPalm(photo.blob) : Promise.resolve(null);
+    setPalmPending(!!photo);
 
     for (let i = 1; i < LOADING_STEPS.length; i++) {
       await new Promise((r) => setTimeout(r, 500));
@@ -360,6 +385,15 @@ export default function Home() {
     const birthdate = `${form.year}-${form.month.padStart(2, '0')}-${form.day.padStart(2, '0')}`;
     const birthtime = SIJU_TIME_MAP[form.birthHour] ?? '';
     const location = findLocationByLabel(form.birthplace);
+    const palmOutcome = await palmPromise;
+    setPalmPending(false);
+    let palmReading: PalmReading | undefined;
+    if (palmOutcome && 'reading' in palmOutcome) palmReading = palmOutcome.reading;
+    else if (palmOutcome) setPalmNotice(`손금 분석을 하지 못해 기존 정보로만 분석했습니다. ${palmErrorMessage(palmOutcome.error)}`);
+    if (photo) {
+      URL.revokeObjectURL(photo.previewUrl); // 사진 참조를 놓는다 — 결과에는 판독 내용만 남는다
+      setPalmPhoto(null);
+    }
     const analysisResult = analyzeDestiny(
       birthdate,
       birthtime,
@@ -371,6 +405,7 @@ export default function Home() {
       location?.lon,
       form.solarType,
       form.isLeapMonth,
+      palmReading,
     );
     setPendingPalm(null);
     setPalmSaveNote(null);
@@ -471,6 +506,8 @@ export default function Home() {
   const snapshot = result && isAnalysisSnapshot(result) ? result : null;
   const conflicts = snapshot?.conflicts ?? [];
   const keywordStrengths = snapshot?.keywordStrengths ?? [];
+  const intersection = snapshot?.intersection ?? null;
+  const palmReading = snapshot?.palmReading ?? null;
 
   const birthdateComputed = form.year && form.month && form.day
     ? `${form.year}-${form.month.padStart(2, '0')}-${form.day.padStart(2, '0')}`
@@ -740,6 +777,8 @@ export default function Home() {
               </div>
             </div>
 
+            <PalmPhotoInput photo={palmPhoto} onChange={setPalmPhoto} />
+
             <p className="mt-4 text-center text-[10px] text-slate-700">
               입력된 정보는 운명 흐름 분석에만 사용됩니다
             </p>
@@ -839,6 +878,9 @@ export default function Home() {
 
         {/* 로딩 */}
         {appStep === 'analyzing' && <LoadingPanel step={loadingStep} />}
+        {appStep === 'analyzing' && palmPending && loadingStep >= LOADING_STEPS.length - 1 && (
+          <p className="mt-3 text-center text-xs text-violet-300/80" role="status">손금을 자세히 읽는 중이에요. 보통 20~30초 걸립니다.</p>
+        )}
 
         {/* 결과 */}
         {appStep === 'result' && result && (
@@ -869,6 +911,10 @@ export default function Home() {
             </div>
 
             {palmSaveNote && <p className="text-xs text-amber-300/80 text-right" role="status">{palmSaveNote}</p>}
+            {palmNotice && <p className="text-xs text-amber-300/80" role="status">{palmNotice}</p>}
+
+            {/* ── A. 핵심 패턴 요약 (새 분석에만 있는 통합 교집합 모델) ── */}
+            {intersection && <CorePatternSummary model={intersection} />}
 
             {/* ── 당신의 본질 헤더 ── */}
             <div className="flex items-center gap-3 pt-2 opacity-0 [animation:fadeInUp_0.4s_ease-out_50ms_forwards]">
@@ -1197,6 +1243,9 @@ export default function Home() {
               </div>
             </div>
 
+            {/* ── B. 손금 상세 해석 (손바닥 사진을 함께 분석한 결과) ── */}
+            {palmReading && <PalmReadingCard reading={palmReading} />}
+
             {/* ── 교집합 강조 섹션 ───────────────────────────────────────────── */}
             <div
               className="relative overflow-hidden rounded-2xl border border-violet-500/40
@@ -1257,10 +1306,15 @@ export default function Home() {
 
                 {/* footnote */}
                 <p className="text-slate-600 text-[10px]">
-                  {result.mbtiTraits.type ? '5개' : '4개'} 분석 체계(사주 · 서양점성술 · {result.mbtiTraits.type ? 'MBTI · ' : ''}혈액형 · 타로)에서 독립적으로 반복 확인된 교집합입니다
+                  {intersection?.palmIncluded
+                    ? `사주 · 서양점성술 · ${result.mbtiTraits.type ? 'MBTI · ' : ''}혈액형 · 손금에서 반복 확인된 교집합입니다`
+                    : `${result.mbtiTraits.type ? '5개' : '4개'} 분석 체계(사주 · 서양점성술 · ${result.mbtiTraits.type ? 'MBTI · ' : ''}혈액형 · 타로)에서 독립적으로 반복 확인된 교집합입니다`}
                 </p>
               </div>
             </div>
+
+            {/* ── C·D. 교집합 근거와 보완·대비 ── */}
+            {intersection && <IntersectionDetail model={intersection} />}
 
             {/* ── 최종 정체성 선언 ──────────────────────────────────────────── */}
             <div
@@ -1335,7 +1389,7 @@ export default function Home() {
             </div>
 
             {/* ── 손바닥 패턴 분석 (선택 보조 기능 — 기본 결과와 분리, 결과마다 새로 mount) ── */}
-            {active && (() => {
+            {active && !palmReading && (() => {
               const ref = activeBaseRef(active);
               return ref && (
                 <PalmSupplementPanel

@@ -99,9 +99,15 @@ const selectFixture = (support: Partial<Record<CoreTag, string[]>>, keywordTag: 
 
 // 3 / 4. Option B ranking and representative priority are unchanged
 {
-  const files = ['app/lib/identitySelection.ts', 'app/lib/analysisPatterns.ts', 'app/lib/evidenceTrace.ts'];
-  check('3 selector / pattern / provenance sources are byte-identical to engine v2 (main)',
+  const files = ['app/lib/identitySelection.ts', 'app/lib/evidenceTrace.ts'];
+  check('3 selector / provenance sources are byte-identical to engine v2 (main)',
     files.every((f) => blob(f) === MAIN_BLOBS[f]), files.map((f) => `${f}=${blob(f)}`).join(' '));
+  // Palm V2는 analysisPatterns.ts의 두 scope에 'palm.coreTags' 한 줄씩만 추가했다 — 그 줄을 빼면 engine v2와 같아야 한다
+  const patterns = readFileSync(join(__dirname, '..', 'app/lib/analysisPatterns.ts'), 'utf8')
+    .split('\n').filter((l) => !l.includes("'palm.coreTags'")).join('\n');
+  const patternsBlob = createHash('sha1').update(`blob ${Buffer.byteLength(patterns)}\0`).update(patterns).digest('hex');
+  check('3 pattern source differs from engine v2 only by the palm.coreTags scope lines',
+    patternsBlob === MAIN_BLOBS['app/lib/analysisPatterns.ts'], patternsBlob);
   // tie between #3 (체계적+창의적) and #10 (창의적+독립적): earlier authored pair wins
   const tie = selectFixture({ 창의적: [SAJU, BLOOD], 체계적: [MBTI], 독립적: [SUN] }, '창의적');
   check('3 full tuple tie → existing earlier pair (#3) beats appended #10', tie.pairIndex === 3 && tie.usedAuthoredOrder, JSON.stringify(tie));

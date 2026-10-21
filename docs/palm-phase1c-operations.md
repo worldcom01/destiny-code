@@ -614,7 +614,7 @@ print("ACTIVE-IS-EXPECTED" if len(ids) == 1 and ids[0] == sys.argv[2] else "ACTI
   - provider 이전 DB가 지연되면 provider 호출 0회로 503을 반환한다.
   - provider 이후 finalize가 확인되지 않아도 이미 받은 관찰은 그대로 돌려준다. 이때 원장은 `provider-started`로 남고, lease(120초)가 만료되면 `uncertain`이 된다. 그동안 그 호출은 동시성 슬롯과 일 한도를 계속 차지하며, 같은 이미지는 재분석하지 않는다.
   - analytics는 1초 상한의 best-effort이며, 늦으면 기록이 빠질 수 있다.
-  - 응답 상한은 30초 + 2.5초 + 1초로 route `maxDuration` 40초 안이다.
+  - 응답 상한은 50초(provider 40초) + 2.5초 + 1초로 route `maxDuration` 60초 안이다.
 - 이벤트 본문은 스트리밍 중 512 bytes를 넘으면 즉시 중단한다. 읽기 상한은 2초다.
 - 같은 NAT를 쓰는 사용자들은 IP 한도를 공유할 수 있다.
 - `store:false`는 OpenAI 측 보관이 0이라는 뜻이 아니다. 안내 문구도 그렇게 약속하지 않는다.

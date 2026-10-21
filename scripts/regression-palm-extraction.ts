@@ -12,9 +12,7 @@ import { isRepositoryImagePath, REPOSITORY_ROOT } from './palmSmokePaths';
 import { join } from 'node:path';
 import { crc32 } from 'node:zlib';
 import sharp from 'sharp';
-import {
-  PALM_CONTINUITIES, PALM_CURVATURES, PALM_IMAGE_ISSUES, PALM_LINE_KEYS, PALM_READABILITY_REASONS,
-} from '../app/lib/palmObservation';
+import { PALM_AREA_KEYS, PALM_TRAIT_VOCAB } from '../app/lib/palmReading';
 import { PalmImageError, preparePalmImage, readBoundedBody, PALM_IMAGE_LIMITS } from '../app/lib/server/palmImage';
 import { PalmProviderError, type PalmVisionProvider, type PreparedPalmImage } from '../app/lib/server/palmVisionProvider';
 import { PalmRequestGate, readPalmExtractionConfig } from '../app/lib/server/palmAccess';
@@ -58,13 +56,13 @@ function withActl(pngBytes: Buffer): Buffer {
   return Buffer.concat([pngBytes.subarray(0, ihdrEnd), len, type, data, crc, pngBytes.subarray(ihdrEnd)]);
 }
 
-// ── provider payload fixtures (observation + quality only, as a provider returns) ──
-const V = (c: string, t: string) => ({ status: 'visible', curvature: { status: 'observed', value: c }, continuity: { status: 'observed', value: t } });
-const U = { status: 'unreadable', reason: 'blur' };
-const q = (usability: string, palmCoverage: string, issues: string[] = []) => ({ version: 1, usability, palmCoverage, issues });
-const FULL = { observation: { version: 1, lines: { life: V('curved', 'continuous'), head: V('straight', 'continuous'), heart: V('curved', 'interrupted'), fate: V('straight', 'continuous') } }, quality: q('usable', 'full') };
-const PARTIAL = { observation: { version: 1, lines: { life: { status: 'visible', curvature: { status: 'observed', value: 'curved' }, continuity: { status: 'unreadable', reason: 'cropped' } }, head: { status: 'not-detected' }, heart: U, fate: V('straight', 'continuous') } }, quality: q('partial', 'partial', ['cropped-palm']) };
-const UNUSABLE = { observation: { version: 1, lines: { life: U, head: U, heart: U, fate: U } }, quality: q('unusable', 'none', ['not-a-palm']) };
+// ── provider payload fixtures (quality + areas only, as a provider returns — Palm V2) ──
+const O = (traits: string[] = [], confidence = 'high') => ({ status: 'observed', observedFeatures: ['엄지 뿌리를 크게 감싸며 손목 쪽까지 이어짐'], interpretation: '전통 손금에서는 꾸준한 생활 리듬으로 읽기도 합니다.', confidence, limitations: [], traitCandidates: traits });
+const U = { status: 'unreadable', limitations: ['조명이 어두움'] };
+const q = (usability: string, summary = '손바닥 전체가 보입니다') => ({ usability, summary });
+const FULL = { quality: q('usable'), areas: { life: O(['체계적']), head: O(['분석적']), heart: O(['감성적'], 'medium'), fate: O([]), palmShape: O(['실용적']), minorLines: O([], 'low') } };
+const PARTIAL = { quality: q('partial', '손바닥 아래쪽이 잘렸습니다'), areas: { life: U, head: O(['창의적']), heart: O([]), fate: U, palmShape: O([]), minorLines: U } };
+const UNUSABLE = { quality: q('unusable', '손바닥이 아닙니다'), areas: { life: U, head: U, heart: U, fate: U, palmShape: U, minorLines: U } };
 const METADATA = { adapterVersion: 'test-adapter', modelRevision: 'test-model', promptVersion: 'test-prompt' };
 
 type Calls = { n: number };
@@ -171,20 +169,21 @@ async function main() {
   for (const [name, payload] of [['fully readable', FULL], ['partially readable', PARTIAL], ['valid unusable', UNUSABLE]] as const) {
     const b = await run(fakeProvider(payload));
     check(`B ${name} → trusted bundle with server-owned extraction metadata`,
-      eq(b.observation, payload.observation) && eq(b.quality, payload.quality) && eq(b.extraction, METADATA) && b.version === 1);
+      eq(b.areas, payload.areas) && eq(b.quality, payload.quality) && eq(b.extraction, METADATA) && b.version === 2);
   }
   const badPayloads: Array<[string, unknown]> = [
     ['not an object', 'lines ok'],
     ['array', [FULL]],
     ['extra root field (trait)', { ...FULL, trait: '창의적' }],
-    ['model-supplied version', { ...FULL, version: 1 }],
+    ['model-supplied version', { ...FULL, version: 2 }],
     ['model-supplied extraction', { ...FULL, extraction: METADATA }],
-    ['missing quality', { observation: FULL.observation }],
-    ['unknown enum value', { ...FULL, observation: { version: 1, lines: { ...FULL.observation.lines, life: V('wavy', 'continuous') } } }],
-    ['contradictory: unreadable line + observed curvature', { ...FULL, observation: { version: 1, lines: { ...FULL.observation.lines, heart: { ...U, curvature: { status: 'observed', value: 'curved' } } } } }],
-    ['contradictory: unusable quality + visible lines', { ...FULL, quality: q('unusable', 'none') }],
-    ['duplicate issue flags (schema cannot prevent, parser does)', { ...FULL, quality: q('partial', 'partial', ['blur', 'blur']) }],
-    ['missing line key', { ...FULL, observation: { version: 1, lines: { life: FULL.observation.lines.life, head: FULL.observation.lines.head, heart: FULL.observation.lines.heart } } }],
+    ['missing quality', { areas: FULL.areas }],
+    ['trait outside the CoreTag vocabulary', { ...FULL, areas: { ...FULL.areas, life: O(['용감한']) } }],
+    ['contradictory: unreadable area + interpretation', { ...FULL, areas: { ...FULL.areas, heart: { ...U, interpretation: 'x' } } }],
+    ['contradictory: unusable quality + observed areas', { ...FULL, quality: q('unusable') }],
+    ['duplicate trait candidates (schema cannot prevent, parser does)', { ...FULL, areas: { ...FULL.areas, life: O(['체계적', '체계적']) } }],
+    ['observed area without features', { ...FULL, areas: { ...FULL.areas, life: { ...O([]), observedFeatures: [] } } }],
+    ['missing area key', { ...FULL, areas: { life: FULL.areas.life, head: FULL.areas.head, heart: FULL.areas.heart } }],
   ];
   for (const [name, payload] of badPayloads) {
     let bundle: unknown;
@@ -206,8 +205,8 @@ async function main() {
   {
     const src = ['palmExtraction.ts', 'openaiPalmVision.ts', 'palmImage.ts', 'palmVisionProvider.ts', 'palmAccess.ts']
       .map((f) => readFileSync(join(__dirname, '..', 'app/lib/server', f), 'utf8'));
-    check('B no `as PalmObservationBundle` cast in the server boundary', src.every((s) => !/as\s+PalmObservationBundle/.test(s)));
-    check('B extraction service calls parsePalmObservationBundle', /parsePalmObservationBundle\(candidate\)/.test(src[0]));
+    check('B no `as PalmReading` cast in the server boundary', src.every((s) => !/as\s+PalmReading/.test(s)));
+    check('B extraction service calls parsePalmReading', /parsePalmReading\(candidate\)/.test(src[0]));
   }
 
   // ══ C. HTTP handler: access, gate, status mapping ══
@@ -326,10 +325,10 @@ async function main() {
     check('D image sent inline as prepared JPEG, detail high, no filename', img0.detail === 'high'
       && typeof img0.image_url === 'string' && (img0.image_url as string).startsWith('data:image/jpeg;base64,')
       && !JSON.stringify(s.body).includes('filename'));
-    check('D store:false, no tools, not streamed, max_output_tokens 2000',
-      s.body.store === false && !('tools' in s.body) && s.body.stream === false && s.body.max_output_tokens === 2000 && PALM_OPENAI_MAX_OUTPUT_TOKENS === 2000);
+    check('D store:false, no tools, not streamed, max_output_tokens 3000',
+      s.body.store === false && !('tools' in s.body) && s.body.stream === false && s.body.max_output_tokens === 3000 && PALM_OPENAI_MAX_OUTPUT_TOKENS === 3000);
     const fmt = (s.body.text as { format: Record<string, unknown> }).format;
-    check('D strict json_schema structured output', fmt.type === 'json_schema' && fmt.strict === true && fmt.name === 'palm_observation_v1' && eq(fmt.schema, PALM_OBSERVATION_JSON_SCHEMA));
+    check('D strict json_schema structured output', fmt.type === 'json_schema' && fmt.strict === true && fmt.name === 'palm_reading_v2' && eq(fmt.schema, PALM_OBSERVATION_JSON_SCHEMA));
     check('D adapter returns the decoded payload as unknown (parser still required)', eq(out, FULL));
   }
   const adapterCases: Array<[string, () => Response, string]> = [
@@ -367,30 +366,28 @@ async function main() {
     const bad: string[] = [];
     walk(PALM_OBSERVATION_JSON_SCHEMA, bad);
     check('D schema: every object strict (additionalProperties false, all fields required)', bad.length === 0, bad.join(', '));
-    const s = JSON.stringify(PALM_OBSERVATION_JSON_SCHEMA);
     const S = PALM_OBSERVATION_JSON_SCHEMA as unknown as {
       properties: {
-        observation: { properties: { lines: { properties: Record<string, { anyOf: Array<{ properties: Record<string, unknown> }> }> } } };
-        quality: { properties: { issues: { items: { enum: string[] } } } };
+        quality: { properties: Record<string, unknown> };
+        areas: { properties: Record<string, { anyOf: Array<{ properties: Record<string, { items?: { enum?: string[] } }> }> }> };
       };
     };
-    check('D schema: four line keys, enums from the Phase 1A constants',
-      eq(Object.keys(S.properties.observation.properties.lines.properties), [...PALM_LINE_KEYS])
-      && eq(S.properties.quality.properties.issues.items.enum, [...PALM_IMAGE_ISSUES])
-      && [...PALM_CURVATURES, ...PALM_CONTINUITIES, ...PALM_READABILITY_REASONS].every((v) => s.includes(`"${v}"`)));
-    const line = S.properties.observation.properties.lines.properties.life;
-    check('D schema: line states are exact-key variants (visible / not-detected / unreadable)',
-      eq(line.anyOf.map((v) => Object.keys(v.properties)), [['status', 'curvature', 'continuity'], ['status'], ['status', 'reason']]));
-    check('D schema: no CoreTag / trait / confidence fields', !/trait|coreTag|confidence|창의적|독립적/.test(s));
+    check('D schema (v2): six area keys and quality {usability, summary}',
+      eq(Object.keys(S.properties.areas.properties), [...PALM_AREA_KEYS]) && eq(Object.keys(S.properties.quality.properties), ['usability', 'summary']));
+    const area = S.properties.areas.properties.life;
+    check('D schema (v2): area states are exact-key variants (observed / unreadable)',
+      eq(area.anyOf.map((v) => Object.keys(v.properties)), [['status', 'observedFeatures', 'interpretation', 'confidence', 'limitations', 'traitCandidates'], ['status', 'limitations']]));
+    check('D schema (v2): trait candidates limited to the CoreTag vocabulary',
+      eq(area.anyOf[0].properties.traitCandidates.items?.enum, [...PALM_TRAIT_VOCAB]));
   }
   {
     const I = PALM_VISION_INSTRUCTION;
-    check('D instruction: visual extraction only, prohibits personality/health/lifespan/future/demographic/identity inference',
-      ['성격', 'MBTI', '건강', '수명', '미래', '운세', '성별', '민족', '나이', '신원', 'CoreTag', 'Destiny Code'].every((w) => I.includes(w)));
+    check('D instruction: observed facts separated from symbolic interpretation, no guessing',
+      I.includes('observedFeatures') && I.includes('interpretation') && I.includes('추정하지 마세요') && I.includes('단정하지'));
+    check('D instruction: prohibits health/lifespan/future-event/demographic/identity prediction',
+      ['건강', '질병', '수명', '사망', '사고', '성별', '나이', '민족', '신원'].every((w) => I.includes(w)));
     check('D instruction: text/QR/labels inside the image are content, not instructions',
-      ['글자', 'QR', '라벨', '캡션', '손글씨', '화면', '지시가 아닙니다', '무시하세요'].every((w) => I.includes(w)));
-    check('D instruction: not-detected ≠ biological absence, prefer unreadable when unsure',
-      I.includes('생물학적으로 없다는 뜻이 아닙니다') && I.includes('unreadable을 쓰세요'));
+      ['글자', 'QR', '라벨', '화면', '지시가 아닙니다', '무시하고'].every((w) => I.includes(w)));
   }
 
   // ══ E. prompt-injection contract (architecture, not model behavior) ══
@@ -440,8 +437,8 @@ async function main() {
     const notTrue = readPalmExtractionConfig({ PALM_EXTRACTION_ENABLED: '1', PALM_EXTRACTION_SECRET: 's', OPENAI_API_KEY: 'k' });
     check('F Palm extraction is disabled unless PALM_EXTRACTION_ENABLED is exactly "true"', !off.enabled && !notTrue.enabled && off.secret === '' && off.apiKey === '');
     const route = files[5];
-    check('F route: Node runtime, maxDuration 40, 30s request / 20s provider deadlines',
-      route.includes("runtime = 'nodejs'") && route.includes('maxDuration = 40') && route.includes('requestTimeoutMs: 30_000') && route.includes('providerTimeoutMs: 20_000'));
+    check('F route: Node runtime, maxDuration 60, 50s request / 40s provider deadlines',
+      route.includes("runtime = 'nodejs'") && route.includes('maxDuration = 60') && route.includes('requestTimeoutMs: 50_000') && route.includes('providerTimeoutMs: 40_000'));
   }
 
   // ══ G. upload deadline / body cleanup / concurrency-slot ownership (Codex I-1) ══

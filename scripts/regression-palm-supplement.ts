@@ -494,7 +494,8 @@ async function renderSmoke() {
   const b = activeFromNewAnalysis(analyzeB(), inputB);
   saveActive(b);
   const htmlB = renderToStaticMarkup(React.createElement(Panel, { active: b, storeVersion: 0, onPendingChange: () => {}, onSaved: () => {} }));
-  check('render: result B does not render A\'s Palm supplement', !htmlB.includes('관찰된 주요 패턴') && htmlB.includes('손바닥 패턴 분석'));
+  // Palm V2: 보조 카드는 예전에 저장된 결과만 보여 주는 읽기 전용이다 — 저장된 보조 결과가 없는 B는 아무것도 그리지 않는다
+  check('render: result B does not render A\'s Palm supplement', !htmlB.includes('관찰된 주요 패턴') && htmlB === '');
 }
 
 renderSmoke().then(() => {

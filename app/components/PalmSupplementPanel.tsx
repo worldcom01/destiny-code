@@ -44,7 +44,8 @@ export default function PalmSupplementPanel({ active, storeVersion, onPendingCha
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseRef?.kind, baseRef?.id, storeVersion, localVersion]);
 
-  const [enabled, setEnabled] = useState<boolean | null>(null);
+  // Palm V2부터 새 손바닥 분석은 입력 단계에서 함께 한다. 이 카드는 예전에 저장한 보조 결과만 보여 준다.
+  const [enabled, setEnabled] = useState<boolean | null>(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -65,14 +66,6 @@ export default function PalmSupplementPanel({ active, storeVersion, onPendingCha
   useEffect(() => {
     let cancelled = false;
     const tracker = trackerRef.current;
-    ensurePalmSession().then((s) => {
-      if (cancelled) return;
-      setEnabled(s.enabled);
-      if (s.enabled && !viewedRef.current) {
-        viewedRef.current = true;
-        trackPalmEvent('palm_prompt_viewed');
-      }
-    });
     return () => {
       cancelled = true;
       tracker.invalidate();               // 늦게 도착한 응답은 반영하지 않는다 (결과 이동·삭제 remount 포함)
@@ -144,27 +137,9 @@ export default function PalmSupplementPanel({ active, storeVersion, onPendingCha
       setPhase('error'); // 기존에 받은 성공 결과·기본 결과는 그대로 둔다
       return;
     }
-    if (outcome.bundle.quality.usability === 'unusable') {
-      setUnusable(outcome.bundle);
-      releasePhoto();
-      setPhase('unusable');
-      return;
-    }
-    const supplement = buildPalmSupplementFor(active, outcome.bundle, {
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
-      noticeAcceptedAt,
-    });
-    if (!supplement) {
-      setErrorCode('UNAVAILABLE');
-      setPhase('error');
-      return;
-    }
-    setUnusable(null);
-    setFresh(supplement);
-    onPendingChange(supplement);
-    releasePhoto(); // 결과를 받은 뒤 사진 참조를 놓는다
-    setPhase('done');
+    // v2 판독은 이 보조 카드(v1 계약)에 저장하지 않는다 — 새 분석은 입력 단계에서 통합된다
+    setErrorCode('UNAVAILABLE');
+    setPhase('error');
   };
 
   const saveFresh = () => {

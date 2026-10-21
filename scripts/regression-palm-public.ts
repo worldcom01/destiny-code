@@ -58,19 +58,16 @@ const ENV: Record<string, string> = {
   PALM_EXTRACTION_SECRET: OPERATOR_SECRET,
   PALM_LIMIT_SESSION_INTERVAL_SECONDS: '0',
 };
-const META = { adapterVersion: 'openai-responses-1', modelRevision: 'gpt-4.1-2025-04-14', promptVersion: 'palm-vision-ko-1' };
+const META = { adapterVersion: 'openai-responses-1', modelRevision: 'gpt-4.1-2025-04-14', promptVersion: 'palm-vision-ko-2' };
+const AREA = (traits: string[]) => ({ status: 'observed', observedFeatures: ['손바닥 중앙을 곧게 가로지름'], interpretation: '전통 손금에서는 차분한 판단으로 읽기도 합니다.', confidence: 'high', limitations: [], traitCandidates: traits });
+const UNREADABLE_AREA = { status: 'unreadable', limitations: ['보이지 않음'] };
 const OBS = {
-  observation: { version: 1, lines: {
-    life: { status: 'visible', curvature: { status: 'observed', value: 'curved' }, continuity: { status: 'observed', value: 'continuous' } },
-    head: { status: 'visible', curvature: { status: 'observed', value: 'straight' }, continuity: { status: 'observed', value: 'continuous' } },
-    heart: { status: 'not-detected' },
-    fate: { status: 'unreadable', reason: 'blur' },
-  } },
-  quality: { version: 1, usability: 'usable', palmCoverage: 'full', issues: [] },
+  quality: { usability: 'usable', summary: '손바닥 전체가 보입니다' },
+  areas: { life: AREA(['체계적']), head: AREA(['분석적']), heart: AREA([]), fate: UNREADABLE_AREA, palmShape: AREA([]), minorLines: UNREADABLE_AREA },
 };
 const UNUSABLE = {
-  observation: { version: 1, lines: Object.fromEntries(['life', 'head', 'heart', 'fate'].map((k) => [k, { status: 'unreadable', reason: 'not-visible' }])) },
-  quality: { version: 1, usability: 'unusable', palmCoverage: 'none', issues: ['not-a-palm'] },
+  quality: { usability: 'unusable', summary: '손바닥이 아닙니다' },
+  areas: Object.fromEntries(['life', 'head', 'heart', 'fate', 'palmShape', 'minorLines'].map((k) => [k, UNREADABLE_AREA])),
 };
 
 // ── disposable DB with the real migration ──
@@ -233,7 +230,7 @@ async function main() {
     const cols = await db.query<{ column_name: string }>(`select column_name from information_schema.columns where table_name = 'palm_events'`);
     check('events table has no session/IP/image/trait columns', cols.rows.map((r) => r.column_name).sort().join() === 'created_at,duration_bucket,error_code,event,id,supplement_version');
     const dump = JSON.stringify((await db.query(`select * from palm_request_ledger`)).rows) + JSON.stringify((await db.query(`select * from palm_events`)).rows);
-    check('DB holds no observation/bundle content', !/curvature|continuity|visible|observation|usable/.test(dump));
+    check('DB holds no reading/bundle content', !/observedFeatures|interpretation|traitCandidates|손바닥|usable|체계적|분석적/.test(dump));
   }
 
   // ══ duplicates / conflicts ══

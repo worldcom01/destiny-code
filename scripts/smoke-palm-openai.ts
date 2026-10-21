@@ -51,10 +51,10 @@ async function main() {
     const bundle = await extractPalmObservation(prepared, createOpenAIPalmVisionProvider({ apiKey }), {
       signal: new AbortController().signal,
       metadata: { adapterVersion: PALM_OPENAI_ADAPTER_VERSION, modelRevision: PALM_OPENAI_MODEL, promptVersion: PALM_VISION_PROMPT_VERSION },
-      providerTimeoutMs: 20_000,
+      providerTimeoutMs: 40_000,
     });
     console.log(`ok in ${Date.now() - started} ms (model ${PALM_OPENAI_MODEL}, prepared ${prepared.width}x${prepared.height})`);
-    console.log(JSON.stringify({ observation: bundle.observation, quality: bundle.quality }, null, 2));
+    console.log(JSON.stringify({ quality: bundle.quality, areas: bundle.areas }, null, 2));
   } catch (e) {
     const code = e instanceof PalmImageError || e instanceof PalmProviderError ? e.failure : 'unexpected';
     console.log(`failed in ${Date.now() - started} ms: ${code}`);

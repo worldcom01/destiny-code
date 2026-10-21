@@ -1,10 +1,6 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
-import {
-  parsePalmObservationBundle,
-  PalmObservationContractError,
-  type PalmObservationBundle,
-} from '../palmObservation';
+import { parsePalmReading, PalmReadingContractError, type PalmReading } from '../palmReading';
 import {
   isOperatorSecretValid,
   readPalmExtractionConfig,
@@ -17,18 +13,18 @@ import { PalmProviderError, type PalmVisionProvider, type PreparedPalmImage } fr
 import type { PalmPublicLimits } from './palmPublicAccess';
 import { palmWithin, PALM_DB_CALL_TIMEOUT_MS, type PalmPublicStore } from './palmPublicGate';
 
-// ── Palm Phase 1B: provider 응답 → 검증된 PalmObservationBundle ─────────────
-// provider의 unknown 응답 → 전송 형식 확인(observation·quality 두 필드) → 서버 소유 metadata 조립
-// → parsePalmObservationBundle() → 신뢰할 수 있는 bundle. 의미 검증은 parser 한 곳뿐이다.
+// ── Palm V2: provider 응답 → 검증된 PalmReading ────────────────────────────
+// provider의 unknown 응답 → 전송 형식 확인(quality·areas 두 필드) → 서버 소유 metadata 조립
+// → parsePalmReading() → 신뢰할 수 있는 판독. 의미 검증은 parser 한 곳뿐이다.
 // Evidence 생성·기존 분석·저장은 호출하지 않는다.
 
-export type PalmExtractionMetadata = PalmObservationBundle['extraction'];
+export type PalmExtractionMetadata = PalmReading['extraction'];
 
 export async function extractPalmObservation(
   image: PreparedPalmImage,
   provider: PalmVisionProvider,
   options: { signal: AbortSignal; metadata: PalmExtractionMetadata; providerTimeoutMs: number },
-): Promise<PalmObservationBundle> {
+): Promise<PalmReading> {
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), options.providerTimeoutMs);
   const signal = AbortSignal.any([options.signal, deadline.signal]);
@@ -47,18 +43,18 @@ export async function extractPalmObservation(
   }
   if (signal.aborted) throw new PalmProviderError('timeout'); // 늦게 도착한 결과는 버린다
 
-  // 전송 형식 확인: 정확히 observation·quality 두 필드. 추가 필드를 지우고 통과시키지 않는다.
+  // 전송 형식 확인: 정확히 areas·quality 두 필드. 추가 필드를 지우고 통과시키지 않는다.
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new PalmProviderError('invalid-response');
   const keys = Object.keys(raw).sort();
-  if (keys.length !== 2 || keys[0] !== 'observation' || keys[1] !== 'quality') throw new PalmProviderError('invalid-response');
-  const payload = raw as { observation: unknown; quality: unknown };
+  if (keys.length !== 2 || keys[0] !== 'areas' || keys[1] !== 'quality') throw new PalmProviderError('invalid-response');
+  const payload = raw as { areas: unknown; quality: unknown };
 
   // version과 extraction은 모델 출력이 아니라 서버가 붙인다
-  const candidate: unknown = { version: 1, observation: payload.observation, quality: payload.quality, extraction: options.metadata };
+  const candidate: unknown = { version: 2, quality: payload.quality, areas: payload.areas, extraction: options.metadata };
   try {
-    return parsePalmObservationBundle(candidate);
+    return parsePalmReading(candidate);
   } catch (e) {
-    if (e instanceof PalmObservationContractError) throw new PalmProviderError('invalid-response');
+    if (e instanceof PalmReadingContractError) throw new PalmProviderError('invalid-response');
     throw e;
   }
 }
@@ -72,7 +68,7 @@ export type PalmErrorCode =
   | 'SESSION_REQUIRED' | 'INVALID_REQUEST' | 'DUPLICATE_REQUEST' | 'REQUEST_CONFLICT' | 'DUPLICATE_IMAGE';
 
 export type PalmExtractionResponse =
-  | { ok: true; bundle: PalmObservationBundle }
+  | { ok: true; bundle: PalmReading }
   | { ok: false; error: { code: PalmErrorCode; retryAfterSeconds?: number; requestStatus?: string } };
 
 export type PalmAnalyzeDeps = {

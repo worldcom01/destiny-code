@@ -4,6 +4,8 @@ import { detectConflicts, type ConflictPattern } from './conflictEngine';
 import { computeKeywordStrengths, type KeywordStrength } from './keywordEngine';
 import { buildAnalysisTrace, type AnalysisTrace } from './evidenceTrace';
 import { selectIdentityV2, type IdentitySelectionReason } from './identitySelection';
+import { buildIntersection, type IntersectionModel } from './intersection';
+import { PALM_AREA_LABELS, palmTraitSupport, type PalmReading } from './palmReading';
 
 // ── 타입 정의 ────────────────────────────────────────────────────────────────
 
@@ -118,6 +120,11 @@ export type AnalysisSnapshot = AnalysisOutput & {
 
   // engine v2: Identity가 왜 선택됐는지. 새 분석에는 항상 있고, 과거 결과에는 재계산하지 않는다.
   identitySelection?: IdentitySelectionReason;
+
+  // Palm V2: 손바닥 사진을 함께 분석했을 때의 상세 판독(사진 없음). 없으면 기존 결과와 같다.
+  palmReading?: PalmReading;
+  // 소스별 지지·교집합·보완·대비 모델. 새 분석에만 있다.
+  intersection?: IntersectionModel;
 };
 
 export function isAnalysisSnapshot(r: AnalysisOutput): r is AnalysisSnapshot {
@@ -817,6 +824,7 @@ export function analyzeDestiny(
   birthLon?: number,
   calendarType: 'solar' | 'lunar' = 'solar',
   isLeapMonth: boolean = false,
+  palm?: PalmReading,
 ): AnalysisSnapshot {
   // 별자리/서양 점성술은 항상 양력 기준 날짜가 필요하므로, 음력 입력이면 변환
   let solarBirthdate = birthdate;
@@ -834,11 +842,16 @@ export function analyzeDestiny(
   const saju = calcSaju(birthdate, birthtime, gender, calendarType, isLeapMonth);
   const tarot = selectedCard ?? calcTarot();
 
+  // Palm V2: 판독된 손금 영역의 의미 후보(최대 3개)가 다섯 번째 교집합 소스가 된다. 사진이 없으면 []라 기존과 같다.
+  const palmSupport = palm ? palmTraitSupport(palm) : [];
+  const palmTags = palmSupport.map((p) => p.trait);
+
   const commonKeywords = calcCommonKeywords([
     westernAstrology.coreTags,
     mbtiData.coreTags,
     saju.coreTags,
     bloodTypeData.coreTags,
+    palmTags,
   ]);
 
   const detailedReading = generateDetailedReading(saju, zodiac, mbtiData, bloodTypeData, tarot, commonKeywords);
@@ -848,6 +861,15 @@ export function analyzeDestiny(
     saju, zodiacKey, zodiac, westernAstrology, mbti: mbtiData, bloodType: bloodTypeData, tarot,
     elementCoreTags: ELEMENT_CORE_TAGS,
   });
+  if (palm && palmSupport.length > 0) {
+    const usedAreas = [...new Set(palmSupport.flatMap((p) => p.areas))];
+    for (const area of usedAreas) {
+      trace.evidence.push({ id: `palm:area:${area}`, source: 'palm', kind: 'image-observation', feature: `${area}.traitCandidates`, value: area, status: 'available' });
+    }
+    for (const { trait, areas } of palmSupport) {
+      trace.claims.push({ id: `palm:claim:${trait}`, trait, evidenceIds: areas.map((a) => `palm:area:${a}`), ruleId: 'palm.reading-traits@2', basis: 'symbolic', target: 'palm.coreTags' });
+    }
+  }
   const identitySelection = selectIdentityV2({
     trace,
     pairs: CONFLICT_IDENTITY,
@@ -866,7 +888,20 @@ export function analyzeDestiny(
     ...westernAstrology.coreTags,
     ...(mbtiData.type ? mbtiData.coreTags : []),
     ...bloodTypeData.coreTags,
+    ...palmTags,
   ])];
+
+  const intersection = buildIntersection({
+    trace,
+    palm,
+    palmDetailByTrait: Object.fromEntries(palmSupport.map((p) => [p.trait, p.areas.map((a) => PALM_AREA_LABELS[a]).join(' · ')])),
+    sourceDetails: {
+      saju: `${saju.dayStemKo}(${saju.dayStem}) 일간 · ${ELEMENT_META[saju.dominantElement].label} 기운`,
+      'western-astrology': `${westernAstrology.sun.data.sign}${westernAstrology.moon ? ` · 달 ${westernAstrology.moon.data.sign}` : ''}`,
+      mbti: mbtiData.type ? `${mbtiData.type}` : '',
+      'blood-type': `${bloodTypeData.type}형`,
+    },
+  });
 
   return {
     schemaVersion: 2,
@@ -877,5 +912,7 @@ export function analyzeDestiny(
     conflicts, keywordStrengths, coreTags,
     trace,
     identitySelection,
+    ...(palm ? { palmReading: palm } : {}),
+    intersection,
   };
 }

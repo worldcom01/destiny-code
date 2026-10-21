@@ -41,6 +41,7 @@ const CONVERGENCE_TARGETS: ReadonlySet<string> = new Set([
   'westernAstrology.sun.data.coreTags',
   'westernAstrology.moon.data.coreTags',
   'westernAstrology.ascendant.data.coreTags',
+  'palm.coreTags', // Palm V2: 손바닥 사진을 함께 분석한 결과에만 Claim이 있다
 ]);
 
 // generateIdentity()의 태그 합집합과 같은 범위: 사주·zodiac(태양)·혈액형·MBTI.
@@ -49,6 +50,7 @@ const IDENTITY_TARGETS: ReadonlySet<string> = new Set([
   'zodiac.coreTags',
   'bloodType.coreTags',
   'mbtiTraits.coreTags',
+  'palm.coreTags',
 ]);
 
 const unique = <T,>(xs: T[]): T[] => xs.filter((x, i) => xs.indexOf(x) === i);

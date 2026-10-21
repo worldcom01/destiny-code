@@ -48,7 +48,7 @@ export type PalmPublicAnalyzeDeps = {
 };
 
 // 응답 상한: requestTimeoutMs(업로드+DB 예약+provider) + finalize 상한 + analytics 상한.
-// 기본값 30초 + 2.5초 + 1초 = 33.5초 < route maxDuration 40초.
+// 기본값 50초 + 2.5초 + 1초 = 53.5초 < route maxDuration 60초.
 export const PALM_ANALYTICS_TIMEOUT_MS = 1_000;
 
 export async function handlePalmPublicAnalyze(req: Request, deps: PalmPublicAnalyzeDeps): Promise<Response> {

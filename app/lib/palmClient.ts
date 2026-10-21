@@ -1,4 +1,4 @@
-import { parsePalmObservationBundle, type PalmObservationBundle } from './palmObservation';
+import { parsePalmReading, type PalmReading } from './palmReading';
 import { PALM_PROCESSING_NOTICE_VERSION } from './palmSupplement';
 
 // ── Palm Phase 1C: 브라우저 → 서버 호출 (same-origin만) ─────────────────────────
@@ -25,7 +25,7 @@ export function ensurePalmSession(force = false): Promise<PalmSessionState> {
 }
 
 export type PalmAnalyzeOutcome =
-  | { ok: true; bundle: PalmObservationBundle }
+  | { ok: true; reading: PalmReading }
   | { ok: false; code: string; retryAfterSeconds?: number };
 
 export async function requestPalmObservation(file: Blob, csrfToken: string, requestId: string, signal: AbortSignal): Promise<PalmAnalyzeOutcome> {
@@ -56,7 +56,7 @@ export async function requestPalmObservation(file: Blob, csrfToken: string, requ
   const b = body as { ok?: unknown; bundle?: unknown; error?: { code?: unknown; retryAfterSeconds?: unknown } };
   if (res.ok && b.ok === true) {
     try {
-      return { ok: true, bundle: parsePalmObservationBundle(b.bundle) }; // 서버 응답도 계약으로 다시 검증
+      return { ok: true, reading: parsePalmReading(b.bundle) }; // 서버 응답도 계약으로 다시 검증
     } catch {
       return { ok: false, code: 'INVALID_PROVIDER_RESPONSE' };
     }
