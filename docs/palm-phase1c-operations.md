@@ -114,7 +114,8 @@ IP당 세션 발급 한도와 IP당 일 한도는 클라이언트 IP가 위조�
    probe() (
      { set +x +v; } 2>/dev/null
      set -o pipefail
-     printf 'header = "x-palm-extraction-secret: %s"\nheader = "x-palm-ingress-probe: 192.0.2.77"\n' "$PALM_OP_SECRET" \
+     esc=${PALM_OP_SECRET//\\/\\\\}; esc=${esc//\"/\\\"}   # curl config 이스케이프: \ → \\, " → \" (xtrace를 끈 뒤에만)
+     printf 'header = "x-palm-extraction-secret: %s"\nheader = "x-palm-ingress-probe: 192.0.2.77"\n' "$esc" \
        | curl -sS --max-time 20 --config - -X POST "$@" "$ORIGIN/api/palm/ingress-check" 2>/dev/null \
        | python3 -c '
    import json, sys
@@ -268,6 +269,7 @@ sys.exit(0 if len(ids) == 1 and ids[0] == sys.argv[2] else 1)' "$WORK/inspect.tx
 
   active_is_dpl || status STOP-DEPLOYMENT-UNVERIFIED
   IFS= read -rs -p 'operator secret (입력은 표시되지 않음): ' OP_SECRET; echo >&2
+  OP_SECRET=${OP_SECRET//\\/\\\\}; OP_SECRET=${OP_SECRET//\"/\\\"}   # curl config 이스케이프: \ → \\, " → \"
   # 1) 실행 중 배포에서 토큰 재발급 — secret은 stdin curl config로만 전달
   RESP=$(printf 'header = "x-palm-extraction-secret: %s"\nheader = "x-palm-ingress-probe: 192.0.2.77"\n' "$OP_SECRET" \
     | curl -sS --max-time 20 --config - -X POST "$ORIGIN/api/palm/ingress-check" 2>/dev/null) || status ERROR-PROBE
@@ -343,6 +345,7 @@ sys.exit(0 if len(ids) == 1 and ids[0] == sys.argv[2] else 1)' "$WORK/inspect.tx
 
   active_is_dpl || status STOP-DEPLOYMENT-UNVERIFIED
   IFS= read -rs -p 'operator secret (입력은 표시되지 않음): ' OP_SECRET; echo >&2
+  OP_SECRET=${OP_SECRET//\\/\\\\}; OP_SECRET=${OP_SECRET//\"/\\\"}   # curl config 이스케이프: \ → \\, " → \"
   RESP=$(printf 'header = "x-palm-extraction-secret: %s"\nheader = "x-palm-ingress-probe: 192.0.2.77"\n' "$OP_SECRET" \
     | curl -sS --max-time 20 --config - -X POST "$ORIGIN/api/palm/ingress-check" 2>/dev/null) || status INSTALL-ERROR
   unset OP_SECRET
