@@ -1,3 +1,17 @@
+# Palm Phase 1C — Production 공개 OFF 배포 + DB 검증 (2026-10-21)
+
+Status: **PRODUCTION OFF DEPLOYED · DB VERIFIED** (공개 OFF 유지 · 토큰 미설치 · ON 미승인)
+
+- Production `destiny-code` (https://destiny-code.vercel.app): commit `f4fa239`, deployment `dpl_A7m2wHG6KaiM7DnkrhhkwqCmU6G1`. `palm-off-gate` OFF-CONFIRMED, 기존 페이지 200.
+  - `7d397a2` 첫 배포는 Vercel에서 sharp libvips 미포함으로 Palm API 500 → `f4fa239`(sharp lazy load + libvips trace 포함)로 수정. 이전 정상 배포 `dpl_EC6R2xbuH4Jdot9csnh6U9nZCA8i`.
+- Production env: `SUPABASE_SERVICE_ROLE_KEY` Preview target 제거(Production 동일 레코드 유지), `PALM_PUBLIC_ORIGIN=https://destiny-code.vercel.app`. `OPENAI_API_KEY` 없음, `PALM_TRUSTED_INGRESS_VERIFICATION` 미설치.
+- Supabase `vfotxozdoehxkkccehpz`(PG 17.6): `palm-public.sql` 객체 10개가 이미 존재. `supabase/palm-public-verify.sql` 읽기 전용 검증 22/22 PASS(함수 본문·컬럼 해시 일치, RLS·정책 0·anon/authenticated/PUBLIC 차단·service_role 권한), Palm 행 0, `analysis_results` 유지. pg_cron 1.6.4 설치됨, `palm_cleanup` 예약은 미설정.
+- 남은 게이트: `palm_cleanup` 예약 → 1-A ingress probe·1-B 토큰 설치(대상 커밋 `f4fa239`) → N-1 실제 PostgreSQL 다중 연결 smoke → 실기기 mock → 8단계 ON/live 별도 승인.
+
+---
+
+## 이전 상태 기록
+
 # Palm Phase 1C — R-2 종료 검수 (2026-10-20, f96e58e)
 
 **판정: A — R-2 CLOSED / APPROVED FOR CONTROLLED OFF-STATE OPERATIONS**
