@@ -169,7 +169,7 @@ IP당 세션 발급 한도와 IP당 일 한도는 클라이언트 IP가 위조�
 - **출력**: 상태 문자열과 boolean만 출력한다. 토큰·secret·cookie·CSRF 값은 출력하지 않는다.
 - **로그인**: Vercel CLI는 미리 `vercel login`으로 로그인해 둔다. `--token` 인자는 쓰지 않는다(argv 노출).
 - **CLI 버전 고정**: `npx -y vercel@64.7.0`. 아래 옵션은 이 버전의 `--help`로 확인했다.
-  - `env pull --project/--id/--yes`, `env list --environment/--project`, `env add --environment/--project/--type/--force/--yes`
+  - `env pull --environment/--project/--yes`(`--id`는 INITIALIZING 배포 전용이라 쓰지 않는다), `env list --environment/--project`, `env add --environment/--project/--type/--force/--yes`
   - `project inspect`, `inspect <배포 ID|호스트>`, `redeploy <배포 ID> --environment`, `rollback <배포 ID> --yes`
   - 전역 `--scope/--cwd/--non-interactive/--no-color`
   - 이 버전의 `inspect` 출력에는 git 커밋 SHA가 **없다**. 이 문서는 inspect에서 배포 `id` 줄만 사용한다.
@@ -223,22 +223,21 @@ EXPECTED_COMMIT='abcdef1'                  # 그 배포의 커밋 앞 7자리 (p
 
 이 단계는 두 값을 비교해 상태 하나만 출력한다.
 - **재발급 토큰**: 서비스 중인 배포가 `DPL_ID`이고 커밋이 `EXPECTED_COMMIT`일 때, 그 배포의 probe가 발급한 값.
-- **설치값**: `vercel env pull --id "$DPL_ID"`로 받은 그 배포 스냅샷의 `PALM_TRUSTED_INGRESS_VERIFICATION`.
+- **설치값**: `vercel env pull --environment production`으로 받은 **현재 Production 설정**의 `PALM_TRUSTED_INGRESS_VERIFICATION`.
 
-**CLI 64.7.0의 `env pull --id` 실제 동작**(패키지 구현 `envPullCommandLogic` 확인):
-- 지정 배포의 `buildEnv`를 그대로 쓴다.
-- 이 경로에서는 Secret redaction 판별(`getRedactedSensitiveKeys`)에 프로젝트 ID를 넘기지 않으므로, Secret 여부를 알려 주지 않는다.
-- 배포 스냅샷에 키가 **없으면** 로컬 파일의 값(sentinel)이 그대로 남는다. 키가 **빈 값**이면 빈 문자열로 덮어쓴다.
+**CLI 64.7.0 실제 동작(2026-10-21 Production에서 확인)**:
+- `env pull --id <배포>`는 빌드 중(INITIALIZING)인 배포에만 동작한다. Ready 배포에는 `Deployment is in READY state, expected INITIALIZING.` 오류(exit 1)를 낸다. 그래서 배포 스냅샷은 대조할 수 없고, 현재 설정을 pull한다.
+- **Secret 값은 pull되지 않는다**(`Secret values cannot be pulled`). 로컬 값(sentinel)이 그대로 남거나 `[SENSITIVE]` placeholder가 쓰인다.
 
-따라서 sentinel이 남거나 빈 값이 나와도 다음 셋을 **구별할 수 없다**: Secret이라 읽을 수 없음, 그 배포에 변수가 없음, 빈 값이 설치됨. 이런 경우는 모두 `UNVERIFIED`로 처리한다.
+따라서 이 토큰(Secret)의 정상 결과는 `UNVERIFIED`다. sentinel·빈 값·`[SENSITIVE]`는 모두 `UNVERIFIED`로 처리한다. `UNVERIFIED` + 이 절의 `palm-1b-install` 설치 기록(`INSTALLED-FROM-PROBE`)이면 8단계로 진행하고, 실행 중 config는 1-C `SESSION-PASS`로 최종 판정한다.
 
 출력되는 상태:
 
 | 출력 | 의미 | 다음 행동 |
 |---|---|---|
-| `MATCH` | 배포 스냅샷에서 읽은 값이 재발급 토큰과 같다 | 설치 확인 완료. 실행 중 config의 최종 확인은 1-C |
+| `MATCH` | 현재 설정에서 읽은 값이 재발급 토큰과 같다(Config 타입일 때만 가능) | 설치 확인 완료. 실행 중 config의 최종 확인은 1-C |
 | `MISMATCH` | 비어 있지 않은 다른 값이 읽혔다(마스킹된 값일 수도 있음) | 중단 → 안전한 재설정 |
-| `UNVERIFIED` | sentinel이 남았거나 빈 값이다. Secret·스냅샷 누락·빈 설치를 구별할 근거가 CLI에 없다 | **검증 완료가 아니다** → 검증 보류 또는 안전한 재설정 |
+| `UNVERIFIED` | sentinel·빈 값·`[SENSITIVE]`. Secret이라 CLI가 값을 내려주지 않는다(Secret 토큰의 정상 결과) | **검증 완료가 아니다** → 검증 보류 또는 안전한 재설정 |
 | `MISSING-IN-SETTINGS` | **현재 설정**의 Production scope에 변수 이름이 없다(`env list`). 배포 스냅샷에 대한 판정은 아니다 | 중단 → 설치 후 같은 커밋 재배포 |
 | `STOP-DEPLOYMENT-UNVERIFIED` | Production 도메인의 실제 배포 ID를 확인하지 못했거나 `DPL_ID`와 다르다(전후 변경 포함) | 중단. 1단계부터 다시 |
 | `STOP-COMMIT-UNVERIFIED` | probe는 성공했으나 `deployment.commit`이 없거나 `EXPECTED_COMMIT`과 다르다 | 중단. 배포·커밋을 다시 확인 |
@@ -296,14 +295,15 @@ print(d.get("verificationToken", "") if est else "")' "$EXPECTED_COMMIT" <<<"$RE
   vc env list --environment production --project "$PROJECT_ID" > "$WORK/list.txt" 2>/dev/null || status ERROR-LIST
   grep -qw 'PALM_TRUSTED_INGRESS_VERIFICATION' "$WORK/list.txt" || status MISSING-IN-SETTINGS
 
-  # 3) 배포 스냅샷의 설치값 — sentinel을 미리 써 두고 pull
+  # 3) 현재 Production 설정의 설치값 — sentinel을 미리 써 두고 pull (`--id`는 Ready 배포에서 실패한다)
   SENTINEL="__palm_sentinel_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')__"
   printf 'PALM_TRUSTED_INGRESS_VERIFICATION=%s\n' "$SENTINEL" > "$WORK/deploy.env"
-  vc env pull "$WORK/deploy.env" --id "$DPL_ID" --project "$PROJECT_ID" --yes > /dev/null 2>&1 || status ERROR-PULL
+  vc env pull "$WORK/deploy.env" --environment production --project "$PROJECT_ID" --yes > /dev/null 2>&1 || status ERROR-PULL
   [ "$(grep -c '^PALM_TRUSTED_INGRESS_VERIFICATION=' "$WORK/deploy.env")" = 1 ] || status UNVERIFIED
   INSTALLED=$(sed -n 's/^PALM_TRUSTED_INGRESS_VERIFICATION=//p' "$WORK/deploy.env" | tr -d '"')
   [ "$INSTALLED" = "$SENTINEL" ] && status UNVERIFIED   # Secret·스냅샷 누락 구별 불가
   [ -z "$INSTALLED" ] && status UNVERIFIED              # 빈 값: redaction·빈 설치 구별 불가
+  [ "$INSTALLED" = "[SENSITIVE]" ] && status UNVERIFIED  # Secret placeholder: 값 대조 불가
   [ "$INSTALLED" = "$ISSUED" ] && status MATCH
   status MISMATCH
 )
