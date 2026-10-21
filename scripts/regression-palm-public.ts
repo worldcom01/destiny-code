@@ -165,8 +165,8 @@ async function main() {
     const ok = await handlePalmSession(sreq({}), { env: ENV, createStore: async () => storeA });
     const cookie = ok.headers.get('set-cookie') ?? '';
     const body = await bodyOf(ok);
-    check('session: issues __Host- cookie (HttpOnly; Secure; SameSite=Strict; Path=/; no Domain; ≤24h)',
-      ok.status === 200 && cookie.startsWith('__Host-palm_session=') && /HttpOnly/.test(cookie) && /Secure/.test(cookie) && /SameSite=Strict/.test(cookie)
+    check('session: issues __Host- cookie (HttpOnly; Secure; SameSite=Lax; Path=/; no Domain; ≤24h)',
+      ok.status === 200 && cookie.startsWith('__Host-palm_session=') && /HttpOnly/.test(cookie) && /Secure/.test(cookie) && /SameSite=Lax/.test(cookie)
       && /Path=\//.test(cookie) && !/Domain=/i.test(cookie) && Number(/Max-Age=(\d+)/.exec(cookie)?.[1]) <= 86400);
     check('session: response carries only enabled/csrf/notice version (no secrets, no session id)',
       Object.keys(body).sort().join() === 'csrfToken,enabled,noticeVersion' && !JSON.stringify(body).includes(SESSION_SECRET) && !JSON.stringify(body).includes(cookie.split('=')[1].split('.')[0]));

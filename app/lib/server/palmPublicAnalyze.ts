@@ -59,8 +59,14 @@ export async function handlePalmPublicAnalyze(req: Request, deps: PalmPublicAnal
 
   // ── body를 읽기 전 검증 ──
   if (checkPalmOrigin(req, config.origin) !== 'ok') return palmFail(403, 'ACCESS_DENIED');
-  const session = verifyPalmSessionCookie(readCookie(req.headers.get('cookie'), PALM_SESSION_COOKIE), config.sessionSecret, now());
-  if (!session) return palmFail(401, 'SESSION_REQUIRED');
+  const presented = readCookie(req.headers.get('cookie'), PALM_SESSION_COOKIE);
+  const session = verifyPalmSessionCookie(presented, config.sessionSecret, now());
+  if (!session) {
+    // 진단용: 세션이 아예 오지 않았는지(브라우저 정책) 무효였는지(만료·서명)만 남긴다. 값은 기록하지 않는다.
+    const sessionState = presented ? 'invalid' : 'absent';
+    console.warn(`[palm] SESSION_REQUIRED session=${sessionState}`);
+    return palmFail(401, 'SESSION_REQUIRED');
+  }
   if (!isPalmCsrfValid(req.headers.get(PALM_CSRF_HEADER), config.sessionSecret, session.sessionId)) return palmFail(403, 'ACCESS_DENIED');
   const requestId = req.headers.get(PALM_PUBLIC_REQUEST_ID_HEADER);
   if (!isPalmRequestId(requestId) || !isAcceptedPalmNotice(req.headers.get(PALM_NOTICE_HEADER))) return palmFail(400, 'INVALID_REQUEST');

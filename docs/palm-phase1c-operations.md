@@ -523,7 +523,7 @@ def cookie_ok(v):
         return False                     # Domain·Expires·Foo 등 그 밖의 속성, 필수 속성 누락 모두 실패
     if seen["httponly"] != (False, "") or seen["secure"] != (False, ""):
         return False                     # 값 없는 플래그여야 한다 (Secure=1 불허)
-    if seen["path"] != (True, "/") or seen["samesite"] != (True, "Strict"):
+    if seen["path"] != (True, "/") or seen["samesite"] != (True, "Lax"):
         return False
     has_eq, age = seen["max-age"]
     return has_eq and re.fullmatch(r"[1-9][0-9]{0,4}", age) is not None and int(age) <= 86400
@@ -544,7 +544,7 @@ PY
   - JSON 키가 정확히 `enabled`·`csrfToken`·`noticeVersion`이고, `enabled === true`, `noticeVersion === "palm-processing-1"`.
   - `csrfToken`이 서버 계약대로 43자 base64url(HMAC-SHA256)이다.
   - 응답 전체의 Set-Cookie 헤더가 **정확히 1개**이고, 이름이 정확히 `__Host-palm_session`, 값이 `<43자>.<만료초>.<43자>` 형식이다.
-  - 속성은 정확히 `Path=/`, `Max-Age=<1~86400>`, `HttpOnly`, `Secure`, `SameSite=Strict` 다섯 개다. 각각 한 번씩만 나와야 한다.
+  - 속성은 정확히 `Path=/`, `Max-Age=<1~86400>`, `HttpOnly`, `Secure`, `SameSite=Lax` 다섯 개다(Strict는 외부 앱 링크로 연 iOS Safari에서 전송되지 않아 Lax로 변경). 각각 한 번씩만 나와야 한다.
   - `HttpOnly`·`Secure`는 값 없는 플래그로만 인정한다. `Foo=Secure`, `Secure=1`은 Secure가 아니다.
   - `Domain` 속성이 있으면 실패다. 다른 속성(`Expires`, 알 수 없는 속성)이 있어도 실패다.
 - **그 밖의 모든 결과는 실패다**:

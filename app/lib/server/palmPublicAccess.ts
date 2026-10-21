@@ -211,8 +211,11 @@ export function verifyPalmSessionCookie(value: string | undefined, secret: strin
 }
 
 export function palmSessionCookieHeader(cookieValue: string, maxAgeSeconds: number): string {
-  // __Host-: Secure, Path=/, Domain 없음. HttpOnly로 스크립트 접근 차단, SameSite=Strict로 cross-site 전송 차단
-  return `${PALM_SESSION_COOKIE}=${cookieValue}; Path=/; Max-Age=${Math.max(0, maxAgeSeconds)}; HttpOnly; Secure; SameSite=Strict`;
+  // __Host-: Secure, Path=/, Domain 없음. HttpOnly로 스크립트 접근 차단.
+  // SameSite=Lax: 외부 앱 링크로 연 페이지에서 iOS Safari가 Strict cookie를 같은 사이트 fetch에도 싣지 않아
+  // 공개 분석이 SESSION_REQUIRED로 실패했다. Palm API는 POST 전용이라 Lax도 cross-site 요청에는 실리지 않고,
+  // 정확한 Origin 검사와 session 결합 CSRF token이 그대로 요청 위조를 막는다.
+  return `${PALM_SESSION_COOKIE}=${cookieValue}; Path=/; Max-Age=${Math.max(0, maxAgeSeconds)}; HttpOnly; Secure; SameSite=Lax`;
 }
 
 export function readCookie(header: string | null, name: string): string | undefined {
