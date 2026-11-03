@@ -3,7 +3,10 @@ import { calcWesternAstrology, calcSunSignKey, type WesternAstrologyResult } fro
 import { detectConflicts, type ConflictPattern } from './conflictEngine';
 import { computeKeywordStrengths, type KeywordStrength } from './keywordEngine';
 import { buildAnalysisTrace, type AnalysisTrace } from './evidenceTrace';
-import { selectIdentityV2, type IdentitySelectionReason } from './identitySelection';
+import { selectIdentityV3, type IdentitySelectionReason } from './identitySelection';
+import { buildIdentityNarrative } from './identityNarrative';
+import { traitScore } from './traitInformation';
+import { traitSupportInConvergenceScope } from './analysisPatterns';
 import { buildIntersection, type IntersectionModel } from './intersection';
 import { PALM_AREA_LABELS, palmTraitSupport, type PalmReading } from './palmReading';
 
@@ -102,7 +105,9 @@ export type { WesternAstrologyResult };
 // 분석 규칙이 바뀌면 올린다 — 저장된 결과가 어떤 규칙으로 만들어졌는지 구분하는 용도
 // '1': Identity = 고정 순서의 첫 공존 쌍 / '2': Identity Selection v2 (identitySelection.ts)
 // '3': catalog에 창의적+독립적(고집스러운 실험가) 추가 — 선택 규칙은 v2 그대로
-export const ANALYSIS_ENGINE_VERSION = '3';
+// '4': Identity Selection v3(근거 정보량 기반·두 성향 모두 2개 이상 소스), 교집합 키워드를 구별력 순으로 정렬,
+//      근거 기반 identityNarrative 추가. 이전 저장 결과는 재계산하지 않는다.
+export const ANALYSIS_ENGINE_VERSION = '4';
 
 // analyzeDestiny()가 조립하는 완성된 분석 결과. 저장 시 그대로 보관한다.
 export type AnalysisSnapshot = AnalysisOutput & {
@@ -120,6 +125,9 @@ export type AnalysisSnapshot = AnalysisOutput & {
 
   // engine v2: Identity가 왜 선택됐는지. 새 분석에는 항상 있고, 과거 결과에는 재계산하지 않는다.
   identitySelection?: IdentitySelectionReason;
+
+  // engine v4: 선택된 성향과 그 근거로만 만든 개인 서술(고정 문장 아래 표시)
+  identityNarrative?: string[];
 
   // Palm V2: 손바닥 사진을 함께 분석했을 때의 상세 판독(사진 없음). 없으면 기존 결과와 같다.
   palmReading?: PalmReading;
@@ -639,7 +647,7 @@ const CONFLICT_IDENTITY: Array<{ tags: [CoreTag, CoreTag]; identityStatement: st
 ];
 
 // 엔진별로 사용하는 pair catalog의 앞부분 길이. catalog는 끝에만 추가하므로 pairIndex 의미가 유지된다.
-export const IDENTITY_PAIR_COUNT_BY_ENGINE: Readonly<Record<string, number>> = { '1': 10, '2': 10, '3': 11 };
+export const IDENTITY_PAIR_COUNT_BY_ENGINE: Readonly<Record<string, number>> = { '1': 10, '2': 10, '3': 11, '4': 11 };
 
 const SINGLE_IDENTITY: Partial<Record<CoreTag, { identityStatement: string; archetype: string }>> = {
   독립적:  { identityStatement: '스스로 결정하지 않은 것은 내 것이 아닌 것처럼 느껴지는 사람입니다. 그 선택이 외롭더라도, 직접 정한 길이라야 걸을 수 있습니다.', archetype: '자기 세계의 수호자' },
@@ -846,15 +854,13 @@ export function analyzeDestiny(
   const palmSupport = palm ? palmTraitSupport(palm) : [];
   const palmTags = palmSupport.map((p) => p.trait);
 
-  const commonKeywords = calcCommonKeywords([
+  const rawKeywords = calcCommonKeywords([
     westernAstrology.coreTags,
     mbtiData.coreTags,
     saju.coreTags,
     bloodTypeData.coreTags,
     palmTags,
   ]);
-
-  const detailedReading = generateDetailedReading(saju, zodiac, mbtiData, bloodTypeData, tarot, commonKeywords);
 
   // 기존 CoreTag의 출처 기록. engine v2에서는 Identity 선택에만 사용한다 (다른 결과는 trace에 의존하지 않음)
   const trace = buildAnalysisTrace({
@@ -870,12 +876,23 @@ export function analyzeDestiny(
       trace.claims.push({ id: `palm:claim:${trait}`, trait, evidenceIds: areas.map((a) => `palm:area:${a}`), ruleId: 'palm.reading-traits@2', basis: 'symbolic', target: 'palm.coreTags' });
     }
   }
-  const identitySelection = selectIdentityV2({
+  // engine v4: 같은 교집합 키워드 집합을 구별력(지지 근거 정보량 합) 순으로 정렬한다 — 집합 자체는 바꾸지 않는다
+  const support = traitSupportInConvergenceScope(trace);
+  const scoreOf = (label: string) => {
+    const tag = tagOfLabel(label);
+    const s = tag ? support.get(tag) : undefined;
+    return tag && s ? traitScore(tag, s.sources) : 0;
+  };
+  const commonKeywords = rawKeywords
+    .map((label, i) => ({ label, i, score: scoreOf(label) }))
+    .sort((a, b) => b.score - a.score || a.i - b.i)
+    .map((k) => k.label);
+  const detailedReading = generateDetailedReading(saju, zodiac, mbtiData, bloodTypeData, tarot, commonKeywords);
+
+  const identitySelection = selectIdentityV3({
     trace,
     pairs: CONFLICT_IDENTITY,
     hasSingle: (t) => SINGLE_IDENTITY[t] !== undefined,
-    keywordTag: tagOfLabel(commonKeywords[0]),
-    sajuFirstTag: saju.coreTags[0],
   });
   const { identityStatement, archetype } = identityFromSelection(identitySelection);
 
@@ -912,7 +929,11 @@ export function analyzeDestiny(
     conflicts, keywordStrengths, coreTags,
     trace,
     identitySelection,
+    identityNarrative: buildIdentityNarrative(identitySelection, intersection),
     ...(palm ? { palmReading: palm } : {}),
     intersection,
   };
 }
+
+// 테스트 전용: golden 스크립트가 같은 입력의 engine v3 결과를 재구성할 때 쓰는 내부 생성기 (제품 코드는 쓰지 않는다)
+export const __engineInternals = { generateDetailedReading, generateTarotFlow, identityFromSelection };

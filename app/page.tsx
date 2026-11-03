@@ -508,6 +508,7 @@ export default function Home() {
   const keywordStrengths = snapshot?.keywordStrengths ?? [];
   const intersection = snapshot?.intersection ?? null;
   const palmReading = snapshot?.palmReading ?? null;
+  const identityNarrative = snapshot?.identityNarrative ?? [];
 
   const birthdateComputed = form.year && form.month && form.day
     ? `${form.year}-${form.month.padStart(2, '0')}-${form.day.padStart(2, '0')}`
@@ -1338,6 +1339,14 @@ export default function Home() {
                 <p className="text-slate-600 text-xs leading-relaxed">
                   수천 개의 조합 중, 당신의 패턴이 가리키는 정의입니다
                 </p>
+                {identityNarrative.length > 0 && (
+                  <div className="mt-6 pt-5 border-t border-amber-400/15 text-left space-y-2">
+                    <p className="text-amber-400/60 text-[10px] tracking-[0.3em] uppercase">왜 이 결과인가요</p>
+                    {identityNarrative.map((line, i) => (
+                      <p key={i} className="text-slate-300 text-sm leading-relaxed">{line}</p>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 

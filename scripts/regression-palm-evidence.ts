@@ -184,9 +184,9 @@ const COMPLETE = bundle({
   check('13 appending Palm evidence to a trace changes no pattern or support (0 Palm claims)',
     eq(deriveAnalysisPatterns(withPalm, IDENTITY_PAIR_DEFINITIONS), deriveAnalysisPatterns(s.trace!, IDENTITY_PAIR_DEFINITIONS))
     && eq([...traitSupportInConvergenceScope(withPalm)], [...traitSupportInConvergenceScope(s.trace!)]));
-  check('13 production analysis has no Palm evidence or claims (not integrated in Phase 1A)',
+  check('13 analysis without a photo has no Palm evidence or claims',
     !s.trace!.evidence.some((e) => e.source === 'palm') && !s.trace!.claims.some((c) => c.id.startsWith('palm'))
-    && !('palm' in s) && ANALYSIS_ENGINE_VERSION === '3' && s.schemaVersion === 2);
+    && !('palm' in s) && !('palmReading' in s) && s.engineVersion === ANALYSIS_ENGINE_VERSION && s.schemaVersion === 2);
 }
 
 // 16. quality / readability separation

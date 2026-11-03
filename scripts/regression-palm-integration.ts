@@ -2,6 +2,9 @@
 //   npx -y tsx scripts/regression-palm-integration.ts
 import { analyzeDestiny, TAROT_DATA, type CoreTag } from '../app/lib/analysis';
 import { parsePalmReading, palmTraitSupport, PALM_SAFE_INTERPRETATION, type PalmReading } from '../app/lib/palmReading';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { CorePatternSummary, IntersectionDetail } from '../app/components/IntegratedResult';
 
 let failed = 0;
 const check = (name: string, ok: boolean, detail = '') => {
@@ -52,6 +55,31 @@ check('lifespan/health claims replaced and trait dropped',
 // 5. saved snapshot round-trip keeps the reading (no photo data)
 const json = JSON.parse(JSON.stringify(withPalm));
 check('snapshot round-trip keeps palmReading and intersection, no image data', !!json.palmReading && !!json.intersection && !/data:image|base64/.test(JSON.stringify(json)));
+
+// 6. engine v4: Identity is grounded in the intersection and explained by the narrative
+{
+  for (const s of [base, withPalm]) {
+    const common = new Set((s.intersection?.common ?? []).map((p) => p.trait));
+    const sel = s.identitySelection!;
+    check(`v4 (${s === base ? 'no palm' : 'palm'}): every Identity trait is a ≥2-source intersection pattern`, sel.selectedTraits.every((t) => common.has(t)));
+    const text = (s.identityNarrative ?? []).join(' ');
+    check(`v4 (${s === base ? 'no palm' : 'palm'}): narrative names each selected trait`, sel.selectedTraits.every((t) => text.includes(`'${t}'`)), text);
+  }
+  const palmIdentity = withPalm.identitySelection!.support.some((sp) => sp.sources.includes('palm'));
+  const text = (withPalm.identityNarrative ?? []).join(' ');
+  check('v4: palm evidence is traceable into the narrative (area name or palm note)', !palmIdentity || /손금/.test(text), text);
+  check('v4: patterns carry an information score and a distinctiveness label',
+    (withPalm.intersection?.common ?? []).every((p) => typeof p.score === 'number' && !!p.distinctiveness));
+}
+
+// 7. saved V2-era result (intersection without scores, no narrative) still renders
+{
+  const legacy = JSON.parse(JSON.stringify(withPalm.intersection));
+  for (const p of [...legacy.common, ...legacy.complements]) { delete p.score; delete p.distinctiveness; }
+  const html = renderToStaticMarkup(React.createElement(React.Fragment, null,
+    React.createElement(CorePatternSummary, { model: legacy }), React.createElement(IntersectionDetail, { model: legacy })));
+  check('legacy intersection (no score) renders A and C/D without badges', html.includes('나의 핵심 패턴') && !html.includes('드문 근거') && !html.includes('흔한 근거'));
+}
 
 console.log(failed ? `\nFAIL: ${failed} palm-integration check(s) failed` : '\nPASS: all palm-integration regression checks');
 process.exit(failed ? 1 : 0);

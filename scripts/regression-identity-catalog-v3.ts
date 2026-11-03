@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   analyzeDestiny, identityV1, TAROT_DATA, IDENTITY_PAIR_DEFINITIONS, IDENTITY_SINGLE_DEFINITIONS,
-  ANALYSIS_ENGINE_VERSION, IDENTITY_PAIR_COUNT_BY_ENGINE,
+  ANALYSIS_ENGINE_VERSION, IDENTITY_PAIR_COUNT_BY_ENGINE, calcCommonKeywords,
   type AnalysisSnapshot, type CoreTag,
 } from '../app/lib/analysis';
 import type { AnalysisTrace, EvidenceRecord, InterpretationClaim } from '../app/lib/evidenceTrace';
@@ -58,8 +58,12 @@ const LABEL_TO_TAG: Record<string, CoreTag> = {
 };
 const V2_PAIRS = IDENTITY_PAIR_DEFINITIONS.slice(0, IDENTITY_PAIR_COUNT_BY_ENGINE['2']);
 const hasSingle = (t: CoreTag) => IDENTITY_SINGLE_DEFINITIONS[t] !== undefined;
+// engine v3 시절 교집합 첫 키워드(정렬 전 k-way 순서) — engine v4는 키워드를 구별력 순으로 다시 정렬하므로 원래 순서를 재현한다
+const v3KeywordTag = (s: AnalysisSnapshot) => LABEL_TO_TAG[calcCommonKeywords([
+  s.westernAstrology.coreTags, s.mbtiTraits.coreTags, s.saju.coreTags, s.bloodType.coreTags,
+])[0]];
 const selectWith = (s: AnalysisSnapshot, pairs: typeof IDENTITY_PAIR_DEFINITIONS) => selectIdentityV2({
-  trace: s.trace!, pairs, hasSingle, keywordTag: LABEL_TO_TAG[s.commonKeywords[0]], sajuFirstTag: s.saju.coreTags[0],
+  trace: s.trace!, pairs, hasSingle, keywordTag: v3KeywordTag(s), sajuFirstTag: s.saju.coreTags[0],
 });
 const archOf = (r: IdentitySelectionReason, pairs = IDENTITY_PAIR_DEFINITIONS) => r.pairIndex !== null ? pairs[r.pairIndex].archetype
   : r.decision === 'single' ? IDENTITY_SINGLE_DEFINITIONS[r.selectedTraits[0]]!.archetype : '복합적 패턴의 소유자';
@@ -99,8 +103,9 @@ const selectFixture = (support: Partial<Record<CoreTag, string[]>>, keywordTag: 
 
 // 3 / 4. Option B ranking and representative priority are unchanged
 {
-  const files = ['app/lib/identitySelection.ts', 'app/lib/evidenceTrace.ts'];
-  check('3 selector / provenance sources are byte-identical to engine v2 (main)',
+  // engine v4는 identitySelection.ts에 selectIdentityV3를 추가했다 — v2 선택기의 동작은 아래 14·15(v3 golden 재현)로 고정한다
+  const files = ['app/lib/evidenceTrace.ts'];
+  check('3 provenance source is byte-identical to engine v2 (main)',
     files.every((f) => blob(f) === MAIN_BLOBS[f]), files.map((f) => `${f}=${blob(f)}`).join(' '));
   // Palm V2는 analysisPatterns.ts의 두 scope에 'palm.coreTags' 한 줄씩만 추가했다 — 그 줄을 빼면 engine v2와 같아야 한다
   const patterns = readFileSync(join(__dirname, '..', 'app/lib/analysisPatterns.ts'), 'utf8')
@@ -133,8 +138,8 @@ const selectFixture = (support: Partial<Record<CoreTag, string[]>>, keywordTag: 
   let h = 5381;
   for (const ch of j) h = ((h << 5) + h + ch.charCodeAt(0)) | 0;
   check('6 existing 21 definitions (pairs #0–#9, singles, text, order) unchanged', (h >>> 0).toString(16) === CATALOG_DIGEST_V2);
-  check('6 engine catalog sizes: v1 10, v2 10, v3 11',
-    eq(IDENTITY_PAIR_COUNT_BY_ENGINE, { '1': 10, '2': 10, '3': 11 }) && IDENTITY_PAIR_DEFINITIONS.length === IDENTITY_PAIR_COUNT_BY_ENGINE[ANALYSIS_ENGINE_VERSION]);
+  check('6 engine catalog sizes: v1 10, v2 10, v3 11, v4 11',
+    eq(IDENTITY_PAIR_COUNT_BY_ENGINE, { '1': 10, '2': 10, '3': 11, '4': 11 }) && IDENTITY_PAIR_DEFINITIONS.length === IDENTITY_PAIR_COUNT_BY_ENGINE[ANALYSIS_ENGINE_VERSION]);
   const dup = selectFixture({ 창의적: [SAJU, BLOOD], 체계적: [MBTI, BLOOD] }, '창의적');
   check('7 duplicate pair #8 (= #3) is still never selected', dup.pairIndex === 3);
 }
@@ -169,8 +174,8 @@ const selectFixture = (support: Partial<Record<CoreTag, string[]>>, keywordTag: 
 // 11. new analyses
 {
   const s = analyzeDestiny('1990-05-15', '14:30', 'INTJ', 'male', 'A', TAROT_DATA[0], 37.5665, 126.978);
-  check('11 new analysis: engineVersion "3", schemaVersion 2, selection@2 reason',
-    ANALYSIS_ENGINE_VERSION === '3' && s.engineVersion === '3' && s.schemaVersion === 2 && s.identitySelection?.ruleId === 'identity.selection@2');
+  check('11 new analysis: engineVersion "4", schemaVersion 2, selection@3 reason',
+    ANALYSIS_ENGINE_VERSION === '4' && s.engineVersion === '4' && s.schemaVersion === 2 && s.identitySelection?.ruleId === 'identity.selection@3');
 }
 
 // 12 / 13. historical golden baselines untouched
@@ -184,7 +189,7 @@ check('13 golden-baseline.v2.json blob unchanged', blob('scripts/golden-baseline
   const a = run(), b = run();
   check('14/16 identical input → identical v3 snapshot (identity, selection, trace)', strip(a) === strip(b));
   const golden = JSON.parse(readFileSync(join(__dirname, 'golden-baseline.v3.json'), 'utf8')) as Array<{ result: { output: { archetype: string } } }>;
-  check('14 v3 golden case matches a fresh analysis', golden[3].result.output.archetype === a.archetype);
+  check('14 v3 golden case is reproduced by the v2 selector with the v3 catalog', golden[3].result.output.archetype === archOf(selectWith(a, IDENTITY_PAIR_DEFINITIONS)));
 }
 
 // 15. catalog order causes no unrelated change: over a systematic input grid, every v2 → v3
@@ -197,9 +202,10 @@ check('13 golden-baseline.v2.json blob unchanged', blob('scripts/golden-baseline
     const s = analyzeDestiny(d, t, m, 'male', bl, TAROT_DATA[0], t ? 37.5665 : undefined, t ? 126.978 : undefined);
     const v2 = selectWith(s, V2_PAIRS);
     n++;
-    if (archOf(v2, V2_PAIRS) !== s.archetype) {
+    const v3 = selectWith(s, IDENTITY_PAIR_DEFINITIONS); // engine v3 = v2 선택기 + 11쌍 catalog
+    if (archOf(v2, V2_PAIRS) !== archOf(v3)) {
       changed++;
-      if (s.identitySelection?.pairIndex !== NEW_INDEX) unrelated++;
+      if (v3.pairIndex !== NEW_INDEX) unrelated++;
     }
     if (s.detailedReading.sections.some((sec) => sec.content.includes(s.identityStatement))) narrativeHasIdentity++;
   }

@@ -14,7 +14,7 @@ g.localStorage = {
   removeItem: (k: string) => { delete store[k]; },
 };
 
-import { analyzeDestiny, IDENTITY_PAIR_DEFINITIONS, TAROT_DATA, type AnalysisOutput, type AnalysisSnapshot, type CoreTag } from '../app/lib/analysis';
+import { analyzeDestiny, ANALYSIS_ENGINE_VERSION, IDENTITY_PAIR_DEFINITIONS, TAROT_DATA, type AnalysisOutput, type AnalysisSnapshot, type CoreTag } from '../app/lib/analysis';
 import { deriveAnalysisPatterns, traitSupportInConvergenceScope } from '../app/lib/analysisPatterns';
 import { generateDestinyCode } from '../app/lib/destinyCode';
 import { buildPalmEvidence } from '../app/lib/palmEvidence';
@@ -196,7 +196,7 @@ function deepFreeze<T>(o: T): T {
     baseFingerprint(withPalm) === baseFingerprint(withoutPalm));
   check('INVARIANCE: Palm traits are not added to base coreTags', !!supplement && eq(withPalm.coreTags, withoutPalm.coreTags)
     && supplement.comparison.baseTraits.join() === withPalm.coreTags.join());
-  check('INVARIANCE: engine 3 / schema 2 unchanged', withPalm.engineVersion === '3' && withPalm.schemaVersion === 2);
+  check('INVARIANCE: current engine / schema 2 unchanged by the legacy supplement', withPalm.engineVersion === ANALYSIS_ENGINE_VERSION && withPalm.schemaVersion === 2);
   check('INVARIANCE: snapshot has no Palm field', !/palm/i.test(Object.keys(withPalm).join(',')));
   check('INVARIANCE: share text unchanged by Palm (base only)', activeShareText(active) === activeShareText(activeFromNewAnalysis(withoutPalm, inputA)));
 }

@@ -1,7 +1,13 @@
 // Golden test for analyzeDestiny() across engine versions.
 //
-//   npx -y tsx scripts/golden-analysis.ts                # compare (v1 allowed-diff, v2 allowed-diff, exact v3)
-//   npx -y tsx scripts/golden-analysis.ts --capture-v3   # write the v3 baseline (refused if v1/v2 checks fail)
+//   npx -y tsx scripts/golden-analysis.ts                # compare (v1/v2 allowed-diff, exact v3 view, exact v4)
+//   npx -y tsx scripts/golden-analysis.ts --capture-v4   # write the v4 baseline (refused if v1/v2/v3 checks fail)
+//
+// Engine v4 (Identity Selection v3, keyword order by distinctiveness, identityNarrative): the v1/v2/v3 checks run
+// on the "engine v3 view" rebuilt from the same snapshot — raw k-way keyword order, the v2 selector with the
+// 11-pair catalog, and the narrative generators fed with that order. That keeps every historical baseline exact.
+// v4 vs v3 view may differ only in keyword ORDER (same set), keyword-derived narrative text, Identity fields and
+// engineVersion; v4 additions (identityNarrative, intersection) are new keys.
 //
 // Historical baselines are never rewritten:
 //   golden-baseline.v1.json — engine v1 (byte-identical to the pre-AnalysisSnapshot capture)
@@ -20,6 +26,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   analyzeDestiny, identityV1, TAROT_DATA, IDENTITY_PAIR_DEFINITIONS, IDENTITY_SINGLE_DEFINITIONS, IDENTITY_PAIR_COUNT_BY_ENGINE,
+  calcCommonKeywords, __engineInternals,
   type AnalysisSnapshot, type CoreTag,
 } from '../app/lib/analysis';
 import { selectIdentityV2 } from '../app/lib/identitySelection';
@@ -28,6 +35,7 @@ import { generateDestinyCode } from '../app/lib/destinyCode';
 const V1_PATH = join(__dirname, 'golden-baseline.v1.json');
 const V2_PATH = join(__dirname, 'golden-baseline.v2.json');
 const V3_PATH = join(__dirname, 'golden-baseline.v3.json');
+const V4_PATH = join(__dirname, 'golden-baseline.v4.json');
 const ALLOWED_V1_DIFFS = new Set(['result.output.identityStatement', 'result.output.archetype', 'result.destinyCode']);
 const ALLOWED_V2_DIFFS = new Set([...ALLOWED_V1_DIFFS, 'result.engineVersion']);
 const ALLOWED_V2_SELECTION_PREFIXES = ['decision', 'pairIndex', 'selectedTraits', 'usedAuthoredOrder', 'support']
@@ -115,9 +123,27 @@ const printDiffs = (ds: Diff[]) => {
   }
 };
 
+// engine v3 view of a v4 snapshot (see header)
+function v3View(s: AnalysisSnapshot): AnalysisSnapshot {
+  const kw = calcCommonKeywords([s.westernAstrology.coreTags, s.mbtiTraits.coreTags, s.saju.coreTags, s.bloodType.coreTags]);
+  const sel = selectIdentityV2({
+    trace: s.trace!, pairs: IDENTITY_PAIR_DEFINITIONS.slice(0, IDENTITY_PAIR_COUNT_BY_ENGINE['3']),
+    hasSingle: (t) => IDENTITY_SINGLE_DEFINITIONS[t] !== undefined,
+    keywordTag: LABEL_TO_TAG[kw[0]], sajuFirstTag: s.saju.coreTags[0],
+  });
+  return {
+    ...s, engineVersion: '3', commonKeywords: kw, identitySelection: sel,
+    ...__engineInternals.identityFromSelection(sel),
+    detailedReading: __engineInternals.generateDetailedReading(s.saju, s.zodiac, s.mbtiTraits, s.bloodType, s.tarot, kw),
+    tarotFlow: __engineInternals.generateTarotFlow(s.tarot, kw, s.saju),
+  };
+}
+
 // JSON round-trip so undefined fields compare the same way they were stored.
-const actual = JSON.parse(JSON.stringify(CASES.map((c) => {
-  const s = analyze(c);
+const v4Snapshots = CASES.map((c) => analyze(c));
+const actual = JSON.parse(JSON.stringify(v4Snapshots.map((s4, i) => {
+  const c = CASES[i];
+  const s = v3View(s4);
   const v2Selection = selectIdentityV2({
     trace: s.trace!, pairs: IDENTITY_PAIR_DEFINITIONS.slice(0, IDENTITY_PAIR_COUNT_BY_ENGINE['2']),
     hasSingle: (t) => IDENTITY_SINGLE_DEFINITIONS[t] !== undefined,
@@ -195,18 +221,8 @@ const without = (r: Record<string, unknown>, keys: string[]) => {
   }
 }
 
-// ── 3. engine v3 baseline: exact ──
+// ── 3. engine v3 baseline: exact (on the v3 view) ──
 const v3Actual = actual.map((a: { name: string; result: unknown }) => ({ name: a.name, result: a.result }));
-if (process.argv.includes('--capture-v3')) {
-  if (failed) {
-    console.log('REFUSED: not writing the v3 baseline while the v1/v2 comparisons have unexpected changes');
-    process.exit(1);
-  }
-  writeFileSync(V3_PATH, JSON.stringify(v3Actual, null, 2) + '\n');
-  console.log(`Captured ${v3Actual.length} v3 golden cases -> ${V3_PATH}`);
-  process.exit(0);
-}
-
 const v3Diffs: Diff[] = [];
 diff(JSON.parse(readFileSync(V3_PATH, 'utf8')), v3Actual, 'cases', v3Diffs);
 if (v3Diffs.length) {
@@ -214,8 +230,60 @@ if (v3Diffs.length) {
   console.log(`FAIL: ${v3Diffs.length} difference(s) from the v3 baseline`);
   printDiffs(v3Diffs);
 } else {
-  console.log(`PASS: ${v3Actual.length} golden cases match v3 baseline`);
+  console.log(`PASS: ${v3Actual.length} golden cases match v3 baseline (v3 view)`);
+}
+
+// ── 4. engine v4: allowed differences from the v3 view + exact v4 baseline ──
+const V4_ALLOWED = ['output.commonKeywords', 'output.detailedReading', 'output.tarotFlow', 'output.identityStatement', 'output.archetype',
+  'destinyCode', 'engineVersion', 'identitySelection'];
+const v4Actual = JSON.parse(JSON.stringify(v4Snapshots.map((s, i) => ({
+  name: CASES[i].name,
+  result: { ...fromSnapshot(s), identityNarrative: s.identityNarrative, intersection: s.intersection },
+}))));
+{
+  const unexpected: Diff[] = [];
+  let changed = 0;
+  console.log('engine v3 → v4 golden comparison:');
+  v4Actual.forEach((c: { name: string; result: Record<string, unknown> }, i: number) => {
+    const ds: Diff[] = [];
+    diff(v3Actual[i].result, without(c.result, ['identityNarrative', 'intersection']), 'result', ds);
+    unexpected.push(...ds.filter((d) => !V4_ALLOWED.some((p) => d.path === `result.${p}` || d.path.startsWith(`result.${p}.`)))
+      .map((d) => ({ ...d, path: `[${c.name}] ${d.path}` })));
+    const kw3 = [...(v3Actual[i].result as { output: { commonKeywords: string[] } }).output.commonKeywords].sort().join();
+    const kw4 = [...(c.result as { output: { commonKeywords: string[] } }).output.commonKeywords].sort().join();
+    if (kw3 !== kw4) unexpected.push({ path: `[${c.name}] commonKeywords set changed`, expected: kw3, actual: kw4 });
+    const a3 = (v3Actual[i].result as { output: { archetype: string } }).output.archetype;
+    const a4 = (c.result as { output: { archetype: string } }).output.archetype;
+    if (a3 !== a4) changed++;
+    console.log(`  ${a3 === a4 ? '=' : '≠'} [${c.name}] ${a3} → ${a4}`);
+  });
+  console.log(`  Identity changed in ${changed} of ${v4Actual.length} cases`);
+  if (unexpected.length) {
+    failed = true;
+    console.log(`FAIL: ${unexpected.length} unexpected v3 → v4 change(s)`);
+    printDiffs(unexpected);
+  } else {
+    console.log('PASS: v4 differs from the v3 view only in keyword order, keyword-derived text, Identity and engineVersion');
+  }
+}
+if (process.argv.includes('--capture-v4')) {
+  if (failed) {
+    console.log('REFUSED: not writing the v4 baseline while earlier checks fail');
+    process.exit(1);
+  }
+  writeFileSync(V4_PATH, JSON.stringify(v4Actual, null, 2) + '\n');
+  console.log(`Captured ${v4Actual.length} v4 golden cases -> ${V4_PATH}`);
+  process.exit(0);
+}
+const v4Diffs: Diff[] = [];
+diff(JSON.parse(readFileSync(V4_PATH, 'utf8')), v4Actual, 'cases', v4Diffs);
+if (v4Diffs.length) {
+  failed = true;
+  console.log(`FAIL: ${v4Diffs.length} difference(s) from the v4 baseline`);
+  printDiffs(v4Diffs);
+} else {
+  console.log(`PASS: ${v4Actual.length} golden cases match v4 baseline`);
 }
 
 if (failed) process.exit(1);
-console.log(`PASS: golden v1/v2/v3 checks (${v3Actual.length} cases)`);
+console.log(`PASS: golden v1/v2/v3/v4 checks (${v4Actual.length} cases)`);

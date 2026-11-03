@@ -20,7 +20,7 @@ import {
   type AnalysisSnapshot, type CoreTag,
 } from '../app/lib/analysis';
 import type { AnalysisTrace, EvidenceRecord, InterpretationClaim } from '../app/lib/evidenceTrace';
-import { selectIdentityV2 } from '../app/lib/identitySelection';
+import { selectIdentityV2, selectIdentityV3 } from '../app/lib/identitySelection';
 import { generateDestinyCode } from '../app/lib/destinyCode';
 import { getSavedAnalyses } from '../app/lib/storageEngine';
 import { activeFromNewAnalysis, activeFromSaved, activeDestinyCode, saveActive } from '../app/lib/activeAnalysis';
@@ -223,8 +223,8 @@ for (const x of INPUTS) {
   const s = analyze(x);
   const r = s.identitySelection!;
   const tr = s.trace!;
-  check(`${p} 13/14 current engineVersion, schemaVersion 2, selection@2 recorded`,
-    s.engineVersion === ANALYSIS_ENGINE_VERSION && s.schemaVersion === 2 && !!r && r.version === 1 && r.ruleId === 'identity.selection@2');
+  check(`${p} 13/14 current engineVersion, schemaVersion 2, selection@3 recorded (engine v4)`,
+    s.engineVersion === ANALYSIS_ENGINE_VERSION && s.schemaVersion === 2 && !!r && r.version === 1 && r.ruleId === 'identity.selection@3');
   check(`${p} 1 deterministic across repeated analyses`, eq(analyze(x).identitySelection, r) && analyze(x).archetype === s.archetype);
   check(`${p} 11 different tarot card → same selection`,
     eq(analyze(x, TAROT_DATA[(x[4] + 9) % TAROT_DATA.length]).identitySelection, r));
@@ -235,11 +235,10 @@ for (const x of INPUTS) {
   check(`${p} archetype matches catalog entry of the decision`, expectedArch === s.archetype, `${expectedArch} vs ${s.archetype}`);
   if (r.pairIndex !== null) check(`${p} selectedTraits = catalog pair`, eq(r.selectedTraits, IDENTITY_PAIR_DEFINITIONS[r.pairIndex].tags));
 
-  // representative = commonKeywords[0] when there is convergence
-  if (r.representativeTrait) check(`${p} representative = commonKeywords[0]`, r.representativeTrait === LABEL_TO_TAG[s.commonKeywords[0]]);
-  if (r.decision === 'no-convergence-pair' || r.decision === 'single' || r.decision === 'generic') {
-    check(`${p} 6 non-ranked path equals engine v1 Identity`, identityV1(s).archetype === s.archetype);
-  }
+  // engine v4: representative = 정보량 최고의 수렴 성향 = 교집합 첫 패턴, 쌍의 두 성향은 모두 수렴(2개 이상 소스)
+  if (r.representativeTrait) check(`${p} representative = top intersection pattern`, r.representativeTrait === s.intersection?.common[0]?.trait);
+  check(`${p} every selected trait is supported by ≥2 sources`, r.support.every((sp) => sp.sources.length >= 2));
+  if (r.decision === 'single') check(`${p} single path uses the representative`, r.selectedTraits[0] === r.representativeTrait);
 
   // reason provenance points into the same trace, available evidence only
   const available = new Set(tr.evidence.filter((e) => e.status === 'available').map((e) => e.id));
@@ -254,9 +253,8 @@ for (const x of INPUTS) {
 
   // evidence / claim array order does not change the decision
   const reversed: AnalysisTrace = { ...tr, evidence: [...tr.evidence].reverse(), claims: [...tr.claims].reverse() };
-  const again = selectIdentityV2({
+  const again = selectIdentityV3({
     trace: reversed, pairs: IDENTITY_PAIR_DEFINITIONS, hasSingle: (t) => IDENTITY_SINGLE_DEFINITIONS[t] !== undefined,
-    keywordTag: LABEL_TO_TAG[s.commonKeywords[0]], sajuFirstTag: s.saju.coreTags[0],
   });
   check(`${p} reversed evidence/claim order → identical selection`, eq(again, r), JSON.stringify(again));
 }

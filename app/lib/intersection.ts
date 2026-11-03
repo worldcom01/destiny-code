@@ -2,6 +2,7 @@ import type { CoreTag } from './analysis';
 import { traitSupportInConvergenceScope } from './analysisPatterns';
 import type { AnalysisTrace } from './evidenceTrace';
 import { PALM_AREA_KEYS, PALM_TRAIT_VOCAB, type PalmAreaKey, type PalmReading } from './palmReading';
+import { distinctivenessOf, traitScore, type TraitDistinctiveness } from './traitInformation';
 
 // ── 통합 교집합 모델 (intersection-1) ─────────────────────────────────────────
 // trace의 교집합 범위(사주·MBTI·혈액형·별자리/점성술·손금)에서 CoreTag별로 어느 소스가 지지하는지 모은다.
@@ -29,7 +30,9 @@ export const TENSION_PAIRS: ReadonlyArray<readonly [CoreTag, CoreTag]> = [
   ['독립적', '사교적'],
   ['직관적', '실용적'],
 ];
-export type IntersectionPattern = { trait: CoreTag; sources: IntersectionSource[] };
+// score: 지지 소스 정보량 합(traitInformation.ts). 흔한 근거끼리의 겹침보다 드문 근거의 겹침이 높다.
+// 이전(V2) 저장 결과에는 score·distinctiveness가 없다.
+export type IntersectionPattern = { trait: CoreTag; sources: IntersectionSource[]; score?: number; distinctiveness?: TraitDistinctiveness };
 export type IntersectionTension = { traits: [CoreTag, CoreTag]; sides: [IntersectionSource[], IntersectionSource[]] };
 
 export type IntersectionModel = {
@@ -59,15 +62,19 @@ export function buildIntersection(input: {
       }));
   const vocabOrder = (t: CoreTag) => PALM_TRAIT_VOCAB.indexOf(t);
 
-  const entries = [...support.entries()].map(([trait, s]) => ({ trait, sources: s.sources }));
+  const entries = [...support.entries()].map(([trait, s]) => ({ trait, sources: s.sources, score: traitScore(trait, s.sources) }));
+  const toPattern = (e: { trait: CoreTag; sources: string[]; score: number }): IntersectionPattern => ({
+    trait: e.trait, sources: toSources(e.sources, e.trait), score: Math.round(e.score * 100) / 100, distinctiveness: distinctivenessOf(e.score),
+  });
+  // 교집합 순서 = 구별력(정보량 합) → 지지 소스 수 → 어휘 순서
   const common = entries
     .filter((e) => e.sources.length >= 2)
-    .sort((a, b) => b.sources.length - a.sources.length || vocabOrder(a.trait) - vocabOrder(b.trait))
-    .map((e) => ({ trait: e.trait, sources: toSources(e.sources, e.trait) }));
+    .sort((a, b) => b.score - a.score || b.sources.length - a.sources.length || vocabOrder(a.trait) - vocabOrder(b.trait))
+    .map(toPattern);
   const complements = entries
     .filter((e) => e.sources.length === 1)
     .sort((a, b) => SOURCE_ORDER.indexOf(a.sources[0]) - SOURCE_ORDER.indexOf(b.sources[0]) || vocabOrder(a.trait) - vocabOrder(b.trait))
-    .map((e) => ({ trait: e.trait, sources: toSources(e.sources, e.trait) }));
+    .map(toPattern);
 
   const tensions: IntersectionTension[] = [];
   for (const [a, b] of TENSION_PAIRS) {

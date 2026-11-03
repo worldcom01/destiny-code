@@ -3,12 +3,19 @@
 import type { IntersectionModel, IntersectionSource } from '@/app/lib/intersection';
 import { PALM_AREA_KEYS, PALM_AREA_LABELS, type PalmConfidence, type PalmReading } from '@/app/lib/palmReading';
 import { PALM_DISCLAIMER } from '@/app/lib/palmPresentation';
+import type { TraitDistinctiveness } from '@/app/lib/traitInformation';
 
 // ── Palm V2 통합 결과 표시 ────────────────────────────────────────────────────
 // A. 핵심 패턴 요약 / B. 손금 상세 해석 / C·D. 교집합 근거와 보완·대비. 계산은 하지 않고 저장된 모델만 그린다.
 
 const card = 'rounded-2xl bg-slate-900/60 border border-slate-800/60 p-5';
 const CONFIDENCE_TEXT: Record<PalmConfidence, string> = { high: '선명함', medium: '대체로 보임', low: '희미함' };
+
+// 근거의 정보량 구분 (engine v4 결과에만 있다)
+const DISTINCT_TEXT: Record<TraitDistinctiveness, string> = { distinctive: '드문 근거', notable: '뚜렷한 근거', common: '흔한 근거' };
+const DISTINCT_CLASS: Record<TraitDistinctiveness, string> = {
+  distinctive: 'text-amber-200 border-amber-400/40', notable: 'text-purple-200 border-purple-400/30', common: 'text-slate-400 border-slate-600/40',
+};
 
 const sourceList = (sources: IntersectionSource[]) =>
   sources.map((s) => (s.detail ? `${s.label}(${s.detail})` : s.label)).join(' · ');
@@ -23,12 +30,13 @@ export function CorePatternSummary({ model }: { model: IntersectionModel }) {
           <div className="mt-3 flex flex-wrap gap-2">
             {top.map((p) => (
               <span key={p.trait} className="px-3 py-1 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-100 text-sm font-semibold">
-                {p.trait} <span className="text-purple-300/70 text-xs font-normal">{p.sources.length}개 소스</span>
+                {p.trait} <span className="text-purple-300/70 text-xs font-normal">{p.sources.length}개 소스{p.distinctiveness ? ` · ${DISTINCT_TEXT[p.distinctiveness]}` : ''}</span>
               </span>
             ))}
           </div>
           <p className="mt-3 text-sm text-slate-300 leading-relaxed">
-            {model.sourceCount}개 분석 소스{model.palmIncluded ? '(손금 포함)' : ''}를 함께 비교했을 때 가장 여러 번 겹친 패턴입니다.
+            {model.sourceCount}개 분석 소스{model.palmIncluded ? '(손금 포함)' : ''}를 함께 비교했을 때 겹친 패턴입니다.
+            {top.some((p) => p.distinctiveness) && ' 여러 사람에게 흔히 나오는 근거보다, 드물게 나오는 근거가 겹친 패턴을 앞에 두었습니다.'}
           </p>
         </>
       ) : (
@@ -94,6 +102,9 @@ export function IntersectionDetail({ model }: { model: IntersectionModel }) {
           {model.common.map((p) => (
             <li key={p.trait} className="text-sm text-slate-200">
               <span className="font-semibold text-purple-200">{p.trait}</span>
+              {p.distinctiveness && (
+                <span className={`ml-1.5 px-1.5 py-0.5 rounded border text-[10px] ${DISTINCT_CLASS[p.distinctiveness]}`}>{DISTINCT_TEXT[p.distinctiveness]}</span>
+              )}
               <span className="text-slate-500"> — </span>
               <span className="text-xs text-slate-400">{sourceList(p.sources)}</span>
             </li>
