@@ -7,7 +7,9 @@
 8단계 내부 순서: 승인된 ON 설정 전환과 같은 커밋 재배포 → 1-C session 확인(SESSION-PASS) → 별도 승인된 live OpenAI 1회 → 공개 유지 여부를 별도로 결정. 하나라도 실패하면 1-D로 즉시 OFF 복귀한다.
 설계: `docs/ai/CODEX_REVIEW.md` "Palm Phase 1C", `docs/ai/DECISIONS.md` AD-007~009.
 
-> **신뢰 ingress 검증은 릴리스·보안 설정에 결합된다. 새 커밋, 환경·프로젝트·origin·세션 키·전략 변경 또는 ingress 세대 변경 시 재검증한다. 같은 설정의 같은 커밋에서 토큰을 적용하는 env-only 재배포는 기존 토큰을 유지한다.**
+> **(v3, 2026-11) 신뢰 ingress 토큰은 환경·프로젝트·ingress 세대·origin·세션 키·전략에 결합되고, 코드 커밋에는 결합되지 않는다. 일반 코드 배포에서는 1-A/1-B를 반복하지 않는다. 환경·프로젝트·origin·세션 키·전략 변경 또는 ingress 세대 변경 시에만 재검증한다.**
+> 기존 v2 토큰(커밋 결합)은 그 커밋에서 계속 유효하다. v2→v3 전환 동안에는 Production Config `PALM_INGRESS_LEGACY_COMMIT=<v2 토큰을 발급한 커밋 40자리>`를 두면 새 커밋에서도 그 v2 토큰을 인정한다(무중단). v3 토큰을 설치·재배포한 뒤 이 변수를 지운다.
+> 이후 릴리스 절차: push → Production 배포 → `palm-off-gate` 대신 `palm-on-session`으로 `SESSION-PASS` 확인. 실패하면 직전 배포로 Instant Rollback.
 > 코드 변경 없이 proxy 토폴로지·도메인·ingress 동작 등 신뢰 IP에 영향을 주는 인프라를 바꿀 때도 먼저 공개 OFF로 전환하고 `PALM_INGRESS_GENERATION`을 변경한 뒤 재검증한다. 배포 ID 변경만으로 토큰이 자동 무효화되지는 않는다.
 
 ## 1. 통제된 준비 순서 (그대로 실행 가능한 체크리스트)

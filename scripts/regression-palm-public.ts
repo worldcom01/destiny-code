@@ -14,7 +14,7 @@ import sharp from 'sharp';
 import { handlePalmAnalyze } from '../app/lib/server/palmExtraction';
 import { PalmRequestGate } from '../app/lib/server/palmAccess';
 import {
-  createPalmSession, palmCsrfToken, palmIngressVerificationToken, readPalmDeploymentIdentity, readPalmPublicConfig, readPalmTrustedIngress, trustedClientIp, PALM_SESSION_COOKIE,
+  createPalmSession, palmCsrfToken, palmIngressVerificationToken, palmIngressVerificationTokenV3, readPalmDeploymentIdentity, readPalmPublicConfig, readPalmTrustedIngress, trustedClientIp, PALM_SESSION_COOKIE,
 } from '../app/lib/server/palmPublicAccess';
 import { handlePalmIngressCheck } from '../app/lib/server/palmIngressProbe';
 import { handlePalmPublicAnalyze, type PalmPublicAnalyzeDeps } from '../app/lib/server/palmPublicAnalyze';
@@ -44,6 +44,7 @@ const DEPLOY_A: Record<string, string> = {
   VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40), VERCEL_DEPLOYMENT_ID: 'dpl_deploymentAAAA0001', PALM_INGRESS_GENERATION: 'g1',
 };
 const bindingOf = (env: Record<string, string | undefined>) => { const d = readPalmDeploymentIdentity(env); if (!d.ok) throw new Error(d.reason); return d.bindingKey; };
+const stableOf = (env: Record<string, string | undefined>) => { const d = readPalmDeploymentIdentity(env); if (!d.ok) throw new Error(d.reason); return d.stableBindingKey; };
 const ENV: Record<string, string> = {
   ...DEPLOY_A,
   PALM_EXTRACTION_ENABLED: 'true',
@@ -52,7 +53,7 @@ const ENV: Record<string, string> = {
   PALM_SESSION_SECRET: SESSION_SECRET,
   PALM_PUBLIC_ORIGIN: ORIGIN,
   PALM_TRUSTED_INGRESS: 'vercel',
-  PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationToken('s'.repeat(40), 'vercel', 'https://destiny.example', bindingOf(DEPLOY_A)),
+  PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationTokenV3('s'.repeat(40), 'vercel', 'https://destiny.example', stableOf(DEPLOY_A)),
   NEXT_PUBLIC_SUPABASE_URL: 'https://db.example',
   SUPABASE_SERVICE_ROLE_KEY: 'service-role-test',
   PALM_EXTRACTION_SECRET: OPERATOR_SECRET,
@@ -448,8 +449,8 @@ async function main() {
       !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS: undefined, PALM_TRUSTED_INGRESS_VERIFICATION: undefined, PALM_TRUSTED_IP_HEADER: 'x-client-ip' }).enabled);
     check('ingress: verification token missing → OFF', !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: '' }).enabled);
     check('ingress: token from another origin / secret / tampered → OFF',
-      !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationToken(SESSION_SECRET, 'vercel', 'https://other.example', bindingOf(DEPLOY_A)) }).enabled
-      && !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationToken('t'.repeat(40), 'vercel', ORIGIN, bindingOf(DEPLOY_A)) }).enabled
+      !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationTokenV3(SESSION_SECRET, 'vercel', 'https://other.example', stableOf(DEPLOY_A)) }).enabled
+      && !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: palmIngressVerificationTokenV3('t'.repeat(40), 'vercel', ORIGIN, stableOf(DEPLOY_A)) }).enabled
       && !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: ENV.PALM_TRUSTED_INGRESS_VERIFICATION.slice(0, -1) + 'x' }).enabled);
     check('ingress: changing the origin after verification invalidates it', !readPalmPublicConfig({ ...ENV, PALM_PUBLIC_ORIGIN: 'https://new.example' }).enabled);
     check('ingress: feature disabled stays disabled even with valid ingress', !readPalmPublicConfig({ ...ENV, PALM_PUBLIC_ENABLED: 'false' }).enabled);
@@ -523,20 +524,27 @@ async function main() {
     const envB_oldToken = { ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: TA };
     const differing = Object.keys(envB_oldToken).filter((k) => (envB_oldToken as Record<string, string>)[k] !== (envA as Record<string, string>)[k]).sort();
     check('deploy: B differs from A only by deployment identity (commit, deployment id)', differing.join() === 'VERCEL_DEPLOYMENT_ID,VERCEL_GIT_COMMIT_SHA', differing.join());
-    check('deploy: TA is REJECTED on B (same origin, session key, strategy) → public OFF',
-      !readPalmPublicConfig(envB_oldToken).enabled && (readPalmTrustedIngress(envB_oldToken) as { reason?: string }).reason === 'verification-mismatch');
-    providerCalls = 0;
-    const onB = await handlePalmPublicAnalyze(publicReq(await jpeg(), newSession()), deps(storeA, provider(OBS), {}, envB_oldToken));
+    // v3: 토큰은 커밋에 묶이지 않는다 — 새 코드 릴리스 후에도 Palm이 꺼지지 않는다
+    check('deploy (v3): probe-issued TA stays valid on a NEW commit B (no re-verification per release)', readPalmPublicConfig(envB_oldToken).enabled);
     const sessB = await handlePalmSession(new Request('https://destiny.example/api/palm/session', { method: 'POST', headers: { origin: ORIGIN, 'x-vercel-forwarded-for': '198.51.100.8' } }),
       { env: envB_oldToken, createStore: async () => storeA });
-    check('deploy: old TA cannot survive the redeploy — paid analyze 503 with 0 provider calls, session disabled',
-      onB.status === 503 && providerCalls === 0 && (await bodyOf(sessB)).enabled === false && !sessB.headers.get('set-cookie'));
-    // re-verify on B → TB accepted on B, TB rejected on A
+    check('deploy (v3): public session works on B with TA', (await bodyOf(sessB)).enabled === true && !!sessB.headers.get('set-cookie'));
     const pb = await probeOn({ ...ENV, ...DEPLOY_B, PALM_PUBLIC_ENABLED: 'false', PALM_TRUSTED_INGRESS_VERIFICATION: '' });
-    const TB = pb.verificationToken as string;
-    check('deploy: re-verification on B issues TB ≠ TA', pb.ingress === 'established' && TB !== TA && pb.deployment?.commit === 'bbbbbbb');
-    check('deploy: TB accepted on B', readPalmPublicConfig({ ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: TB }).enabled);
-    check('deploy: TB not accepted back on A', !readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: TB }).enabled);
+    check('deploy (v3): probe on B issues the same token as on A, reports commit B', pb.ingress === 'established' && pb.verificationToken === TA && pb.deployment?.commit === 'bbbbbbb');
+    // v2(커밋 결합) 기존 토큰: 같은 커밋에서는 계속 인정, 다른 커밋에서는 운영자가 고정한 legacy 커밋일 때만 인정
+    const v2A = palmIngressVerificationToken(SESSION_SECRET, 'vercel', ORIGIN, bindingOf(DEPLOY_A));
+    check('legacy v2: commit-bound token still accepted on its own commit A', readPalmPublicConfig({ ...ENV, PALM_TRUSTED_INGRESS_VERIFICATION: v2A }).enabled);
+    check('legacy v2: same token REJECTED on new commit B without a pin',
+      !readPalmPublicConfig({ ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: v2A }).enabled
+      && (readPalmTrustedIngress({ ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: v2A }) as { reason?: string }).reason === 'verification-mismatch');
+    check('legacy v2: accepted on B when PALM_INGRESS_LEGACY_COMMIT pins commit A (zero-downtime switch)',
+      readPalmPublicConfig({ ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: v2A, PALM_INGRESS_LEGACY_COMMIT: DEPLOY_A.VERCEL_GIT_COMMIT_SHA }).enabled);
+    check('legacy v2: pin to another commit or a malformed pin does not help',
+      !readPalmPublicConfig({ ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: v2A, PALM_INGRESS_LEGACY_COMMIT: 'c'.repeat(40) }).enabled
+      && !readPalmPublicConfig({ ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: v2A, PALM_INGRESS_LEGACY_COMMIT: 'aaaaaaa' }).enabled);
+    check('legacy v2: pinned v2 token still bound to environment (not valid on preview)',
+      !readPalmPublicConfig({ ...ENV, ...DEPLOY_B, VERCEL_ENV: 'preview', PALM_TRUSTED_INGRESS_VERIFICATION: v2A, PALM_INGRESS_LEGACY_COMMIT: DEPLOY_A.VERCEL_GIT_COMMIT_SHA }).enabled);
+    check('v3 ≠ v2: tokens of the two versions never coincide', TA !== v2A);
     // other identity parts
     check('deploy: preview token not valid on production (VERCEL_ENV bound)',
       !readPalmPublicConfig({ ...envA, PALM_TRUSTED_INGRESS_VERIFICATION: (await probeOn({ ...setupA, VERCEL_ENV: 'preview' })).verificationToken }).enabled);
@@ -573,10 +581,10 @@ async function main() {
     providerCalls = 0;
     const spoofId = await handlePalmPublicAnalyze(publicReq(await jpeg(), newSession(), {
       'x-vercel-deployment-url': 'a.vercel.app', 'x-vercel-id': 'iad1::abc', 'x-vercel-git-commit-sha': 'a'.repeat(40),
-    }), deps(storeA, provider(OBS), {}, envB_oldToken));
-    check('deploy: deployment identity cannot be supplied by request headers (still 503 on B with TA)', spoofId.status === 503 && providerCalls === 0);
+    }), deps(storeA, provider(OBS), {}, { ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: v2A }));
+    check('deploy: deployment identity cannot be supplied by request headers (commit-A v2 token still 503 on B)', spoofId.status === 503 && providerCalls === 0);
     // B still rejects spoofed fallbacks and chained values once verified
-    const envBok = { ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: TB };
+    const envBok = { ...ENV, ...DEPLOY_B, PALM_TRUSTED_INGRESS_VERIFICATION: TA };
     providerCalls = 0;
     const fb = await handlePalmPublicAnalyze(publicReq(await jpeg(), newSession(), { 'x-forwarded-for': '1.2.3.4', 'x-real-ip': '1.2.3.4' }, null), deps(storeA, provider(OBS), {}, envBok));
     const chain = await handlePalmPublicAnalyze(publicReq(await jpeg(), newSession(), {}, '1.2.3.4, 5.6.7.8'), deps(storeA, provider(OBS), {}, envBok));

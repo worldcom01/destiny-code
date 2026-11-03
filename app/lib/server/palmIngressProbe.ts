@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { isOperatorSecretValid, PALM_SECRET_HEADER } from './palmAccess';
 import {
   isDocumentationIp,
-  palmIngressVerificationToken,
+  palmIngressVerificationTokenV3,
   readPalmDeploymentIdentity,
   PALM_TRUSTED_INGRESS_STRATEGIES,
   trustedClientIp,
@@ -18,7 +18,7 @@ import {
 // provider·DB를 호출하지 않는다. PALM_PUBLIC_ENABLED·PALM_EXTRACTION_ENABLED가 false여도 동작하며,
 // 공개 기능을 켜지 않는다(토큰은 env에 적용해야만 의미가 있다). 원래 IP는 응답·로그에 남기지 않고
 // 짧은 HMAC fingerprint만 준다(같은 배포·같은 UTC 날짜에서 대조·위조값 비교용, 저장하지 않음).
-// 토큰은 이 배포의 식별값(환경·프로젝트·커밋·ingress 세대)에 묶인다 — 다른 배포에서는 무효.
+// 토큰(v3)은 환경·프로젝트·ingress 세대에 묶인다 — 새 커밋 배포에서도 유효, preview·다른 프로젝트·세대 변경에서는 무효.
 
 export const PALM_INGRESS_PROBE_HEADER = 'x-palm-ingress-probe';
 
@@ -66,6 +66,6 @@ export async function handlePalmIngressCheck(req: Request, deps: { env: Record<s
     strategy: strategy as PalmTrustedIngress,
     deployment: { environment: deployment.identity.environment, commit: deployment.identity.commitSha.slice(0, 7) },
     ipFingerprint,
-    verificationToken: palmIngressVerificationToken(secret, strategy as PalmTrustedIngress, origin, deployment.bindingKey),
+    verificationToken: palmIngressVerificationTokenV3(secret, strategy as PalmTrustedIngress, origin, deployment.stableBindingKey),
   });
 }
