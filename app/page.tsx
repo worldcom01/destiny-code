@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import type { ChangeEvent, ReactNode } from 'react';
-import { analyzeDestiny, isAnalysisSnapshot, type TarotResult, ELEMENT_META } from '@/app/lib/analysis';
+import type { ChangeEvent } from 'react';
+import { analyzeDestiny, type TarotResult } from '@/app/lib/analysis';
 import { LOCATION_OPTION_GROUPS, findLocationByLabel } from '@/app/lib/regions';
 import {
   getSavedAnalyses,
@@ -25,7 +25,7 @@ import { deletePalmSupplement, prunePalmSupplements, savedBaseRef, saveBaseThenP
 import { shouldResetPalmOnDelete } from '@/app/lib/palmAttempt';
 import PalmSupplementPanel from '@/app/components/PalmSupplementPanel';
 import PalmPhotoInput, { type PalmPhoto } from '@/app/components/PalmPhotoInput';
-import { CorePatternSummary, IntersectionDetail, PalmReadingCard } from '@/app/components/IntegratedResult';
+import ResultFirst from '@/app/components/ResultFirst';
 import { ensurePalmSession, requestPalmObservation } from '@/app/lib/palmClient';
 import { palmErrorMessage } from '@/app/lib/palmPresentation';
 import type { PalmReading } from '@/app/lib/palmReading';
@@ -34,7 +34,6 @@ import { generateDestinyCode } from '@/app/lib/destinyCode';
 import { saveProfile } from '@/app/lib/profileStore';
 import { saveAnalyticsResult } from '@/app/lib/analyticsEngine';
 import { SiteHeader } from '@/app/components/SiteHeader';
-import { NextStepsCTA } from '@/app/components/NextStepsCTA';
 import { PlatformFooter } from '@/app/components/PlatformFooter';
 
 const MBTI_OPTIONS = [
@@ -74,26 +73,6 @@ const SIJU_LIST = [
   { value: '술시', label: '술시 (戌時)  19:31 ~ 21:30' },
   { value: '해시', label: '해시 (亥時)  21:31 ~ 23:30' },
 ];
-
-const MBTI_CODE_LABELS: Record<string, string> = {
-  INTJ: 'ARCHITECT',    INTP: 'ANALYST',      ENTJ: 'COMMANDER',    ENTP: 'DEBATER',
-  INFJ: 'ADVOCATE',     INFP: 'MEDIATOR',     ENFJ: 'PROTAGONIST',  ENFP: 'CAMPAIGNER',
-  ISTJ: 'LOGISTICIAN',  ISFJ: 'DEFENDER',     ESTJ: 'EXECUTIVE',    ESFJ: 'CONSUL',
-  ISTP: 'VIRTUOSO',     ISFP: 'ADVENTURER',   ESTP: 'ENTREPRENEUR', ESFP: 'ENTERTAINER',
-};
-
-const DAY_STEM_LABELS: Record<string, string> = {
-  '甲': 'PIONEER', '乙': 'ADAPTOR',  '丙': 'RADIANCE', '丁': 'ESSENCE',
-  '戊': 'ANCHOR',  '己': 'NURTURER', '庚': 'STEEL',     '辛': 'CRYSTAL',
-  '壬': 'TORRENT', '癸': 'WISDOM',
-};
-
-const ZODIAC_CODE_LABELS: Record<string, string> = {
-  'Aries':       'SPARK',      'Taurus':      'STONE',       'Gemini':      'MIRROR',
-  'Cancer':      'TIDE',       'Leo':         'FLAME',       'Virgo':       'PURE MIND',
-  'Libra':       'SCALE',      'Scorpio':     'DEEP WATER',  'Sagittarius': 'ARROW',
-  'Capricorn':   'SUMMIT',     'Aquarius':    'SIGNAL',      'Pisces':      'DREAM DRIFT',
-};
 
 const SIJU_TIME_MAP: Record<string, string> = {
   자시: '00:30', 축시: '02:30', 인시: '04:30', 묘시: '06:30',
@@ -258,39 +237,6 @@ function LoadingPanel({ step }: { step: number }) {
   );
 }
 
-// ── 결과 카드 ────────────────────────────────────────────────────────────────
-function ResultCard({
-  icon,
-  title,
-  children,
-  hoverBorderClass,
-  delay,
-}: {
-  icon: string;
-  title: string;
-  children: ReactNode;
-  hoverBorderClass: string;
-  delay: number;
-}) {
-  return (
-    <div
-      className={`group bg-slate-900/60 backdrop-blur-md border border-slate-700/40 rounded-2xl p-6
-        shadow-xl hover:shadow-2xl ${hoverBorderClass} hover:scale-[1.015]
-        transition-all duration-300 cursor-default
-        opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]`}
-      style={{ animationDelay: `${delay}ms` }}
-    >
-      <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-4">
-        <span className="text-lg transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12">
-          {icon}
-        </span>
-        {title}
-      </h3>
-      {children}
-    </div>
-  );
-}
-
 // ── 메인 페이지 ──────────────────────────────────────────────────────────────
 export default function Home() {
   const [form, setForm] = useState<FormData>({
@@ -316,7 +262,6 @@ export default function Home() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
   const [shareStatus, setShareStatus] = useState<ShareOutcome | 'idle'>('idle');
   const resultRef = useRef<HTMLDivElement>(null);
-  const [codeCopyStatus, setCodeCopyStatus] = useState<'idle' | 'copied'>('idle');
   // Palm 보조 결과: 저장 전 성공본(이 결과에 속한 것만)과 보조 저장 알림. 기본 결과와 별개다.
   const [pendingPalm, setPendingPalm] = useState<PalmSupplement | null>(null);
   const [palmStoreVersion, setPalmStoreVersion] = useState(0);
@@ -480,6 +425,7 @@ export default function Home() {
     setPalmSaveNote(null);
     setSaveStatus('idle');
     setShowHistory(false);
+    setShareStatus('idle');
     setAppStep('result');
     setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   };
@@ -502,14 +448,6 @@ export default function Home() {
 
   const result = active?.result ?? null;
   const destinyCode = active ? activeDestinyCode(active) : '';
-  // 충돌·키워드 강도는 스냅샷에만 있다. 구버전 저장 결과는 재계산하지 않고 비워 둔다.
-  const snapshot = result && isAnalysisSnapshot(result) ? result : null;
-  const conflicts = snapshot?.conflicts ?? [];
-  const keywordStrengths = snapshot?.keywordStrengths ?? [];
-  const intersection = snapshot?.intersection ?? null;
-  const palmReading = snapshot?.palmReading ?? null;
-  const identityNarrative = snapshot?.identityNarrative ?? [];
-
   const birthdateComputed = form.year && form.month && form.day
     ? `${form.year}-${form.month.padStart(2, '0')}-${form.day.padStart(2, '0')}`
     : '';
@@ -521,7 +459,7 @@ export default function Home() {
     'w-full bg-slate-800/60 border border-slate-700/50 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500/60 focus:bg-slate-800/90 transition-colors text-sm [color-scheme:dark]';
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-purple-950 text-white">
+    <div className={`min-h-screen text-white ${appStep === 'result' ? 'result-page' : 'bg-gradient-to-br from-slate-950 via-indigo-950 to-purple-950'}`}>
       {/* 타로 카드 선택 화면 (고정 오버레이) */}
       {appStep === 'picking' && (
         <TarotPickerScreen cards={shuffledCards} onPick={handleCardPicked} />
@@ -531,15 +469,15 @@ export default function Home() {
       <SiteHeader active="intersection" />
 
       {/* 배경 글로우 */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+      <div className={`fixed inset-0 pointer-events-none overflow-hidden ${appStep === 'result' ? 'hidden' : ''}`}>
         <div className="absolute -top-48 -right-48 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl" />
         <div className="absolute -bottom-48 -left-48 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl" />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-violet-500/5 rounded-full blur-3xl" />
       </div>
 
-      <div className="relative max-w-2xl mx-auto px-4 py-14">
+      <div className={`relative mx-auto px-4 ${appStep === 'result' ? 'max-w-5xl py-6 sm:py-10' : 'max-w-2xl py-14'}`}>
         {/* 헤더 */}
-        <header className="text-center mb-12">
+        <header className={`text-center mb-12 ${appStep === 'result' ? 'hidden' : ''}`}>
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs mb-6 tracking-widest uppercase">
             <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
             AI Destiny System
@@ -807,15 +745,44 @@ export default function Home() {
           </form>
         )}
 
+        {/* 로딩 */}
+        {appStep === 'analyzing' && <LoadingPanel step={loadingStep} />}
+        {appStep === 'analyzing' && palmPending && loadingStep >= LOADING_STEPS.length - 1 && (
+          <p className="mt-3 text-center text-xs text-violet-300/80" role="status">손금을 자세히 읽는 중이에요. 보통 20~30초 걸립니다.</p>
+        )}
+
+        {/* 결과 */}
+        {appStep === 'result' && result && (
+          <div ref={resultRef} className="result-anchor">
+            {palmSaveNote && <p className="result-notice" role="status">{palmSaveNote}</p>}
+            {palmNotice && <p className="result-notice" role="status">{palmNotice}</p>}
+            <ResultFirst
+              key={active ? `${activeBaseRef(active)?.kind}:${activeBaseRef(active)?.id}` : 'result'}
+              result={result} nickname={active?.meta.nickname ?? ''} code={destinyCode}
+              saveStatus={saveStatus} shareStatus={shareStatus}
+              onSave={handleSave} onShare={handleShare} onReset={() => setAppStep('form')}
+            >
+              {active && (() => {
+                const ref = activeBaseRef(active);
+                return ref && <PalmSupplementPanel
+                  key={`${ref.kind}:${ref.id}:${palmGeneration}`}
+                  active={active} storeVersion={palmStoreVersion}
+                  onPendingChange={(s) => setPendingPalm(s)}
+                  onSaved={() => { setPendingPalm(null); setSavedList(getSavedAnalyses()); }}
+                />;
+              })()}
+            </ResultFirst>
+          </div>
+        )}
+
         {/* 분석 기록 */}
         {savedList.length > 0 && (
-          <div className="bg-slate-900/40 border border-slate-800/60 rounded-2xl p-5 mb-6">
+          <div className="saved-history bg-slate-900/40 border border-slate-800/60 rounded-2xl p-5 my-6">
             <button
               onClick={() => setShowHistory((h) => !h)}
               className="w-full flex items-center justify-between text-sm font-medium text-slate-500 hover:text-slate-300 transition-colors"
             >
               <span className="flex items-center gap-2">
-                <span className="text-purple-500/70">◆</span>
                 저장된 분석 기록
                 <span className="px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-400 text-[10px]">
                   {savedList.length}
@@ -874,684 +841,6 @@ export default function Home() {
                 ))}
               </div>
             )}
-          </div>
-        )}
-
-        {/* 로딩 */}
-        {appStep === 'analyzing' && <LoadingPanel step={loadingStep} />}
-        {appStep === 'analyzing' && palmPending && loadingStep >= LOADING_STEPS.length - 1 && (
-          <p className="mt-3 text-center text-xs text-violet-300/80" role="status">손금을 자세히 읽는 중이에요. 보통 20~30초 걸립니다.</p>
-        )}
-
-        {/* 결과 */}
-        {appStep === 'result' && result && (
-          <div ref={resultRef} className="space-y-4">
-            {/* 액션 바 */}
-            <div className="flex items-center justify-between opacity-0 [animation:fadeInUp_0.4s_ease-out_forwards]">
-              <span className="text-purple-400 text-xs tracking-widest uppercase">✦ 분석 결과 ✦</span>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleSave}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-medium border transition-all duration-200
-                    ${saveStatus === 'saved'
-                      ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                      : 'bg-slate-800/60 border-slate-700/30 text-slate-400 hover:border-purple-500/30 hover:text-purple-300'}`}
-                >
-                  {saveStatus === 'saved' ? '✓ 저장됨' : '저장하기'}
-                </button>
-                <button
-                  onClick={handleShare}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-medium border transition-all duration-200
-                    ${shareStatus !== 'idle'
-                      ? 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300'
-                      : 'bg-slate-800/60 border-slate-700/30 text-slate-400 hover:border-indigo-500/30 hover:text-indigo-300'}`}
-                >
-                  {shareStatus === 'shared' ? '✓ 공유됨' : shareStatus === 'copied' ? '✓ 텍스트 복사됨' : '공유하기'}
-                </button>
-              </div>
-            </div>
-
-            {palmSaveNote && <p className="text-xs text-amber-300/80 text-right" role="status">{palmSaveNote}</p>}
-            {palmNotice && <p className="text-xs text-amber-300/80" role="status">{palmNotice}</p>}
-
-            {/* ── A. 핵심 패턴 요약 (새 분석에만 있는 통합 교집합 모델) ── */}
-            {intersection && <CorePatternSummary model={intersection} />}
-
-            {/* ── 당신의 본질 헤더 ── */}
-            <div className="flex items-center gap-3 pt-2 opacity-0 [animation:fadeInUp_0.4s_ease-out_50ms_forwards]">
-              <div className="flex-1 h-px bg-slate-800" />
-              <p className="text-slate-600 text-[9px] tracking-[0.5em] uppercase">당신의 본질</p>
-              <div className="flex-1 h-px bg-slate-800" />
-            </div>
-
-            {/* 사주 분석 */}
-            <ResultCard icon="☯" title="사주 분석" hoverBorderClass="hover:border-amber-500/30" delay={80}>
-              <div className="grid grid-cols-4 gap-2 mb-4 text-center">
-                {(['year', 'month', 'day', 'hour'] as const).map((p) => (
-                  <div key={p}>
-                    <p className="text-[10px] text-slate-600 mb-1">
-                      {p === 'year' ? '年' : p === 'month' ? '月' : p === 'day' ? '日' : '時'}
-                    </p>
-                    <p className="text-base font-semibold text-amber-300 tracking-widest">
-                      {result.saju.pillars[p]}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex flex-wrap gap-2 mb-3">
-                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold">
-                  일간 {result.saju.dayStemKo}({result.saju.dayStem})
-                </span>
-                {!result.saju.hasTime && (
-                  <span className="px-2.5 py-0.5 rounded-full bg-slate-800/60 border border-slate-700/30 text-slate-600 text-xs">
-                    시간 미입력 · 정오 기준
-                  </span>
-                )}
-              </div>
-
-              <p className="text-slate-400 leading-relaxed text-sm group-hover:text-slate-300 transition-colors duration-300 mb-4">
-                {result.saju.description}
-              </p>
-
-              <p className="text-xs text-slate-600 mb-2">오행(五行) 비율</p>
-              <div className="space-y-2 mb-4">
-                {Object.entries(ELEMENT_META).map(([el, meta]) => {
-                  const count = result.saju.elements[el as keyof typeof result.saju.elements];
-                  const isMissing = count === 0;
-                  return (
-                    <div key={el} className="flex items-center gap-3">
-                      <span className={`text-xs w-12 flex-shrink-0 ${meta.color} ${isMissing ? 'opacity-30' : ''}`}>
-                        {meta.label}
-                      </span>
-                      <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${meta.bgColor} ${isMissing ? 'opacity-0' : ''} transition-all duration-700`}
-                          style={{ width: `${(count / 8) * 100}%` }}
-                        />
-                      </div>
-                      <span className={`text-xs w-3 text-right tabular-nums ${isMissing ? 'text-slate-700' : 'text-slate-500'}`}>
-                        {count}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {result.saju.missingElements.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {result.saju.missingElements.map((el) => (
-                    <span
-                      key={el}
-                      className={`px-2.5 py-0.5 rounded-full text-xs border ${ELEMENT_META[el].color} bg-slate-800/60 border-slate-700/50`}
-                    >
-                      ⚠ {ELEMENT_META[el].label} 부족
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex flex-wrap gap-1.5">
-                {result.saju.traits.map((trait) => (
-                  <span key={trait} className="text-xs text-amber-400/60">
-                    #{trait.replace(/\s/g, '')}
-                  </span>
-                ))}
-              </div>
-            </ResultCard>
-
-            {/* 서양점성술 분석 */}
-            <ResultCard
-              icon="✦"
-              title="서양점성술 분석"
-              hoverBorderClass="hover:border-blue-500/30"
-              delay={180}
-            >
-              {/* 행성 배치 목록 */}
-              <div className="space-y-4 mb-4">
-                {[
-                  result.westernAstrology.sun,
-                  result.westernAstrology.moon,
-                  result.westernAstrology.ascendant,
-                ].filter((p): p is NonNullable<typeof p> => p !== null).map((placement) => (
-                  <div key={placement.planet}>
-                    <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                      <span className="text-blue-300/70 text-base w-5 text-center flex-shrink-0">
-                        {placement.planetSymbol}
-                      </span>
-                      <span className="text-slate-400 text-xs tracking-wide">
-                        {placement.planetLabel}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-200 text-xs font-medium">
-                        {placement.data.sign}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full bg-slate-700/50 border border-slate-600/30 text-slate-500 text-xs">
-                        {placement.data.element} · {placement.data.modality}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full bg-slate-700/50 border border-slate-600/30 text-slate-500 text-xs">
-                        {placement.data.rulingPlanet} 지배
-                      </span>
-                    </div>
-                    <p className="text-slate-400 leading-relaxed text-sm group-hover:text-slate-300 transition-colors duration-300 ml-7">
-                      {placement.description}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              {/* 서양점성술 핵심 키워드 */}
-              <div className="border-t border-slate-800 pt-3">
-                <p className="text-xs text-slate-600 mb-2">서양점성술 핵심 키워드</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {result.westernAstrology.keywords.map((kw) => (
-                    <span key={kw} className="text-xs text-blue-400/70">#{kw}</span>
-                  ))}
-                </div>
-              </div>
-
-              {/* 강점 / 약점 */}
-              <div className="border-t border-slate-800 pt-3 mt-3 grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-[10px] text-slate-600 mb-1.5 tracking-wide">강점</p>
-                  <ul className="space-y-1">
-                    {result.westernAstrology.sun.data.strengths.map((s) => (
-                      <li key={s} className="flex items-center gap-1.5 text-xs text-slate-500">
-                        <span className="text-blue-500/50">▸</span>{s}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <p className="text-[10px] text-slate-600 mb-1.5 tracking-wide">과제</p>
-                  <ul className="space-y-1">
-                    {result.westernAstrology.sun.data.weaknesses.map((w) => (
-                      <li key={w} className="flex items-center gap-1.5 text-xs text-slate-500">
-                        <span className="text-orange-500/40">▸</span>{w}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-
-              {/* 근사치 안내 */}
-              {result.westernAstrology.isApproximate && (
-                <p className="text-[9px] text-slate-700 mt-3 leading-relaxed">
-                  달궁·상승궁은 천문 근사 알고리즘으로 계산됩니다. 경계일(Sign Cusp) 근처에서는 실제 배치와 1궁 차이가 생길 수 있습니다.
-                </p>
-              )}
-            </ResultCard>
-
-            {/* MBTI 분석 */}
-            {result.mbtiTraits.type ? (
-              <ResultCard icon="◈" title="MBTI 분석" hoverBorderClass="hover:border-emerald-500/30" delay={280}>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-mono font-semibold">
-                    {result.mbtiTraits.type}
-                  </span>
-                  <span className="px-2.5 py-0.5 rounded-full bg-slate-700/50 border border-slate-600/30 text-slate-400 text-xs">
-                    {result.mbtiTraits.groupLabel} ({result.mbtiTraits.typeGroup})
-                  </span>
-                </div>
-                <p className="text-slate-400 leading-relaxed text-sm group-hover:text-slate-300 transition-colors duration-300 mb-3">
-                  {result.mbtiTraits.description}
-                </p>
-                <ul className="space-y-1">
-                  {result.mbtiTraits.strengths.map((s) => (
-                    <li key={s} className="flex items-center gap-2 text-xs text-slate-500">
-                      <span className="text-emerald-500/60">▸</span>
-                      {s}
-                    </li>
-                  ))}
-                </ul>
-              </ResultCard>
-            ) : (
-              <div
-                className="bg-slate-900/40 border border-slate-800/50 rounded-2xl px-5 py-3.5 flex items-center gap-3
-                  opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-                style={{ animationDelay: '280ms' }}
-              >
-                <span className="text-slate-700 text-base">◈</span>
-                <p className="text-slate-600 text-xs leading-relaxed">
-                  MBTI 미입력 · 사주 · 서양점성술 · 혈액형 · 타로 4개 체계로 분석이 진행되었습니다
-                </p>
-              </div>
-            )}
-
-            {/* 혈액형 분석 */}
-            <ResultCard icon="◈" title="혈액형 분석" hoverBorderClass="hover:border-rose-500/30" delay={380}>
-              <div className="flex flex-wrap gap-2 mb-3">
-                <span className="px-2.5 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-bold">
-                  {result.bloodType.type}형
-                </span>
-              </div>
-              <p className="text-slate-400 leading-relaxed text-sm group-hover:text-slate-300 transition-colors duration-300 mb-3">
-                {result.bloodType.description}
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {result.bloodType.traits.map((trait) => (
-                  <span key={trait} className="text-xs text-rose-400/60">
-                    #{trait.replace(/\s/g, '')}
-                  </span>
-                ))}
-              </div>
-            </ResultCard>
-
-            {/* 구버전 저장 결과 안내 */}
-            {!snapshot && (
-              <p className="text-slate-600 text-xs text-center px-4 opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-                style={{ animationDelay: '530ms' }}>
-                이전 버전에서 저장된 결과입니다. 운명 코드 강도와 내면 갈등 패턴은 당시 저장되지 않았습니다.
-              </p>
-            )}
-
-            {/* 운명 코드 강도 */}
-            {keywordStrengths.length > 0 && (
-              <div
-                className="bg-slate-900/60 backdrop-blur-md border border-amber-500/20 rounded-2xl p-6 shadow-xl
-                  opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-                style={{ animationDelay: '530ms' }}
-              >
-                <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-1">
-                  <span className="text-amber-400 text-lg">◈</span>
-                  운명 코드 강도
-                </h3>
-                <p className="text-slate-600 text-xs mb-4">
-                  사주 · 서양점성술 · {result.mbtiTraits.type ? 'MBTI · ' : ''}혈액형 체계에서 각 성향이 얼마나 강하게 수렴되는지 나타냅니다
-                </p>
-                <div className="space-y-3.5">
-                  {keywordStrengths.map((ks) => (
-                    <div key={ks.coreTag}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-slate-300 text-xs">{ks.keyword}</span>
-                        <span className="text-amber-400 text-xs font-mono font-semibold tabular-nums">{ks.percentage}%</span>
-                      </div>
-                      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-amber-500 to-yellow-400 rounded-full transition-all duration-700"
-                          style={{ width: `${ks.percentage}%` }}
-                        />
-                      </div>
-                      <div className="flex flex-wrap gap-x-2 gap-y-0 mt-1">
-                        {ks.sources.map((src) => (
-                          <span key={src} className="text-[10px] text-amber-400/45">{src}</span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 내면 갈등 패턴 */}
-            {conflicts.length > 0 && (
-              <div
-                className="bg-slate-900/60 backdrop-blur-md border border-orange-500/20 rounded-2xl p-6 shadow-xl
-                  opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-                style={{ animationDelay: '580ms' }}
-              >
-                <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-1">
-                  <span className="text-orange-400 text-lg">⚡</span>
-                  내면 갈등 패턴
-                </h3>
-                <p className="text-slate-600 text-xs mb-4">
-                  여러 체계에서 감지된 충돌 에너지입니다. 인식하는 것 자체가 해방의 시작입니다.
-                </p>
-                <div className="space-y-4">
-                  {conflicts.map((c, i) => (
-                    <div
-                      key={i}
-                      className={i < conflicts.length - 1 ? 'pb-4 border-b border-orange-900/25' : ''}
-                    >
-                      <p className="text-orange-300/90 text-xs font-semibold mb-1.5">◈ {c.title}</p>
-                      <p className="text-slate-400 text-sm leading-relaxed">{c.description}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* AI 종합 해석 */}
-            <div
-              className="bg-gradient-to-br from-purple-900/30 to-indigo-900/30 backdrop-blur-md
-                border border-purple-400/25 rounded-2xl p-6
-                shadow-xl shadow-purple-950/30
-                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-              style={{ animationDelay: '630ms' }}
-            >
-              <h3 className="flex items-center gap-2 text-sm font-semibold text-purple-200 mb-6">
-                <span className="text-purple-300 text-lg">★</span>
-                AI 종합 해석
-              </h3>
-              <div className="space-y-5">
-                {result.detailedReading.sections.map((section, sIdx) => (
-                  <div key={section.title}>
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-400 text-[10px] font-bold flex items-center justify-center">
-                        {sIdx + 1}
-                      </span>
-                      <p className="text-purple-300 text-xs font-semibold uppercase tracking-wider">
-                        {section.title}
-                      </p>
-                    </div>
-                    <p className="text-slate-300 leading-relaxed text-sm ml-8">
-                      {section.content}
-                    </p>
-                    {sIdx < result.detailedReading.sections.length - 1 && (
-                      <div className="mt-5 border-b border-purple-900/50" />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* ── B. 손금 상세 해석 (손바닥 사진을 함께 분석한 결과) ── */}
-            {palmReading && <PalmReadingCard reading={palmReading} />}
-
-            {/* ── 교집합 강조 섹션 ───────────────────────────────────────────── */}
-            <div
-              className="relative overflow-hidden rounded-2xl border border-violet-500/40
-                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-              style={{
-                animationDelay: '730ms',
-                background: 'linear-gradient(135deg, #0d0720 0%, #120a2e 50%, #0a0520 100%)',
-              }}
-            >
-              {/* ambient glow */}
-              <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-40 bg-violet-600/15 rounded-full blur-3xl" />
-                <div className="absolute top-0 right-0 w-40 h-40 bg-amber-500/5 rounded-full blur-3xl" />
-              </div>
-
-              <div className="relative p-8 text-center">
-                {/* top eyebrow */}
-                <p className="text-amber-400/65 text-[10px] tracking-[0.45em] uppercase mb-7 font-medium">
-                  모든 흐름은 결국 하나를 가리키고 있습니다
-                </p>
-
-                {/* divider */}
-                <div className="flex items-center gap-3 mb-7">
-                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-violet-500/40 to-transparent" />
-                  <span className="text-violet-400/50 text-[9px] tracking-widest">✦</span>
-                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-violet-500/40 to-transparent" />
-                </div>
-
-                {/* identity sentence */}
-                <p className="text-white text-xl md:text-2xl font-semibold leading-relaxed mb-8 px-2">
-                  {result.identityStatement.split('—').map((part, i) => (
-                    <span key={i}>
-                      {i > 0 && <><br /><span className="text-violet-400/60">—</span></>}
-                      {part}
-                    </span>
-                  ))}
-                </p>
-
-                {/* divider */}
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="flex-1 h-px bg-gradient-to-r from-transparent to-violet-500/30" />
-                  <span className="text-violet-400/50 text-[9px] tracking-[0.4em] uppercase">교집합</span>
-                  <div className="flex-1 h-px bg-gradient-to-l from-transparent to-violet-500/30" />
-                </div>
-
-                {/* keywords */}
-                <div className="flex flex-wrap justify-center gap-2 mb-6">
-                  {result.commonKeywords.map((kw) => (
-                    <span
-                      key={kw}
-                      className="px-4 py-1.5 rounded-full bg-violet-500/20 border border-violet-400/35
-                        text-violet-100 text-sm font-medium tracking-wide"
-                    >
-                      {kw}
-                    </span>
-                  ))}
-                </div>
-
-                {/* footnote */}
-                <p className="text-slate-600 text-[10px]">
-                  {intersection?.palmIncluded
-                    ? `사주 · 서양점성술 · ${result.mbtiTraits.type ? 'MBTI · ' : ''}혈액형 · 손금에서 반복 확인된 교집합입니다`
-                    : `${result.mbtiTraits.type ? '5개' : '4개'} 분석 체계(사주 · 서양점성술 · ${result.mbtiTraits.type ? 'MBTI · ' : ''}혈액형 · 타로)에서 독립적으로 반복 확인된 교집합입니다`}
-                </p>
-              </div>
-            </div>
-
-            {/* ── C·D. 교집합 근거와 보완·대비 ── */}
-            {intersection && <IntersectionDetail model={intersection} />}
-
-            {/* ── 최종 정체성 선언 ──────────────────────────────────────────── */}
-            <div
-              className="relative overflow-hidden rounded-2xl border border-amber-400/30
-                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-              style={{
-                animationDelay: '830ms',
-                background: 'linear-gradient(135deg, #110800 0%, #0d0700 50%, #080808 100%)',
-              }}
-            >
-              <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-32 bg-amber-500/8 rounded-full blur-3xl" />
-              </div>
-              <div className="relative p-8 text-center">
-                <p className="text-amber-400/55 text-[9px] tracking-[0.5em] uppercase mb-5">
-                  ✦  당신의 운명 코드  ✦
-                </p>
-                <p className="text-amber-100 text-3xl font-bold tracking-wide mb-4 [text-shadow:0_0_30px_rgba(245,158,11,0.3)]">
-                  {result.archetype}
-                </p>
-                <p className="text-slate-600 text-xs leading-relaxed">
-                  수천 개의 조합 중, 당신의 패턴이 가리키는 정의입니다
-                </p>
-                {identityNarrative.length > 0 && (
-                  <div className="mt-6 pt-5 border-t border-amber-400/15 text-left space-y-2">
-                    <p className="text-amber-400/60 text-[10px] tracking-[0.3em] uppercase">왜 이 결과인가요</p>
-                    {identityNarrative.map((line, i) => (
-                      <p key={i} className="text-slate-300 text-sm leading-relaxed">{line}</p>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* ── DESTINY CODE 카드 ─────────────────────────────────────────── */}
-            <div
-              className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 rounded-xl px-5 py-5
-                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-              style={{ animationDelay: '880ms' }}
-            >
-              <p className="text-[9px] text-slate-600 tracking-[0.55em] uppercase text-center mb-5">
-                DESTINY CODE
-              </p>
-              <div className={`grid gap-4 ${result.mbtiTraits.type ? 'grid-cols-4' : 'grid-cols-3'}`}>
-                {result.mbtiTraits.type && (
-                  <div className="flex flex-col items-center gap-1.5">
-                    <span className="text-emerald-300/90 font-mono font-bold text-base tracking-wider">
-                      {result.mbtiTraits.type}
-                    </span>
-                    <span className="text-slate-600 text-[8px] tracking-[0.25em] uppercase leading-none">
-                      {MBTI_CODE_LABELS[result.mbtiTraits.type] ?? ''}
-                    </span>
-                  </div>
-                )}
-                <div className="flex flex-col items-center gap-1.5">
-                  <span className="text-amber-300/90 font-mono font-bold text-base">
-                    {result.saju.dayStem}
-                  </span>
-                  <span className="text-slate-600 text-[8px] tracking-[0.25em] uppercase leading-none">
-                    {DAY_STEM_LABELS[result.saju.dayStem] ?? ''}
-                  </span>
-                </div>
-                <div className="flex flex-col items-center gap-1.5">
-                  <span className="text-violet-300/90 font-mono font-bold text-base">
-                    {result.tarot.nameEn.replace('The ', '')}
-                  </span>
-                  <span className="text-slate-600 text-[8px] tracking-[0.25em] uppercase leading-none">
-                    {result.tarot.nameEn.replace('The ', '').toUpperCase()}
-                  </span>
-                </div>
-                <div className="flex flex-col items-center gap-1.5">
-                  <span className="text-blue-300/90 font-mono font-bold text-base">
-                    {result.zodiac.signEn}
-                  </span>
-                  <span className="text-slate-600 text-[8px] tracking-[0.25em] uppercase leading-none">
-                    {ZODIAC_CODE_LABELS[result.zodiac.signEn] ?? ''}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* ── 손바닥 패턴 분석 (선택 보조 기능 — 기본 결과와 분리, 결과마다 새로 mount) ── */}
-            {active && !palmReading && (() => {
-              const ref = activeBaseRef(active);
-              return ref && (
-                <PalmSupplementPanel
-                  key={`${ref.kind}:${ref.id}:${palmGeneration}`}
-                  active={active}
-                  storeVersion={palmStoreVersion}
-                  onPendingChange={(s) => setPendingPalm(s)}
-                  onSaved={() => { setPendingPalm(null); setSavedList(getSavedAnalyses()); }}
-                />
-              );
-            })()}
-
-            {/* ── 또 하나의 흐름과 연결하기 ── */}
-            {destinyCode && (
-              <div
-                className="bg-slate-900/60 border border-violet-500/25 rounded-2xl p-5
-                  opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-                style={{ animationDelay: '910ms' }}
-              >
-                <p className="text-slate-600 text-[9px] tracking-[0.45em] uppercase mb-4 text-center">
-                  또 하나의 흐름과 연결하기
-                </p>
-                <div className="text-center mb-5">
-                  <p className="text-amber-300 font-mono font-bold text-2xl tracking-widest mb-1">{destinyCode}</p>
-                  <p className="text-slate-700 text-[10px]">당신의 운명 코드</p>
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(destinyCode);
-                        setCodeCopyStatus('copied');
-                        setTimeout(() => setCodeCopyStatus('idle'), 2500);
-                      } catch { /* ignore */ }
-                    }}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium border transition-all duration-200
-                      ${codeCopyStatus === 'copied'
-                        ? 'bg-amber-500/20 border-amber-400/40 text-amber-200'
-                        : 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/15'}`}
-                  >
-                    {codeCopyStatus === 'copied' ? '✓ 복사됨' : '운명 코드 복사'}
-                  </button>
-                  <a
-                    href="/compatibility"
-                    className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-violet-500/30
-                      bg-violet-500/10 text-violet-300 hover:bg-violet-500/15 transition-all duration-200
-                      text-center"
-                  >
-                    교집합 궁합 보기
-                  </a>
-                </div>
-              </div>
-            )}
-
-            {/* ── 현재 흐름 헤더 ── */}
-            <div className="flex items-center gap-3 pt-4 opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]" style={{ animationDelay: '930ms' }}>
-              <div className="flex-1 h-px bg-slate-800" />
-              <p className="text-slate-600 text-[9px] tracking-[0.5em] uppercase">현재 흐름</p>
-              <div className="flex-1 h-px bg-slate-800" />
-            </div>
-
-            {/* ── 타로 카드 (흐름 섹션) ── */}
-            <div
-              className="group bg-gradient-to-br from-violet-900/20 to-purple-900/20 backdrop-blur-md
-                border border-violet-500/30 rounded-2xl p-6
-                shadow-xl hover:shadow-2xl hover:border-violet-400/40
-                transition-all duration-300 cursor-default
-                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-              style={{ animationDelay: '980ms' }}
-            >
-              <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-4">
-                <span className="text-lg">✧</span>
-                선택된 타로
-                <span className="ml-auto text-[10px] text-violet-400/60 font-normal tracking-wide">현재 흐름을 해석합니다</span>
-              </h3>
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 w-14 h-20 rounded-xl bg-gradient-to-b from-violet-950 to-[#1a0840] border-2 border-amber-400/50 flex flex-col items-center justify-center gap-1 shadow-lg shadow-violet-950/60 [animation:cardFloat_4s_ease-in-out_infinite]">
-                  <span className="text-amber-400/80 text-[9px] font-mono tracking-widest">{result.tarot.romanNumeral}</span>
-                  <span className="text-violet-200 text-2xl leading-none">{result.tarot.symbol}</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-violet-200 font-semibold text-sm mb-0.5">{result.tarot.name}</p>
-                  <p className="text-slate-600 text-xs mb-2">{result.tarot.nameEn}</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {result.tarot.keywords.map((kw) => (
-                      <span key={kw} className="px-2 py-0.5 rounded-full bg-violet-500/15 border border-violet-500/20 text-violet-300 text-[10px]">
-                        {kw}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* ── 현재 흐름 해석 카드 ── */}
-            <div
-              className="bg-slate-900/60 backdrop-blur-md border border-violet-500/20 rounded-2xl p-6 shadow-xl
-                opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-              style={{ animationDelay: '1060ms' }}
-            >
-              <p className="text-violet-200 text-base font-semibold leading-relaxed mb-6">
-                {result.tarotFlow.contextualNote}
-              </p>
-              <div className="space-y-5">
-                {result.tarotFlow.currentMood && (
-                  <div>
-                    <p className="text-slate-600 text-[9px] tracking-[0.4em] uppercase mb-2">지금 에너지</p>
-                    <p className="text-slate-300 text-sm leading-relaxed">{result.tarotFlow.currentMood}</p>
-                  </div>
-                )}
-                {result.tarotFlow.currentRelation && (
-                  <div className="pt-4 border-t border-slate-800">
-                    <p className="text-slate-600 text-[9px] tracking-[0.4em] uppercase mb-2">관계 흐름</p>
-                    <p className="text-slate-300 text-sm leading-relaxed">{result.tarotFlow.currentRelation}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* ── 지금 필요한 태도 ── */}
-            {result.tarotFlow.todayAttitude && (
-              <div
-                className="bg-slate-900/50 border border-indigo-500/20 rounded-2xl p-6
-                  opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]"
-                style={{ animationDelay: '1130ms' }}
-              >
-                <p className="text-indigo-400/70 text-[9px] tracking-[0.45em] uppercase mb-4">지금 필요한 태도</p>
-                <p className="text-slate-300 text-sm leading-relaxed">{result.tarotFlow.todayAttitude}</p>
-              </div>
-            )}
-
-            {/* 다시 분석하기 + 공유 */}
-            <div className="flex items-center justify-center gap-3 pt-2 opacity-0 [animation:fadeInUp_0.5s_ease-out_forwards]" style={{ animationDelay: '1200ms' }}>
-              <button
-                onClick={handleShare}
-                className={`px-5 py-2.5 rounded-xl text-sm font-medium border transition-all duration-200
-                  ${shareStatus !== 'idle'
-                    ? 'bg-violet-500/15 border-violet-500/30 text-violet-300'
-                    : 'bg-violet-500/10 border-violet-500/25 text-violet-400 hover:bg-violet-500/20 hover:border-violet-400/40'}`}
-              >
-                {shareStatus === 'shared' ? '✓ 공유됨' : shareStatus === 'copied' ? '✓ 복사됨' : '결과 공유하기'}
-              </button>
-              <button
-                onClick={() => setAppStep('form')}
-                className="px-5 py-2.5 rounded-xl text-sm font-medium border border-slate-700/40 text-slate-500
-                  hover:border-purple-500/30 hover:text-purple-300 transition-all duration-200"
-              >
-                ↺ 다시 분석하기
-              </button>
-            </div>
-
-            {/* 다음 단계 추천 */}
-            <NextStepsCTA />
           </div>
         )}
 

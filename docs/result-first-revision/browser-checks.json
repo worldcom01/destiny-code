@@ -1,0 +1,54 @@
+[
+  {
+    "case": "palm",
+    "diagramSources": 5,
+    "scrollWidth": 375,
+    "width": 375
+  },
+  {
+    "case": "palm",
+    "diagramSources": 5,
+    "scrollWidth": 390,
+    "width": 390
+  },
+  {
+    "case": "palm",
+    "diagramSources": 5,
+    "scrollWidth": 430,
+    "width": 430
+  },
+  {
+    "case": "palm",
+    "diagramSources": 5,
+    "scrollWidth": 1440,
+    "width": 1440
+  },
+  {
+    "case": "v4",
+    "palmNode": 0,
+    "scrollWidth": 390,
+    "sourceCount": 4,
+    "width": 390
+  },
+  {
+    "case": "unusable",
+    "palmNode": 0,
+    "scrollWidth": 390,
+    "sourceCount": 4,
+    "width": 390
+  },
+  {
+    "case": "legacy",
+    "palmNode": 0,
+    "scrollWidth": 390,
+    "sourceCount": 0,
+    "width": 390
+  },
+  {
+    "case": "long",
+    "palmNode": 0,
+    "scrollWidth": 390,
+    "sourceCount": 4,
+    "width": 390
+  }
+]

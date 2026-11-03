@@ -49,7 +49,7 @@ export function CorePatternSummary({ model }: { model: IntersectionModel }) {
 export function PalmReadingCard({ reading }: { reading: PalmReading }) {
   return (
     <section className={`${card} border-violet-500/25`}>
-      <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200">✋ 손금 상세 해석</h3>
+      <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200">손금 상세 해석</h3>
       {reading.quality.summary && <p className="mt-1 text-xs text-slate-500">{reading.quality.summary}</p>}
       {reading.quality.usability === 'unusable' ? (
         <p className="mt-3 text-sm text-amber-300/90">이 사진에서는 손금을 판독하기 어려웠습니다. 손금은 교집합에서 제외했습니다.</p>

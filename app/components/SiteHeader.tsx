@@ -27,7 +27,6 @@ function NavLink({ item, active, onClick }: { item: NavItem; active: boolean; on
   }`;
   const content = (
     <>
-      <span aria-hidden="true">{item.icon}</span>
       <span>{item.label}</span>
     </>
   );
