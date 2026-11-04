@@ -60,7 +60,7 @@ export default function ResultFirst({ result, nickname, code, saveStatus, shareS
   saveStatus: 'idle' | 'saved'; shareStatus: ShareOutcome | 'idle';
   onSave: () => void; onShare: () => void; onReset: () => void; children?: ReactNode;
 }) {
-  const { snapshot, model, sources, evidence, intersectionSummary } = resultPresentation(result);
+  const { reading, snapshot, model, sources, evidence, intersectionSummary } = resultPresentation(result);
   const [copyStatus, setCopyStatus] = useState('');
   const shareLabel = shareStatus === 'shared' ? '공유됨' : shareStatus === 'copied' ? '텍스트 복사됨' : '공유하기';
   return <article className="result-first" aria-label="운명 분석 결과">
@@ -70,6 +70,15 @@ export default function ResultFirst({ result, nickname, code, saveStatus, shareS
       <p className="identity-for">{nickname ? `${nickname}님의 패턴을 읽다` : '당신의 패턴을 읽다'}</p>
       <h1 id="identity-title">{result.archetype}</h1>
       <p className="identity-statement">{result.identityStatement}</p>
+      {reading && <section className="hero-reading" aria-labelledby="hero-reading-title">
+        <h2 id="hero-reading-title">AI 종합 분석<span>{reading.leadTitle}</span></h2>
+        <p className="hero-reading-lead">{reading.lead}</p>
+        {(reading.continuation || reading.sections.length > 0) && <details className="hero-reading-more">
+          <summary>종합 분석 이어 읽기</summary>
+          {reading.continuation && <p>{reading.continuation}</p>}
+          {reading.sections.map(s => <section key={s.title}><h3>{s.title}</h3><p>{s.content}</p></section>)}
+        </details>}
+      </section>}
       <Tags values={result.commonKeywords.slice(0, 3)} />
       <p className="identity-summary"><span>핵심 교집합</span>{intersectionSummary ?? (model ? '두 개 이상 체계에서 겹친 성향이 없어 요약을 표시하지 않습니다.' : '저장된 교집합 근거가 없어 요약을 표시하지 않습니다.')}</p>
       <a className="hero-jump" href="#result-convergence">나를 이루는 교집합 살펴보기 <span aria-hidden="true">↓</span></a>
@@ -131,7 +140,7 @@ export default function ResultFirst({ result, nickname, code, saveStatus, shareS
       <ResultDetail title="손금 상세 분석" note={snapshot?.palmReading ? model?.palmIncluded ? '판독 근거 반영' : '교집합 미참여' : '선택 분석 · 기본 결과와 구분'}>
         {snapshot?.palmReading ? <PalmReadingCard reading={snapshot.palmReading} /> : <><p>이 기본 결과에 통합된 손금 판독은 없습니다. 별도로 저장한 손바닥 보조 기록은 아래에서 확인할 수 있습니다.</p>{children}</>}
       </ResultDetail>
-      <ResultDetail title="전체 분석 보고서" note="핵심 패턴 · 교집합 · Narrative 전체 보기">
+      <ResultDetail title="전체 분석 보고서" note="핵심 패턴 · 키워드 · Identity 설명">
         <section><h3>저장된 전체 키워드</h3><Tags values={result.commonKeywords} /></section>
         {model && <CorePatternSummary model={model} />}
         {/* B·C·D는 위 '손금 상세 분석'·'교집합' 카드와 같은 내용이라 반복하지 않고 위치만 안내한다. */}
@@ -140,7 +149,8 @@ export default function ResultFirst({ result, nickname, code, saveStatus, shareS
         {!!snapshot?.identityNarrative?.length && <section><h3>E · 왜 이 Identity인가요</h3>{snapshot.identityNarrative.map((line, i) => <p key={i}>{line}</p>)}</section>}
         {!snapshot?.identityNarrative?.length && <p className="result-muted">이 결과에는 Identity Narrative가 저장되지 않았습니다.</p>}
         {!!snapshot?.keywordStrengths?.length && <section><h3>성향별 지지 소스</h3><p className="result-muted">기존 지지 소스 정보를 표시합니다. 강도는 확률로 표시하지 않습니다.</p>{snapshot.keywordStrengths.map(k => <p key={k.coreTag}><strong>{k.keyword}</strong> · {k.sources.join(' · ')}</p>)}</section>}
-        {result.detailedReading.sections.map(s => <section key={s.title}><h3>{s.title}</h3><p>{s.content}</p></section>)}
+        {/* 종합 분석 본문은 첫 화면과 이어 읽기에 있으므로 반복하지 않는다. 저장 데이터는 그대로 둔다. */}
+        {reading && <p className="result-muted">AI 종합 분석 전체는 맨 위 ‘종합 분석 이어 읽기’에서 볼 수 있습니다.</p>}
       </ResultDetail>
     </section>
     <section className="save-share-section" aria-labelledby="save-share-title">

@@ -219,3 +219,18 @@ body {
   .result-code > div p, .result-code a, .result-code button, .result-code > p, .next-links a { font-size: 13px; }
   .identity-statement { font-size: 15px; }
 }
+
+/* V1.1: AI 종합 분석 first — read the stored overall reading before the evidence. */
+.hero-reading { margin-top: 24px; padding-top: 20px; border-top: 1px solid #c49edf2e; }
+.hero-reading h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; font-weight: 650; color: #ead6f8; letter-spacing: .02em; }
+.hero-reading h2 > span { font-size: 12px; font-weight: 400; color: #cdb3dd; }
+.hero-reading-lead { margin-top: 12px; font-size: 15px; line-height: 1.95; color: #f4e9fb; word-break: keep-all; overflow-wrap: anywhere; }
+.hero-reading-more { margin-top: 14px; }
+.hero-reading-more > summary { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; list-style: none; font-size: 13px; font-weight: 600; color: #dcc2ee; }
+.hero-reading-more > summary::-webkit-details-marker { display: none; }
+.hero-reading-more > summary::after { content: ''; width: 7px; height: 7px; border-right: 1.5px solid #cfaee6; border-bottom: 1.5px solid #cfaee6; transform: rotate(45deg) translateY(-2px); }
+.hero-reading-more[open] > summary::after { transform: rotate(225deg) translateY(-1px); }
+.hero-reading-more p { font-size: 14px; line-height: 1.95; color: #e6d6ef; margin-top: 6px; word-break: keep-all; overflow-wrap: anywhere; }
+.hero-reading-more section { margin-top: 20px; }
+.hero-reading-more h3 { font-size: 13px; font-weight: 650; color: #ead6f8; }
+.identity-hero .identity-statement { font-size: 14px; color: #d9c6e4; }
